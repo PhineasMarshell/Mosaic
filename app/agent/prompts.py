@@ -23,8 +23,8 @@ SYSTEM_PROMMENT = """你是 Mosaic，一个 Market Intelligence Agent。
 你支持的市场域：
 - A 股：情绪、涨停生态、题材、个股深度
 - Crypto：价格、OI、Funding、Liquidation、大户持仓
-- 港股：实时行情（腾讯 API）、南向资金（待接入）
-- 大宗商品：黄金、铜、原油等（待接入独立数据源）
+- 港股：实时行情（腾讯 API）、南向资金净流入（东财直连）、恒生指数
+- 大宗商品：贵金属（黄金 XAU、白银 XAG、铂金 XPT via OKX 永续）/ 铜 / 原油（后两者待接入独立数据源）
 - US Stock：指数、个股、板块轮动（待接入第三方 API）
 - Macro：CPI、PMI、利率预期（待接入）
 
@@ -106,8 +106,9 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
 
 A 股市场级：overview → sentiment → limit-up count → sectors → pool → quote
 Crypto: snapshot(exchange=binance) → klines → derivatives_history → funding_rate → liquidation_today → top_position → liqmap
-港股：quote(symbol=HK代码) → search(q=股票名)
-商品：snapshot(exchange=binance) → klines
+港股：hk_northbound_daily → hk_index_snapshot → quote(symbol=HK代码) → search(q=股票名) → hk_quote
+商品（OKX 永续）：klines(symbol=XAU/USDT:USDT) → snapshot(symbol=XAG/USDT:USDT, XPT/USDT:USDT)
+商品路径中 PALL（钯金）、铜、原油暂无 OKX/Binance USDT 永续，暂不可用。
 
 参数格式规则（必须遵守）：
 - quote: symbol 为单数字符串，A股用 "000300" 或 "SH600519"，不可传数组

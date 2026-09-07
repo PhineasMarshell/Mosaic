@@ -34,6 +34,7 @@ from app.models.market import ToolResult
 from app.models.research import MarketDomain, ToolCallPlan
 from app.models.response import ResearchResponse
 from app.research.evidence import build_evidence
+from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
 from app.research.reasoning import ReasoningEngine
 from app.memory.storage import MarketMemory
 
@@ -200,13 +201,14 @@ class MarketDetective:
         _start, _end = _default_date_range()
 
         if target_domain == "commodities":
-            # Commodity → OKX 黄金永续合约: XAU/USDT:USDT
-            # 注：Binance 等主流所无实物黄金交易对；OKX 提供 XAU-USDT-SWAP
-            #     ccxt 统一写法为 XAU/USDT:USDT (okx/bybit/aster)
-            _cross_tool_defaults: dict[str, dict[str, Any]] = {
-                "klines":           {"symbol": "XAU/USDT:USDT", "exchange": "okx", "interval": "1d", "start": _start, "end": _end},
-                "snapshot":         {"symbol": "XAU/USDT:USDT", "exchange": "okx"},
-            }
+            # Commodities → OKX 贵金属永续合约
+            # XAU/USDT:USDT（黄金）, XAG/USDT:USDT（白银）, XPT/USDT:USDT（铂金）
+            # PALL（钯金）在 OKX/Binance 上暂无标准 USDT 永续，需单独验证
+            _commodity_symbols = ["XAU/USDT:USDT", "XAG/USDT:USDT", "XPT/USDT:USDT"]
+            _cross_tool_defaults: dict[str, dict[str, Any]] = {}
+            # 每个通用工具取黄金作为主标的的默认参数
+            _cross_tool_defaults["klines"]       = {"symbol": _commodity_symbols[0], "exchange": "okx", "interval": "1d", "start": _start, "end": _end}
+            _cross_tool_defaults["snapshot"]     = {"symbol": _commodity_symbols[0], "exchange": "okx"}
         elif target_domain == "hk_stock":
             # HK klines → tencent 数据源，symbol 带 hk 前缀
             _cross_tool_defaults = {
@@ -392,6 +394,30 @@ class MarketDetective:
                         ))
 
         # ---------------------------------------------------------
+        # Step 3.5: 自动注入域特定上下文数据 ──────────────────────
+        # HK 域 → 北向资金流入 + 恒生指数行情（内部直连，不走 Gateway）
+        # ---------------------------------------------------------
+
+        if target_domain == "hk_stock":
+            try:
+                hk_data = await fetch_hk_context_data()
+                normalized = [
+                    {"source": "eastmoney_kline_api", "key": k, "value": v}
+                    for k, v in hk_data.items()
+                    if not k.startswith("_") and k in ("northbound", "sh_connect", "sz_connect", "hs_index", "hs_tech_index")
+                ]
+                results.append(ToolResult(
+                    tool="hk_northbound_daily",
+                    arguments={},
+                    status="success" if normalized else "error",
+                    normalized=normalized,
+                    error=None if normalized else "All HK context sources failed",
+                ))
+                logger.info("HK context injected: %d entries from eastmoney", len(normalized))
+            except Exception as exc:
+                logger.warning("HK context injection failed (non-fatal): %s", exc)
+
+        # ---------------------------------------------------------
         # Step 4: 获取历史上下文 + 最终证据门控 + 推理生成
         # ---------------------------------------------------------
 
@@ -455,6 +481,22 @@ class MarketDetective:
     ) -> ToolResult:
         """执行单次工具调用，自动处理重复和连接。"""
 
+        sig = f"{req.tool_name}:{sorted(req.arguments.items())}"
+        if sig in called_signatures:
+            return ToolResult(
+                tool=req.tool_name,
+                arguments=req.arguments,
+                status="error",
+                normalized=[],
+                error="Duplicate call blocked",
+            )
+
+        # ── 内部工具直连（不走 Gateway） ──
+        meta = resolve_tool_by_name(req.tool_name)
+        if getattr(meta, 'http_method', None) == "INTERNAL":
+            result = await self._execute_internal(req)
+            return result
+
         gateway_cls = self._gateway_class()
 
         async with gateway_cls(self.settings) as gateway:
@@ -473,16 +515,6 @@ class MarketDetective:
                     error=f"Tool not available: {req.tool_name}",
                 )
 
-            sig = f"{req.tool_name}:{sorted(req.arguments.items())}"
-            if sig in called_signatures:
-                return ToolResult(
-                    tool=req.tool_name,
-                    arguments=req.arguments,
-                    status="error",
-                    normalized=[],
-                    error="Duplicate call blocked",
-                )
-
             result = await gateway.call(req.tool_name, req.arguments)
 
             # 缓存成功结果（用于后续去重）
@@ -491,6 +523,74 @@ class MarketDetective:
             market_cache.set(cache_key, result, ttl=ttl)
 
             return result
+
+    async def _execute_internal(self, req: _ToolCallRequest) -> ToolResult:
+        """执行内部工具（不走 Gateway，直连外部 API）。"""
+        if req.tool_name == "internal_hk_northbound":
+            try:
+                data = await fetch_hk_context_data()
+                normalized = [
+                    {
+                        "source": "eastmoney_kline_api",
+                        "key": k,
+                        "value": v,
+                    }
+                    for k, v in data.items()
+                    if not k.startswith("_")
+                ]
+                logger.info("Internal tool hk_northbound: fetched %d entries", len(normalized))
+                return ToolResult(
+                    tool="hk_northbound_daily",
+                    arguments=req.arguments,
+                    status="success",
+                    normalized=normalized,
+                )
+            except Exception as exc:
+                logger.warning("Internal tool hk_northbound failed: %s", exc)
+                return ToolResult(
+                    tool="hk_northbound_daily",
+                    arguments=req.arguments,
+                    status="error",
+                    normalized=[],
+                    error=f"Internal fetch failed: {exc}",
+                )
+
+        if req.tool_name == "internal_hk_index":
+            try:
+                data = await fetch_hk_context_data()
+                hs_data = {
+                    "hs_index": data.get("hs_index", {}),
+                    "hs_tech_index": data.get("hs_tech_index", {}),
+                }
+                normalized = [
+                    {"source": "eastmoney_kline_api", "key": k, "value": v}
+                    for k, v in hs_data.items() if v
+                ]
+                logger.info("Internal tool hk_index: fetched %d entries", len(normalized))
+                return ToolResult(
+                    tool="hk_index_snapshot",
+                    arguments=req.arguments,
+                    status="success",
+                    normalized=normalized,
+                )
+            except Exception as exc:
+                logger.warning("Internal tool hk_index failed: %s", exc)
+                return ToolResult(
+                    tool="hk_index_snapshot",
+                    arguments=req.arguments,
+                    status="error",
+                    normalized=[],
+                    error=f"Internal fetch failed: {exc}",
+                )
+
+        # 未知的内部工具 → 返回错误
+        return ToolResult(
+            tool=req.tool_name,
+            arguments=req.arguments,
+            status="error",
+            normalized=[],
+            error=f"Unknown internal tool: {req.tool_name}",
+        )
 
     def _check_cache(
         self,

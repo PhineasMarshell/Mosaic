@@ -272,6 +272,30 @@ _HK_STOCK_PLACEHOLDERS = [
         http_method="GET",
         http_path="/xueqiu/search",
     ),
+    # ── 北向资金流入（香港通） — 内部直连 Eastmoney KLineJSAPI ──
+    # ⚠️ 这些工具不走 Market Gateway，由 app/research/hk_northbound.fetch_all_hk_context() 直接获取。
+    #    Gateway 侧如需统一接入，需添加以下端点：
+    #      POST /eastmoney/northbound     → {secid: "HK.960036/SZ.960053/SH.960052", days: int}
+    #      GET  /market/snapshot?symbol=hk00700&exchange=tencent  （已有，复用中）
+    # OperationId 待 Gateway 实现后更新为真实值。
+    ToolMeta(
+        "hk_northbound_daily",
+        "internal_hk_northbound",
+        "港股通北向资金净流入时序（东财接口）— 内部实现，不经过 Gateway",
+        domain="hk_stock",
+        priority="high",
+        http_method="INTERNAL",
+        http_path="",
+    ),
+    ToolMeta(
+        "hk_index_snapshot",
+        "internal_hk_index",
+        "恒生指数 & 恒生科技指数快照 — 内部实现，不经过 Gateway",
+        domain="hk_stock",
+        priority="medium",
+        http_method="INTERNAL",
+        http_path="",
+    ),
 ]
 
 # ------------------------------------------------------------------ #
@@ -279,9 +303,36 @@ _HK_STOCK_PLACEHOLDERS = [
 # ------------------------------------------------------------------ #
 
 _COMMODITIES_PLACEHOLDERS = [
-    # TODO: 接入更多 commodity data provider（LME, Bloomberg）
-    # ✅ 黄金已通过 Market Gateway klines/snapshot + OKX 永续合约暂代 (XAU/USDT:USDT)
-    # ❌ 铜、原油、农产品等暂无主流交易所现货交易对
+    # ✅ OKX 已确认支持以下贵金属永续合约（ccxt 统一写法）：
+    #   XAU/USDT:USDT（黄金）, XAG/USDT:USDT（白银）, XPT/USDT:USDT（铂金）
+    # ⚠️ PALL（钯金）、铜、原油暂无主流 crypto 交易所标准 USDT 永续
+    ToolMeta(
+        "commodity_gold",
+        "klines_market_klines_post",
+        "黄金 XAU 价格 K 线（OKX 永续合约，需 symbol=XAU/USDT:USDT）",
+        domain="commodities",
+        priority="high",
+        http_method="POST",
+        http_path="/market/klines",
+    ),
+    ToolMeta(
+        "commodity_silver",
+        "snapshot_market_snapshot_post",
+        "白银 XAG 实时行情快照（OKX 永续合约，需 symbol=XAG/USDT:USDT）",
+        domain="commodities",
+        priority="medium",
+        http_method="POST",
+        http_path="/market/snapshot",
+    ),
+    ToolMeta(
+        "commodity_platinum",
+        "snapshot_market_snapshot_post",
+        "铂金 XPT 实时行情快照（OKX 永续合约，需 symbol=XPT/USDT:USDT）",
+        domain="commodities",
+        priority="low",
+        http_method="POST",
+        http_path="/market/snapshot",
+    ),
 ]
 
 # ------------------------------------------------------------------ #

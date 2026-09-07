@@ -32,8 +32,8 @@ UI / CLI / API
 |--------|------|----------|
 | **A 股** | ✅ 完整支持 | 情绪、涨停生态、题材、个股深度、龙虎榜 |
 | **Crypto** | ✅ 完整支持 | K线、快照、衍生品(OI/Funding)、清算地图、大户持仓 |
-| **港股** | 🟡 基础支持 | 实时行情(腾讯API)、证券搜索(雪球)，南向资金待接入 |
-| **大宗商品** | 🟡 占位 | 通用快照/K线接口暂代，独立品种数据源待接入 |
+| **港股** | ✅ 基础支持 | 实时行情(腾讯API)、证券搜索(雪球)、**北向资金净流入**(东财直连)、恒生指数 |
+| **大宗商品** | 🟡 贵金属就绪 | OKX 永续合约：黄金(XAU)、白银(XAG)、铂金(XPT)，铜/原油待接入 |
 | **美股** | 🔴 Placeholder | 预留 domain 和 registry，第三方 API 待接入 |
 | **宏观** | 🔴 Placeholder | 预留 domain，CPI/PMI/利率数据待接入 |
 
@@ -97,7 +97,7 @@ Researching...
 }
 ```
 
-### 32 个工具覆盖 4 大市场
+### 35+ 个工具覆盖 4 大市场
 
 | 类别 | 数量 | 覆盖领域 |
 |------|------|----------|
@@ -107,7 +107,11 @@ Researching...
 | Crypto 行情 | 4 | K线、快照、时间窗、交易所信息 |
 | Crypto 衍生品 | 1 | 永续合约历史(OI/Funding/多空) |
 | CoinGlass/Hyperliquid | 7 | 符号列表、清算地图、持仓榜、地址数、金库、爆仓、费率 |
+| 港股北向资金 | 2 | **沪深股通净流入**（东财直连）、恒生指数 |
+| 大宗商品贵金属 | 3 | **黄金(XAU)、白银(XAG)、铂金(XPT)** OKX 永续 |
 | 健康检查 | 2 | 网关进程、行情模块状态 |
+
+> 注：`klines`、`snapshot`、`window` 为跨域通用工具，被多个市场域复用。
 
 ## 快速开始
 
@@ -260,11 +264,12 @@ Mosaic/
 │   ├── gateway/
 │   │   ├── mcp_client.py      # MCP 协议客户端
 │   │   ├── http_client.py     # HTTP REST 客户端
-│   │   ├── tool_registry.py   # 多域工具注册表 (32 tools)
+│   │   ├── tool_registry.py   # 多域工具注册表 (35 tools)
 │   │   └── normalizer.py      # 跨域数据规范化层
 │   │
 │   ├── research/
 │   │   ├── market_detective.py # 主入口：规划→执行→评估→推理+异常检测
+│   │   ├── hk_northbound.py   # 港股通北向资金（东财直连，不走 Gateway）
 │   │   ├── evidence.py        # 证据构建
 │   │   └── reasoning.py       # 推理引擎（注入 Market Memory 上下文）
 │   │
@@ -290,7 +295,7 @@ Mosaic/
 │       ├── __init__.py
 │       └── briefs.py          # asyncio 后台调度 + 简报生成
 │
-├── tests/                     # ~153 个测试用例
+├── tests/                     # 188+ 个测试用例
 │   ├── test_planner.py
 │   ├── test_tool_registry.py
 │   ├── test_normalizer.py
@@ -305,7 +310,12 @@ Mosaic/
 │   ├── test_normalizer_multi_domain.py
 │   ├── test_cache_multi_domain.py
 │   ├── test_anomaly_detector.py ← 新增（44 tests）
-│   └── test_market_memory.py  ← 新增（12 tests）
+│   ├── test_market_memory.py  ← 新增（12 tests）
+│   ├── test_conversation.py   ← 新增：对话历史管理
+│   └── test_hk_northbound.py  ← 新增：港股通北向资金数据解析
+│
+├── scripts/
+│   └── verify_commodities.py  # OKX/Binance/Bybit 商品合约可用性验证
 │
 └── docs/
     ├── architecture.md
@@ -323,9 +333,17 @@ Mosaic/
 4. **evaluator.py** / **prompts.py**: 补充该域的评估规则和 prompt 描述
 
 当前已有 `hk_stock`、`commodities`、`us_stock`、`macro` 四个域就绪，其中：
-- `hk_stock` 可通过 `quote_tencent_quote_get`(HK 代码) + `search_xueqiu_search_get` 直接获得行情
-- `commodities` 可复用 `market/snapshot` 和 `market/klines` 通用接口暂代
+- `hk_stock` 可通过 `quote`(腾讯HK代码) + `search`(雪球) 直接获得行情，**北向资金由 `app/research/hk_northbound.py` 直连东财 KLineJSAPI 自动注入**
+- `commodities` 已接入 OKX 永续合约贵金属品种（黄金 XAU / 白银 XAG / 铂金 XPT），铜/原油待接入
 - `us_stock` 和 `macro` 需要后续接入专用第三方数据源
+
+### Internal Tools
+
+Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过 Market Gateway 直接调用内部函数。当前内置了两个内部工具：
+- `internal_hk_northbound` — 港股通北向资金净流入数据（直连东方财富）
+- `internal_hk_index` — 恒生指数 & 恒生科技指数快照（直连东方财富）
+
+这为不经过统一网关的外部数据源提供了干净的集成方式，当未来这些接口迁移到 Gateway 后只需更新 tool_name 即可无缝切换。
 
 ## 设计理念
 
@@ -356,3 +374,15 @@ Mosaic 的定位是：**Market Research / Market Intelligence / Decision Support
 ## License
 
 Internal project — see [Mosaic产品设计文档](../Mosaic产品设计文档.md) for full specification.
+
+## 变更记录
+
+### Latest
+
+- **Bug 修复**：SSE 流式路径补全 research/daily state 持久化（与同步 `/api/ask` 一致）
+- **Bug 修复**：CLI `render_report` 兼容新 `EvidenceItem` 格式（`id/source_tool/metric/value/note`）
+- **Bug 修复**：`daily_state` dict key 从值误用改为正确的 `"market_state": value`
+- **港股北向资金接入**：新增 `app/research/hk_northbound.py` 直连东财 KLineJSAPI，自动注入沪深股通/沪股通/深股通净流入 + 恒生指数数据
+- **内部工具机制**：支持 `http_method="INTERNAL"` 工具绕过 Gateway 直接调用本地函数
+- **大宗商品贵金属**：OKX 永续合约接入 XAG(白银)、XPT(铂金)，共三个品种
+- **新增测试**：HK 北向资金解析、对话历史管理等 10+ 用例
