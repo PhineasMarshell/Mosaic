@@ -107,13 +107,20 @@ _CRYPTO_TIME_KEYS = {"open_time", "close_time", "t", "T", "period", "UnixTime"}
 
 
 def _deep_flatten_value(obj):
-    """从深层嵌套中提取原始数值。
+    """从任意深层嵌套中提取原始数值。
 
-    Eastmoney F10 Finance API 常将财务指标包裹在多层字典中：
+    支持的模式：
       {"data": {"indicators": {"PB": {"value": 2.5}}}}
+      {"data": [{"name": "PB", "value": 2.5}]}
       {"data": {"row": [{"name": "PB", "value": 2.5}]}}
+
+    递归规则：
+      1. 优先找 value/val 键（财务指标最内层数值）
+      2. 再找 data/result/info/row 等容器键
+      3. 如果所有值中只有一个是非 None 的容器，继续递归
+      4. 尝试递归所有子值（dict/list）
     """
-    if isinstance(obj, (int, float)):
+    if isinstance(obj, (int, float)) and not isinstance(obj, bool):
         return obj
     if isinstance(obj, str):
         try:
@@ -121,21 +128,37 @@ def _deep_flatten_value(obj):
         except ValueError:
             return obj
     if isinstance(obj, dict):
+        # 优先找 value/val 键
         for k, v in obj.items():
-            if k == "value" and v is not None:
+            if k.lower() in ("value", "val") and v is not None:
                 result = _deep_flatten_value(v)
                 if isinstance(result, (int, float)):
                     return result
-            elif k.lower() in ("data", "value", "val", "result", "info"):
+        # 再找 data/result/info/row 等容器键
+        for k, v in obj.items():
+            if k.lower() in ("data", "result", "info", "row"):
                 result = _deep_flatten_value(v)
                 if isinstance(result, (int, float)):
                     return result
+        # 如果所有值中只有一个是非 None 的容器，继续递归
         values = [v for v in obj.values() if v is not None]
         if len(values) == 1:
             return _deep_flatten_value(values[0])
+        # 尝试递归所有子值
+        for v in obj.values():
+            if v is not None and isinstance(v, (dict, list)):
+                result = _deep_flatten_value(v)
+                if isinstance(result, (int, float)):
+                    return result
     if isinstance(obj, list):
         if len(obj) == 1:
             return _deep_flatten_value(obj[0])
+        # 对列表，尝试逐个提取
+        for item in obj:
+            if item is not None:
+                result = _deep_flatten_value(item)
+                if isinstance(result, (int, float)):
+                    return result
     return obj
 
 
@@ -148,10 +171,50 @@ def _is_eastmoney_f10_tool(tool_name):
         "concept_eastmoney",
         "shareholders_eastmoney",
         "survey_eastmoney",
+        "detail_eastmoney",
         "overview_eastmoney",
     ]
     return any(p in tool_name for p in f10_patterns)
 
+
+def _extract_f10_list_items(obj, parent_path, result, *, _tool, _domain, _status, _partial, _timestamp, _source):
+    """从列表中提取 name/value 对（F10 常用格式）。
+
+    例如：{"data": [{"name": "ROE", "value": 12.5}, {"name": "PE", "value": 15.2}]}
+    提取为：data[0].name=ROE, data[0].value=12.5, data[1].name=PE, data[1].value=15.2
+    """
+    if not isinstance(obj, list):
+        return
+
+    for i, item in enumerate(obj[:50]):
+        if not isinstance(item, dict):
+            continue
+        path = f"{parent_path}[{i}]"
+        # 提取名称类字段（string value）
+        for k, v in item.items():
+            if k in ("name", "symbol", "code", "holder_name", "company_name", "industry", "sector"):
+                if v is not None:
+                    result.append(NormalizedDatum(
+                        domain=_domain, metric=f"{path}.{k}", value=v,
+                        tool=_tool, status=_status, partial=_partial,
+                        timestamp=_timestamp, source=_source,
+                    ))
+            # 提取数值类字段
+            elif k.lower() in ("value", "val", "amount", "count", "pct", "percentage", "shares", "holding_pct"):
+                flattened = _deep_flatten_value(v)
+                if isinstance(flattened, (int, float)):
+                    result.append(NormalizedDatum(
+                        domain=_domain, metric=f"{path}.{k}", value=flattened,
+                        tool=_tool, status=_status, partial=_partial,
+                        timestamp=_timestamp, source=_source,
+                    ))
+            # 递归处理嵌套的 dict/list
+            elif isinstance(v, (dict, list)):
+                _extract_metrics(
+                    v, parent_path=f"{path}.{k}", result=result,
+                    _tool=_tool, _domain=_domain, _status=_status,
+                    _partial=_partial, _timestamp=_timestamp, _source=_source,
+                )
 
 
 def find_timestamp(obj: dict[str, Any]) -> str | None:
@@ -216,6 +279,23 @@ _ASHARE_METRICS = {
     "涨停", "跌停", "涨停家数", "跌停家数", "上涨", "下跌",
     "情绪", "sentiment", "两融余额", "融资余额", "融券余量",
     "成交额", "成交量", "换手率", "市盈率", "市净率",
+    # F10 财务指标
+    "ROE", "ROA", "ROIC", "营收", "收入", "revenue", "收入总额",
+    "净利润", "net_profit", "净利润率", "毛利率", "净利率",
+    "资产负债率", "负债率", "debt_ratio", "权益乘数",
+    "现金流", "经营现金流", "自由现金流", "fcf",
+    "每股收益", "eps", "每股净资产", "bvps",
+    "股息率", "dividend_yield", "派息", "分红",
+    "净资产", "net_assets", "总资产", "total_assets", "所有者权益",
+    "增长率", "营收增长", "利润增长", "growth",
+    "PB", "PE", "PS", "EV/EBITDA", "EV", "FCF_yield",
+    "分红率", "派息率", "payout_ratio",
+    "扣非净利润", "营业总收入", "归母净利润",
+    "每股经营现金流", "每股经营现金", "经营活动现金流",
+    "股东权益", "总股本", "流通股本", "流通市值", "总市值", "marketcap",
+    "总股本", "shares_outstanding", "free_float",
+    "roe_yoy", "net_profit_yoy", "revenue_yoy",
+    "经营现金流", "经营性现金流", "经营性现金流净额",
 }
 
 
@@ -299,13 +379,22 @@ def _extract_metrics(
                     )
             else:
                 if isinstance(value, (dict, list)):
+                    # F10 专用：列表处理（name/value 对）
+                    if _is_eastmoney_f10_tool(_tool) and isinstance(value, list):
+                        _extract_f10_list_items(
+                            value, parent_path=path, result=result,
+                            _tool=_tool, _domain=_domain, _status=_status,
+                            _partial=_partial, _timestamp=_timestamp, _source=_source,
+                        )
+                        continue
+
                     # For dicts, first check if they contain nested containers
                     # (like {"PB": {"value": 2.5}} containing another dict with "value" key)
                     sub_containers = {}
                     if isinstance(value, dict):
-                        sub_containers = {k: v for k, v in value.items() 
+                        sub_containers = {k: v for k, v in value.items()
                                           if isinstance(v, (dict, list))}
-                    
+
                     if _is_eastmoney_f10_tool(_tool) and sub_containers:
                         # Try deep flatten for F10 nested financial data
                         flattened = _deep_flatten_value(value)
@@ -323,6 +412,14 @@ def _extract_metrics(
                                     if isinstance(dv, (int, float)):
                                         result.append(_make_datum(f"{path}.{k}", dv))
                                         found = True
+                                else:
+                                    # 递归子容器提取
+                                    _extract_metrics(
+                                        v, parent_path=f"{path}.{k}", result=result,
+                                        _tool=_tool, _domain=_domain, _status=_status,
+                                        _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                    )
+                                    found = True
                             if not found:
                                 result.append(_make_datum(path, _make_summary(value)))
                     elif _is_eastmoney_f10_tool(_tool):

@@ -10,6 +10,7 @@
 import re
 from typing import Any
 
+from app.gateway.normalizer import _is_eastmoney_f10_tool
 from app.models.evidence import Evidence
 from app.models.market import NormalizedDatum, ToolResult
 
@@ -224,7 +225,15 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
 
             # 添加其他有效指标
             for metric, value in valid_metrics:
-                if isinstance(value, (dict, list)):
+                # F10 数据：尝试进一步解析不可读值（dict/list → 数值）
+                if _is_eastmoney_f10_tool(result.tool) and isinstance(value, (dict, list)):
+                    from app.gateway.normalizer import _deep_flatten_value
+                    flattened = _deep_flatten_value(value)
+                    if isinstance(flattened, (int, float)):
+                        value = flattened
+                    else:
+                        value = str(value)[:200]
+                elif isinstance(value, (dict, list)):
                     value = str(value)[:200]
 
                 evidence.append(Evidence(
