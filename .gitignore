@@ -30,3 +30,6 @@ Thumbs.db
 
 # Test cache
 .pytest_cache/
+
+# Temp debug scripts with hardcoded keys
+test_api.py

@@ -4,7 +4,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        # 生产环境：环境变量由 Railway 注入，不需要 .env 文件
+        env_file=".env",
+        env_file_encoding="utf-8",
         extra="ignore",
     )
 
