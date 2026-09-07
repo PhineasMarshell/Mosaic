@@ -1,0 +1,42 @@
+# 虚拟环境
+.venv/
+.venv-win/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 测试
+.pytest_cache/
+.mosaic_memory/
+mosaic_memory/
+
+# Git
+.git/
+.gitignore
+
+# 敏感配置
+.env
+
+# 文档 & 脚本（运行时不需要）
+docs/
+scripts/
+allowed_openapi.json
+README.md
+
+# Railway 内部文件
+.railway/

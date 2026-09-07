@@ -1,0 +1,11 @@
+# Mosaic Market Intelligence Agent — Python 依赖
+# 在 Replit 中可通过 "Packages" → "Add Package" 搜索添加
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+openai>=1.99
+mcp>=1.12
+pydantic>=2.8
+pydantic-settings>=2.4
+python-dotenv>=1.0
+httpx>=0.27
