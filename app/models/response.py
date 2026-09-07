@@ -39,3 +39,4 @@ class ResearchResponse(BaseModel):
     report: MarketIntelligence
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     cache_stats: dict[str, int] = Field(default_factory=dict)
+    conversation_id: str | None = None

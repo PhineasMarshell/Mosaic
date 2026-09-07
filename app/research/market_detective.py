@@ -153,12 +153,21 @@ class MarketDetective:
 
     async def investigate(
         self, question: str, domain: MarketDomain | None = None,
+        conversation_id: str | None = None,
     ) -> ResearchResponse:
         # ---------------------------------------------------------
         # Step 1: 规划初始研究计划（如指定了 domain，传递给 planner）
         # ---------------------------------------------------------
 
-        plan = await self.planner.plan(question)
+        # 加载对话历史（供 Planner 感知上下文）
+        conv_history = ""
+        if conversation_id:
+            memory = MarketMemory()
+            conv_history = memory.get_conversation_history(
+                conversation_id, self.settings.max_conversation_turns
+            )
+
+        plan = await self.planner.plan(question, conversation_history=conv_history)
         # 如果显式指定了域且 planner 自动判断不一致，以显式指定为准
         if domain is not None:
             plan.intent.domain = domain
@@ -215,12 +224,15 @@ class MarketDetective:
                 "abnormal_reasons": {"symbol": "sh000300"},
             }
         else:  # crypto / default
+            # Crypto: Binance 原生合约名用 "BTCUSDT" 而非 "BTC/USDT"
+            # derivatives_history 需要 symbol+start+end（Binance 原生格式）
             _cross_tool_defaults = {
-                "klines":       {"symbol": "BTC/USDT", "interval": "1d", "start": _start, "end": _end},
-                "snapshot":     {"symbol": "BTC/USDT"},
-                "quote":        {"symbol": ""},
-                "search":       {"q": "Bitcoin"},
+                "klines":         {"symbol": "BTC/USDT", "interval": "1d", "start": _start, "end": _end},
+                "snapshot":       {"symbol": "BTC/USDT"},
+                "search":         {"q": "Bitcoin"},
                 "abnormal_reasons": {"symbol": "BTCUSDT"},
+                "derivatives_history": {"symbol": "BTCUSDT", "exchange": "binance", "start": _start, "end": _end},
+                # quote_tencent_quote_get 是腾讯 API，不适用于 Crypto，不添加默认参数
             }
 
         # 清理：删除 Planner 生成的空参数步骤（让兜底的正确版本来执行）
@@ -394,9 +406,14 @@ class MarketDetective:
             len(final_gate.error_tools),
         )
 
-        # 注入历史上下文到 Reasoning Engine
+        # 注入历史上下文到 Reasoning Engine（对话历史 + 市场状态历史）
         memory = MarketMemory()
-        history_context = memory.get_context_for_question(question, days_back=7)
+        market_state_history = memory.get_context_for_question(question, days_back=7)
+
+        if conv_history:
+            history_context = f"{conv_history}\n\n{market_state_history}" if market_state_history else conv_history
+        else:
+            history_context = market_state_history
 
         report = await self.reasoning.reason(
             question, results, evidence, history_context=history_context

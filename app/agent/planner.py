@@ -41,14 +41,12 @@ class Planner:
             timeout=settings.llm_timeout_seconds,
         )
 
-    async def plan(self, question: str) -> ResearchPlan:
+    async def plan(self, question: str, conversation_history: str = "") -> ResearchPlan:
         """为给定问题生成研究计划。
 
-        行为：
-        1. 向 Planner 暴露全部已注册工具（让 LLM 自主选择）
-        2. 将注册表与问题一起发送给 LLM
-        3. 解析返回的 JSON 为 ResearchPlan
-        4. 限制步骤数不超过配置上限
+        Args:
+            question: 用户问题
+            conversation_history: 可选的对话历史文本，让 Planner 能感知之前轮次
         """
         # 向 LLM 暴露所有工具，LLM 根据问题描述自主判断哪些可用
         registry = registry_text()
@@ -58,6 +56,7 @@ class Planner:
             registry=registry,
             max_steps=self.settings.max_research_steps,
             enabled_domains=", ".join(_ENABLED_DOMAINS),
+            conversation_history=conversation_history if conversation_history else "（无）",
         )
 
         response = await self.client.chat.completions.create(

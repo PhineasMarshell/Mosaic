@@ -45,7 +45,7 @@ class MarketMemory:
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
-        for sub in ("daily", "anomalies", "research"):
+        for sub in ("daily", "anomalies", "research", "conversations"):
             (self.base_dir / sub).mkdir(parents=True, exist_ok=True)
 
     def _today(self) -> str:
@@ -212,6 +212,85 @@ class MarketMemory:
             logger.error("Failed to save research: %s", exc)
 
         return str(filepath)
+
+    # ── Conversation History ───────────────
+
+    def save_turn(self, conversation_id: str, question: str, answer_summary: str) -> str:
+        """保存一轮对话（append-store 模式）。
+
+        Args:
+            conversation_id: 对话会话 ID
+            question: 用户问题
+            answer_summary: AI 回答摘要（~200 chars）
+
+        Returns:
+            保存路径
+        """
+        filepath = self.base_dir / "conversations" / f"{conversation_id}.json"
+
+        turns: list[dict[str, Any]] = []
+        if filepath.exists():
+            try:
+                turns = json.loads(filepath.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                turns = []
+
+        turn_index = len(turns) + 1
+        turns.append({
+            "turn_index": turn_index,
+            "question": question,
+            "answer_summary": answer_summary,
+            "_timestamp": datetime.now(UTC).isoformat(),
+        })
+
+        filepath.write_text(
+            json.dumps(turns, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return str(filepath)
+
+    def get_conversation_history(self, conversation_id: str, last_n: int = 10) -> str:
+        """获取最近 N 轮对话历史，返回纯文本格式供 Prompt 注入。
+
+        Args:
+            conversation_id: 对话会话 ID
+            last_n: 最多返回多少轮
+
+        Returns:
+            格式化的纯文本，如：
+            --- 对话历史 (最后 3 轮) ---
+            Q1: 今天A股发生了什么？
+            A1: 今日市场整体走弱，涨停同步降温，状态 Theme Cooling。
+            Q2: 那贵州茅台呢？
+            A2: 贵州茅台今日小幅下跌，资金净流出 2.3 亿，暂无异常。
+            --- 对话历史结束 ---
+        """
+        filepath = self.base_dir / "conversations" / f"{conversation_id}.json"
+
+        if not filepath.exists():
+            return ""
+
+        try:
+            turns = json.loads(filepath.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return ""
+
+        if not turns:
+            return ""
+
+        # 取最近 last_n 轮
+        recent = turns[-last_n:]
+
+        lines = [f"--- 对话历史 (最后 {len(recent)} 轮) ---"]
+        for t in recent:
+            q = t.get("question", "?")
+            a = t.get("answer_summary", "")
+            lines.append(f"Q{t.get('turn_index', '?')}: {q}")
+            if a:
+                lines.append(f"A{t.get('turn_index', '?')}: {a}")
+
+        lines.append("--- 对话历史结束 ---")
+        return "\n".join(lines)
 
     # ── Search / Context ───────────────────
 

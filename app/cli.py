@@ -73,9 +73,20 @@ def render_report(report: dict, question: str) -> str:
         lines.append("## Evidence")
         lines.append("")
         for e in evidence_items[:5]:  # 最多展示5条
-            claim = e.get("claim", "?")
-            ids = ", ".join(e.get("evidence_ids", []))
-            lines.append(f"- **{claim}** → [{ids}]")
+            # New EvidenceItem format: id, source_tool, metric, value, note
+            source = e.get("source_tool") or e.get("tool", "unknown")
+            metric = e.get("metric", "")
+            note = e.get("note", "")
+            evidence_id = e.get("id", "?")
+            # Build description from available fields
+            parts = [f"[{evidence_id}]"]
+            if metric:
+                parts.append(f"**{metric}**")
+            elif note:
+                parts.append(note)
+            else:
+                parts.append(f"via {source}")
+            lines.append(f"- {' '.join(parts)} — `{json.dumps(e.get('value', ''), ensure_ascii=False, default=str)[:120]}`")
         lines.append("")
 
     # Strong Areas

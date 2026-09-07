@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     max_retry_per_tool: int = 1
     research_timeout_seconds: int = 30
     llm_timeout_seconds: int = 90
+    max_conversation_turns: int = 10
 
 
 @lru_cache

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Mosaic Prompt 模板。
 
 多域设计要点：
@@ -57,6 +58,10 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
 
 可用的工具注册表（按域分组）：
 {registry}
+
+--- 对话历史（如有） ---
+
+{conversation_history}
 
 --- 任务说明 ---
 

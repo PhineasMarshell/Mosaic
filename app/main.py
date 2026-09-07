@@ -109,6 +109,7 @@ async def ask(request: dict):
         raise HTTPException(status_code=400, detail="question cannot be empty")
 
     domain = request.get("domain") or None  # optional explicit domain override
+    conversation_id = request.get("conversation_id") or None  # optional conversation session
 
     # 检查 domain 是否有效（支持从 tool_registry 动态获取）
     from app.gateway.tool_registry import get_enabled_domains, ALL_TOOLS
@@ -123,8 +124,9 @@ async def ask(request: dict):
         )
 
     try:
-        logger.info("Received question: %s (len=%d) domain=%s", question[:50], len(question), domain)
-        result = await orchestrator.run(question, domain=domain)
+        logger.info("Received question: %s (len=%d) domain=%s conv_id=%s",
+                     question[:50], len(question), domain, conversation_id)
+        result = await orchestrator.run(question, domain=domain, conversation_id=conversation_id)
         data = result.model_dump()
 
         # 保存研究记录到 Memory
@@ -133,10 +135,18 @@ async def ask(request: dict):
         except Exception as exc:
             logger.debug("Memory save failed (non-fatal): %s", exc)
 
+        # 保存对话轮次到 Memory
+        if conversation_id:
+            try:
+                summary = f"{result.report.state_label}：{result.report.what_happened[:80]}…"
+                memory.save_turn(conversation_id, question, summary)
+            except Exception as exc:
+                logger.debug("Turn save failed (non-fatal): %s", exc)
+
         # 更新 Daily State
         try:
             state_data = {
-                result.report.market_state: None,  # placeholder
+                "market_state": result.report.market_state,
                 "state_label": result.report.state_label,
                 "strong_areas": result.report.strong_areas,
                 "confidence": result.report.confidence,
@@ -160,7 +170,7 @@ async def ask(request: dict):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-async def _stream_research(question: str, domain: str | None):
+async def _stream_research(question: str, domain: str | None, conversation_id: str | None = None):
     """SSE event generator — wraps MarketDetective.investigate() with progress events.
 
     Instead of duplicating the investigation logic (which caused import errors
@@ -184,7 +194,7 @@ async def _stream_research(question: str, domain: str | None):
 
     async def run_investigation():
         """Run the full investigation and return the result."""
-        return await detective.investigate(question, domain=domain)
+        return await detective.investigate(question, domain=domain, conversation_id=conversation_id)
 
     task = asyncio.create_task(run_investigation())
 
@@ -218,6 +228,13 @@ async def _stream_research(question: str, domain: str | None):
         "message": "调查完成",
     })
 
+    # Save to memory (research record + daily state + conversation turn)
+    # Using background tasks so they don't block the final result event
+    save_result = result.model_dump()
+    if conversation_id:
+        asyncio.create_task(_save_turn(conversation_id, question, save_result))
+    asyncio.create_task(_save_research_and_state(question, save_result))
+
     # Send result
     yield json_event("result", result.model_dump())
 
@@ -233,6 +250,44 @@ def _get_step_message(step: str) -> str:
     return messages.get(step, "调查中…")
 
 
+async def _save_turn(conversation_id: str | None, question: str, report_dict: dict) -> None:
+    """后台保存对话轮次（非致命错误）。"""
+    if not conversation_id:
+        return
+    try:
+        state_label = report_dict.get("state_label", "")
+        what_happened = report_dict.get("what_happened", "")
+        summary = f"{state_label}：{what_happened[:80]}…" if what_happened else state_label
+        memory.save_turn(conversation_id, question, summary)
+    except Exception as exc:
+        logger.debug("Turn save failed (non-fatal): %s", exc)
+
+
+async def _save_research_and_state(question: str, report_dict: dict) -> None:
+    """后台保存研究记录和 Daily State（非致命错误）。"""
+    try:
+        memory.save_research(question, report_dict)
+    except Exception as exc:
+        logger.debug("Research save failed (non-fatal): %s", exc)
+
+    # Build daily state snapshot — mirrors logic in POST /api/ask
+    try:
+        state_data = {
+            "state_label": report_dict.get("state_label", ""),
+            "strong_areas": report_dict.get("strong_areas", []),
+            "confidence": report_dict.get("confidence", ""),
+            "anomalies": report_dict.get("anomalies", [])[:5] if report_dict.get("anomalies") else [],
+        }
+        from app.gateway.tool_registry import get_enabled_domains
+        for d in get_enabled_domains():
+            key = d.replace("_", "-")
+            domain_report = {"state_label": report_dict.get("state_label", "")}
+            state_data[key] = domain_report
+        memory.save_daily_state(data=state_data)
+    except Exception as exc:
+        logger.debug("Daily state save failed (non-fatal): %s", exc)
+
+
 @app.post("/api/ask/stream")
 async def ask_stream(request: dict):
     """SSE streaming Ask endpoint — returns real-time research progress."""
@@ -241,14 +296,15 @@ async def ask_stream(request: dict):
         raise HTTPException(status_code=400, detail="question cannot be empty")
 
     domain = request.get("domain") or None
+    conversation_id = request.get("conversation_id") or None
     supported_domains = get_enabled_domains()
     if domain and domain not in supported_domains:
         raise HTTPException(status_code=400, detail=f"Unsupported domain: {domain}. Supported: {supported_domains}")
 
     try:
-        logger.info("Streaming question: %s domain=%s", question[:50], domain)
+        logger.info("Streaming question: %s domain=%s conv_id=%s", question[:50], domain, conversation_id)
         return StreamingResponse(
-            _stream_research(question, domain),
+            _stream_research(question, domain, conversation_id=conversation_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )

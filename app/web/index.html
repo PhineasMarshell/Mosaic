@@ -2,219 +2,243 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Mosaic — Market Intelligence Agent</title>
 <style>
   :root {
-    --bg: #0a0e17;
-    --surface: #111827;
-    --surface2: #1a2332;
-    --border: #1e293b;
-    --border-light: #334155;
-    --text: #e2e8f0;
-    --text-dim: #94a3b8;
-    --text-muted: #64748b;
-    --accent: #38bdf8;
-    --accent-glow: rgba(56,189,248,.1);
-    --green: #22c55e;
-    --green-bg: rgba(34,197,94,.12);
-    --orange: #f59e0b;
-    --orange-bg: rgba(245,158,11,.12);
-    --red: #ef4444;
-    --red-bg: rgba(239,68,68,.12);
-    --purple: #a78bfa;
-    --purple-bg: rgba(167,139,250,.12);
-    --radius: 16px;
-    --radius-sm: 10px;
-    --shadow: 0 4px 24px rgba(0,0,0,.3);
-    --shadow-lg: 0 8px 40px rgba(0,0,0,.4);
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface2: #1a1a1a;
+    --border: #2a2a2a;
+    --border-light: #3a3a3a;
+    --text: #e5e5e5;
+    --text-dim: #a3a3a3;
+    --text-muted: #6b6b6b;
+    --accent: #e5e5e5;
+    --accent-glow: rgba(229,229,229,.08);
+    --green: #a3a3a3;
+    --green-bg: rgba(163,163,163,.12);
+    --orange: #a3a3a3;
+    --orange-bg: rgba(163,163,163,.12);
+    --red: #a3a3a3;
+    --red-bg: rgba(163,163,163,.12);
+    --purple: #a3a3a3;
+    --purple-bg: rgba(163,163,163,.12);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: none;
+    --shadow-lg: none;
+    --max-width: 680px;
   }
 
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;min-height:100vh;line-height:1.6}
 
-  /* ── Layout ─────────────────────────── */
-  .app{max-width:820px;margin:0 auto;padding:40px 24px 100px}
+  /* ── Full-height flex layout ─────────── */
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden;
+  }
 
   /* ── Header ─────────────────────────── */
-  .header{text-align:center;padding:48px 0 40px}
-  .logo{font-size:42px;font-weight:800;letter-spacing:-.5px;
-        background:linear-gradient(135deg,var(--accent),var(--purple));
-        -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-  .tagline{color:var(--text-dim);margin-top:6px;font-size:14px;letter-spacing:.4px}
+  .chat-header{
+    flex-shrink:0;padding:14px 20px;text-align:center;
+    border-bottom:1px solid var(--border);background:var(--surface);
+  }
+  .logo{font-size:20px;font-weight:700;letter-spacing:-.2px;color:var(--text)}
+  .tagline{color:var(--text-muted);margin-top:2px;font-size:10px;letter-spacing:.2px}
 
-  /* ── Hero Section ───────────────────── */
-  .hero{text-align:center;margin-bottom:36px}
-  .hero-title{font-size:20px;font-weight:600;color:var(--text);margin-bottom:16px}
+  /* ── Messages area ──────────────────── */
+  .chat-messages{
+    flex:1;overflow-y:auto;overflow-x:hidden;
+    padding:16px 24px 8px;scroll-behavior:smooth;
+  }
+  .chat-messages::-webkit-scrollbar{width:6px}
+  .chat-messages::-webkit-scrollbar-track{background:transparent}
+  .chat-messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 
-  /* ── Input Card ─────────────────────── */
-  .input-card{background:var(--surface);border:1px solid var(--border);
-              border-radius:var(--radius);padding:24px;box-shadow:var(--shadow)}
-  textarea{width:100%;min-height:88px;border:1px solid var(--border);border-radius:var(--radius-sm);
-           padding:16px 18px;font-size:15px;background:var(--surface2);color:var(--text);
-           resize:vertical;outline:none;transition:border-color .2s,box-shadow .2s}
-  textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
-  textarea::placeholder{color:var(--text-muted)}
+  /* ── Welcome screen ─────────────────── */
+  .welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;
+           height:100%;text-align:center;padding:40px 20px}
+  .welcome-logo{font-size:32px;font-weight:700;letter-spacing:-.3px;color:var(--text)}
+  .welcome-tagline{color:var(--text-muted);margin-top:4px;font-size:12px;max-width:300px;line-height:1.4}
+  .welcome-prompt{font-size:14px;font-weight:500;color:var(--text-dim);margin-top:28px;margin-bottom:14px}
+  .quick{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:480px}
+  .quick-btn{padding:7px 12px;border-radius:999px;font-size:11px;cursor:pointer;
+             border:1px solid var(--border);background:transparent;color:var(--text-dim);
+             transition:all .15s}
+  .quick-btn:hover{border-color:var(--text-dim);color:var(--text);background:var(--surface2)}
 
-  .btn{margin-top:16px;width:100%;padding:15px;border:none;border-radius:var(--radius-sm);
-       background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:#fff;
-       font-size:15px;font-weight:600;cursor:pointer;transition:all .2s}
-  .btn:hover:not(:disabled){opacity:.92;transform:translateY(-1px);box-shadow:0 4px 16px rgba(56,189,248,.25)}
-  .btn:active:not(:disabled){transform:translateY(0)}
-  .btn:disabled{opacity:.45;cursor:not-allowed}
+  /* ── Messages ───────────────────────── */
+  .msg-row{display:flex;gap:10px;margin:12px 0;animation:fadeInUp .25s ease-out}
+  @keyframes fadeInUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 
-  /* ── Quick Prompts ──────────────────── */
-  .quick{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;justify-content:center}
-  .quick-btn{padding:8px 14px;border-radius:999px;font-size:13px;cursor:pointer;
-             border:1px dashed var(--border-light);background:transparent;color:var(--text-dim);
-             transition:all .2s}
-  .quick-btn:hover{border-style:solid;border-color:var(--accent);color:var(--accent);
-                    background:var(--accent-glow)}
+  .msg-row.user{flex-direction:row-reverse}
 
-  /* ── Loading / Researching ──────────── */
-  .loading{text-align:center;padding:56px 20px;animation:fadeInUp .3s ease-out}
-  @keyframes fadeInUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .msg-avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+              font-size:13px;font-weight:600;flex-shrink:0}
+  .msg-row.user>.msg-avatar{background:var(--surface2);color:var(--text-dim)}
+  .msg-row.ai>.msg-avatar{background:var(--surface2);color:var(--text-muted)}
 
-  .spinner{width:44px;height:44px;margin:0 auto 20px;border:3px solid var(--border);
-           border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
+  .msg-bubble{max-width:78%;display:flex;flex-direction:column;gap:0}
+  .msg-row.user>.msg-bubble{align-items:flex-end}
+  .msg-row.ai>.msg-bubble{align-items:flex-start}
 
-  .research-steps{text-align:left;display:inline-block;margin-top:20px;max-width:320px}
-  .research-step{padding:4px 0;font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:8px}
-  .research-step .icon{width:18px;text-align:center;flex-shrink:0}
-  .research-step.done .icon{color:var(--green)}
-  .research-step.active .icon{color:var(--accent);animation:pulse 1.2s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .user-question{background:var(--surface2);border:1px solid var(--border);
+                 border-radius:var(--radius);padding:10px 16px;font-size:14px;color:var(--text);
+                 line-height:1.5;display:inline-block}
 
-  .loading-title{font-size:15px;color:var(--text);margin-bottom:4px;font-weight:500}
-  .loading-sub{font-size:13px;color:var(--text-muted)}
-
-  /* ── Result Card ────────────────────── */
   .result-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-               padding:28px;margin-top:24px;box-shadow:var(--shadow-lg);animation:slideUp .4s ease-out}
-  @keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+               padding:20px;margin-top:8px;width:100%;animation:fadeInUp .25s ease-out}
 
-  .result-header{margin-bottom:20px}
-  .result-title{font-size:14px;color:var(--text-dim);margin-bottom:10px}
+  /* ── Loading indicator ──────────────── */
+  .loading-indicator{display:flex;align-items:center;gap:10px;margin:12px 0;animation:fadeInUp .2s ease-out}
+  .msg-row.loading-indicator-msg{flex-direction:row}
+  .loading-spinner{width:18px;height:18px;border:2px solid var(--border);
+                   border-top-color:var(--text-dim);border-radius:50%;animation:spin .6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-text{color:var(--text-muted);font-size:12px}
+  .research-steps{text-align:left;display:inline-block;margin-top:4px;max-width:240px}
+  .research-step{padding:2px 0;font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:5px}
+  .research-step.done .icon{color:var(--text-dim)}
+  .research-step.active .icon{color:var(--text)}
 
-  /* State Badges */
-  .state-badges{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
-  .state-badge{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;
-               border-radius:999px;font-size:14px;font-weight:600}
-  .state-badge.risk-off{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.2)}
-  .state-badge.risk-on{background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,.2)}
-  .state-badge.neutral{background:var(--orange-bg);color:var(--orange);border:1px solid rgba(245,158,11,.2)}
-  .state-badge.mixed{background:var(--purple-bg);color:var(--purple);border:1px solid rgba(167,139,250,.2)}
-  .state-badge.unknown{background:var(--surface2);color:var(--text-dim);border:1px solid var(--border)}
+  /* ── Error ──────────────────────────── */
+  .error-msg{background:var(--surface2);border:1px solid var(--border);
+             border-radius:var(--radius-sm);padding:12px 16px;color:var(--text-dim);
+             margin:8px 0;font-size:13px;animation:fadeInUp .3s ease-out}
 
-  /* Confidence Bar */
-  .conf-section{margin:8px 0 20px}
-  .conf-row{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-muted)}
-  .conf-bar{flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
-  .conf-fill{height:100%;border-radius:2px;transition:width .6s ease}
-  .conf-label{font-weight:600;text-transform:uppercase}
+  /* ── Input bar ──────────────────────── */
+  .chat-input-bar{
+    flex-shrink:0;padding:12px 24px 16px;background:var(--surface);
+    border-top:1px solid var(--border);
+    max-width:var(--max-width);width:100%;margin:0 auto;
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .input-row{display:flex;gap:8px;align-items:flex-end}
+  .input-field{flex:1;min-height:40px;max-height:120px;border:1px solid var(--border);border-radius:var(--radius-sm);
+               padding:10px 14px;font-size:14px;background:var(--surface2);color:var(--text);
+               resize:none;outline:none;font-family:inherit;line-height:1.5;transition:border-color .2s,box-shadow .2s;
+               overflow:hidden;scrollbar-width:none}
+  .input-field:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+  .input-field::placeholder{color:var(--text-muted)}
+  .send-btn{width:36px;height:36px;border:none;border-radius:var(--radius-sm);
+            background:var(--surface2);color:var(--text);cursor:pointer;
+            display:flex;align-items:center;justify-content:center;flex-shrink:0;
+            transition:all .15s;font-size:14px;border:1px solid var(--border)}
+  .send-btn:hover:not(:disabled){background:var(--border);color:var(--text)}
+  .send-btn:active:not(:disabled){transform:scale(.95)}
+  .send-btn:disabled{opacity:.4;cursor:not-allowed}
+  .hint{font-size:11px;color:var(--text-muted);text-align:center;padding-top:2px}
 
-  /* Sections */
-  .section{margin:20px 0}
-  .section h2{font-size:15px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px}
-  .section-body{font-size:14px;color:var(--text-dim);line-height:1.8}
-  .section ul{padding-left:20px;margin:4px 0}
-  .section li{margin:5px 0}
+  /* ── Footer ─────────────────────────── */
+  .chat-footer{text-align:center;color:var(--text-muted);font-size:11px;padding:6px;flex-shrink:0}
 
-  /* Evidence */
-  .ev-toggle{font-size:13px;color:var(--accent);cursor:pointer;margin-top:8px;user-select:none}
-  .ev-toggle:hover{text-decoration:underline}
-  .ev-grid{display:grid;gap:8px;margin-top:10px}
-  .ev-item{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);
-           padding:12px 16px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
-           color:var(--text-dim);overflow-x:auto;white-space:pre-wrap;word-break:break-word}
-  .ev-meta{display:flex;gap:10px;margin-bottom:6px;font-size:11px;color:var(--text-muted);flex-wrap:wrap}
-  .ev-tag{padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600}
-  .ev-tag.src{background:var(--accent-glow);color:var(--accent)}
-  .ev-tag.metric{background:rgba(167,139,250,.12);color:var(--purple)}
-  .ev-tag.ok{background:var(--green-bg);color:var(--green)}
+  /* ── Result card internal styles ────── */
+  .result-header{margin-bottom:12px}
+  .result-title{font-size:12px;color:var(--text-muted);margin-bottom:6px}
+  .state-badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .state-badge{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;
+               border-radius:999px;font-size:11px;font-weight:500;
+               background:var(--surface2);border:1px solid var(--border);color:var(--text-dim)}
+  .state-badge.risk-off{border-color:var(--red);color:var(--red)}
+  .state-badge.risk-on{border-color:var(--green);color:var(--green)}
+  .state-badge.neutral{border-color:var(--orange);color:var(--orange)}
+  .state-badge.mixed{border-color:var(--purple);color:var(--purple)}
+  .state-badge.unknown{border-color:var(--border);color:var(--text-muted)}
+  .conf-section{margin:4px 0 12px}
+  .conf-row{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text-muted)}
+  .conf-bar{flex:1;height:2px;border-radius:1px;background:var(--border);overflow:hidden}
+  .conf-fill{height:100%;border-radius:1px;transition:width .5s ease}
+  .conf-label{font-weight:500;text-transform:uppercase}
+  .section{margin:12px 0}
+  .section h2{font-size:13px;font-weight:500;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+  .section-body{font-size:13px;color:var(--text-dim);line-height:1.6}
+  .section ul{padding-left:16px;margin:4px 0}
+  .section li{margin:3px 0}
+  .anomaly-grid{display:grid;gap:8px;margin-top:8px}
+  .anomaly-card{background:var(--surface2);border:1px solid var(--border);
+                border-radius:var(--radius-sm);padding:12px 14px;font-size:12px}
+  .anomaly-header{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+  .anomaly-type{font-weight:500;color:var(--text-dim)}
+  .anomaly-severity{font-size:10px;padding:2px 6px;border-radius:999px;font-weight:500;
+                    background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
+  .anomaly-severity.high{border-color:var(--red);color:var(--red)}
+  .anomaly-severity.medium{border-color:var(--orange);color:var(--orange)}
+  .anomaly-severity.low{border-color:var(--green);color:var(--green)}
+  .anomaly-detail{color:var(--text-dim);line-height:1.5}
+  .anomaly-status{font-size:10px;color:var(--text-muted);margin-top:4px}
+  .tool-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+  .tool-tag{font-size:10px;background:var(--surface);border:1px solid var(--border);
+            border-radius:5px;padding:3px 8px;color:var(--text-muted)}
 
-  /* Anomaly Cards */
-  .anomaly-grid{display:grid;gap:10px;margin-top:10px}
-  .anomaly-card{background:var(--surface2);border:1px solid rgba(245,158,11,.2);
-                border-radius:var(--radius-sm);padding:14px 16px;font-size:13px}
-  .anomaly-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-  .anomaly-type{font-weight:600;color:var(--orange)}
-  .anomaly-severity{font-size:11px;padding:2px 8px;border-radius:999px;font-weight:600}
-  .anomaly-severity.high{background:var(--red-bg);color:var(--red)}
-  .anomaly-severity.medium{background:var(--orange-bg);color:var(--orange)}
-  .anomaly-severity.low{background:var(--green-bg);color:var(--green)}
-  .anomaly-detail{color:var(--text-dim);line-height:1.6}
-  .anomaly-status{font-size:11px;color:var(--text-muted);margin-top:6px}
-
-  /* Tools Trace */
-  .tool-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-  .tool-tag{font-size:11px;background:var(--surface2);border:1px solid var(--border);
-            border-radius:6px;padding:4px 10px;color:var(--text-muted)}
-
-  /* Error */
-  .error-msg{background:var(--red-bg);border:1px solid rgba(239,68,68,.25);
-             border-radius:var(--radius);padding:18px;color:var(--red);margin-top:24px;
-             animation:slideUp .3s ease-out;font-size:14px}
-
-  /* Footer */
-  .footer{text-align:center;margin-top:56px;color:var(--text-muted);font-size:12px}
-
-  /* Responsive */
+  /* ── Responsive ─────────────────────── */
   @media(max-width:600px){
-    .app{padding:16px 12px 60px}
-    .result-card{padding:18px}
-    .state-badges{flex-direction:column;gap:8px}
+    .chat-messages{padding:12px 10px 4px}
+    .chat-input-bar{padding:8px 10px 12px}
+    .msg-bubble{max-width:88%}
+    .welcome-logo{font-size:32px}
+    .quick-btn{font-size:11px;padding:7px 11px}
+    .result-card{padding:16px}
   }
 </style>
 </head>
 <body>
-<div class="app">
-  <!-- Header -->
-  <div class="header">
-    <div class="logo">Mosaic</div>
-    <div class="tagline">Market Intelligence Agent — Make complex markets understandable.</div>
-  </div>
 
-  <!-- What is happening? -->
-  <div class="hero">
-    <div class="hero-title">What is happening?</div>
-  </div>
+<!-- ═══ Header ═══ -->
+<div class="chat-header">
+  <div class="logo">MOSAIC</div>
+  <div class="tagline">Market Intelligence Agent</div>
+</div>
 
-  <!-- Input -->
-  <div class="input-card">
-    <textarea id="q" placeholder="今天 A 股发生了什么？"></textarea>
-    <button class="btn" id="askBtn" onclick="ask()">开始调查</button>
+<!-- ═══ Messages ═══ -->
+<div class="chat-messages" id="messages">
+  <!-- Welcome screen (hidden after first message) -->
+  <div class="welcome" id="welcome">
+    <div class="welcome-logo">Mosaic</div>
+    <div class="welcome-tagline">Make complex markets understandable.</div>
+    <div class="welcome-prompt">What is happening?</div>
     <div class="quick">
-      <button class="quick-btn" onclick="fill('今天 A 股发生了什么？')">📊 今日市场状态</button>
-      <button class="quick-btn" onclick="fill('今天 A 股为什么这么弱？')">❓ 归因分析</button>
+      <button class="quick-btn" onclick="fill('今天A股发生了什么？')">📊 今日市场状态</button>
+      <button class="quick-btn" onclick="fill('今天A股为什么这么弱？')">❓ 归因分析</button>
       <button class="quick-btn" onclick="fill('今天最强的题材是什么？')">🔥 最强题材</button>
       <button class="quick-btn" onclick="fill('今天有什么异常？')">🚨 异常检测</button>
-      <button class="quick-btn" onclick="fill('BTC 最近上涨健康吗？')">₿ BTC 状况</button>
+      <button class="quick-btn" onclick="fill('BTC最近上涨健康吗？')">₿ BTC状况</button>
       <button class="quick-btn" onclick="fill('帮我研究贵州茅台')">🔬 个股研究</button>
     </div>
   </div>
-
-  <!-- Result Container -->
-  <div id="result"></div>
-
-  <div class="footer">Powered by Mosaic × Market Gateway MCP</div>
 </div>
 
-<script>
-// ── Helpers ──────────────────────────────────
-let currentStream = null;
+<!-- ═══ Input Bar ═══ -->
+<div class="chat-input-bar" id="inputBar">
+  <div class="input-row">
+    <textarea class="input-field" id="q" placeholder="提问…" rows="1"></textarea>
+    <button class="send-btn" id="askBtn" onclick="ask()" title="发送">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>
+  </div>
+  <div class="hint" id="hint">Shift+Enter 换行 · Enter 发送</div>
+</div>
 
-function fill(v) { document.getElementById('q').value = v; }
+<!-- ═══ Footer ═══ -->
+<div class="chat-footer">Powered by Mosaic × Market Gateway</div>
+
+<script>
+// ── State ────────────────────────────────────
+let currentConversationId = null;
+let lastErrorTimeout = null;
+
+// ── Helpers ──────────────────────────────────
+function fill(v) { document.getElementById('q').value = v; ask(); }
 
 function esc(s) {
   if (s == null) return '';
-  const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
-  return String(s).replace(/[&<>"']/g, c => map[c]);
+  const m = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+  return String(s).replace(/[&<>"']/g, c => m[c]);
 }
 
 function confColor(c) {
-  if (c === 'high')   return '#22c55e';
+  if (c === 'high') return '#22c55e';
   if (c === 'medium') return '#f59e0b';
   return '#ef4444';
 }
@@ -222,141 +246,164 @@ function confColor(c) {
 function stateBadgeClass(label) {
   if (!label || label === 'Unknown') return 'unknown';
   const l = label.toLowerCase();
-  if (/risk-off|danger|risk/i.test(l))          return 'risk-off';
-  if (/risk-on|bullish|expansion/i.test(l))     return 'risk-on';
-  if (/theme cool|cooling|crowded/i.test(l))    return 'neutral';
-  if (/theme rotat|rotation/i.test(l))          return 'mixed';
-  if (/leverage|liquidation/i.test(l))          return 'risk-off';
+  if (/risk-off|danger|risk/i.test(l)) return 'risk-off';
+  if (/risk-on|bullish|expansion/i.test(l)) return 'risk-on';
+  if (/theme cool|cooling|crowded/i.test(l)) return 'neutral';
+  if (/theme rotat|rotation/i.test(l)) return 'mixed';
+  if (/leverage|liquidation/i.test(l)) return 'risk-off';
   if (/safe-haven|commodity strength|recovery/i.test(l)) return 'risk-on';
-  if (/neutral|mixed/i.test(l))                 return 'mixed';
+  if (/neutral|mixed/i.test(l)) return 'mixed';
   return 'unknown';
 }
 
 function confidencePct(c) {
-  if (c === 'high')   return 85;
+  if (c === 'high') return 85;
   if (c === 'medium') return 55;
   return 25;
 }
 
-// ── Ask (default: SSE stream, fallback to sync) ──
-async function ask() {
-  const q = document.getElementById('q').value.trim();
-  if (!q) return;
+// ── Append messages ──────────────────────────
+function getMessages() { return document.getElementById('messages'); }
 
-  const btn = document.getElementById('askBtn'), out = document.getElementById('result');
-  btn.disabled = true;
-
-  // Show researching with animated steps
-  out.innerHTML = buildLoadingState();
-
-  try {
-    // Try SSE first
-    let done = false;
-    let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      if (currentStream) currentStream.abort();
-    }, 120000); // 2 min timeout
-
-    try {
-      await runSSE(q, out, step => updateProgress(out, step));
-      done = true;
-    } catch(e) {
-      if (timedOut) throw new Error('请求超时，请稍后重试');
-      // Fallback to sync
-    }
-
-    if (!done) {
-      const r = await fetch('/api/ask', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({question: q})
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || '请求失败');
-      renderResult(data.report, out);
-    }
-  } catch(e) {
-    out.innerHTML = `<div class="error-msg"><strong>调查失败</strong><br>${esc(e.message)}</div>`;
-  } finally {
-    btn.disabled = false;
-    clearTimeout(timeout);
-  }
+function hideWelcome() {
+  const w = document.getElementById('welcome');
+  if (w && w.style.display !== 'none') w.style.display = 'none';
 }
 
-// ── Loading State Builders ────────────────
-const researchPhases = [
-  "理解问题并生成研究计划",
-  "调用 Market Gateway Tools",
-  "整理证据链并交叉验证",
-  "生成结构化市场情报"
-];
-
-function buildLoadingState() {
-  return `
-    <div class="loading" id="loadingArea">
-      <div class="loading-title">Mosaic 正在调查…</div>
-      <div class="loading-sub" id="loadingStep">第一步：理解问题</div>
-      <div class="research-steps" id="stepList">
-        ${researchPhases.map((p,i) => `
-          <div class="research-step" data-index="${i}" style="animation-delay:${i*0.4}s">
-            <span class="icon">${i===0?'⋯':'○'}</span>
-            <span>${p}</span>
-          </div>
-        `).join('')}
-      </div>
-    </div>`;
-}
-
-function updateProgress(container, stepInfo) {
-  if (!container) return;
-
-  // Update progress text and step indicators
-  const loadingArea = container.querySelector('#loadingArea');
-  if (loadingArea) {
-    const stepText = document.getElementById('loadingStep');
-    if (stepText) stepText.textContent = stepInfo.message;
-
-    const stepIdx = stepInfo.index;
-    const stepList = document.getElementById('stepList');
-    if (stepList && stepIdx != null) {
-      const steps = stepList.querySelectorAll('.research-step');
-      steps.forEach((el, i) => {
-        el.classList.remove('done', 'active');
-        if (i < stepIdx) el.classList.add('done');
-        if (i === stepIdx) el.classList.add('active');
-        if (i > stepIdx) {}
-        const icon = el.querySelector('.icon');
-        if (icon) {
-          if (i < stepIdx) icon.textContent = '✓';
-          else if (i === stepIdx) icon.textContent = '◉';
-          else icon.textContent = '○';
-        }
-      });
-    }
+function scrollToBottom(smooth) {
+  const el = getMessages();
+  if (smooth !== false) {
+    el.scrollTo({top: el.scrollHeight, behavior: 'smooth'});
   } else {
-    // Already in result mode — nothing to do
+    el.scrollTop = el.scrollHeight;
   }
 }
 
-// ── SSE Consumer ──────────────────────────
-function runSSE(question, container, onProgress) {
-  return new Promise((resolve, reject) => {
-    const url = `/api/ask/stream`;
-    const body = JSON.stringify({question});
+function addUserBubble(text) {
+  hideWelcome();
+  const row = document.createElement('div');
+  row.className = 'msg-row user';
+  row.innerHTML = `<div class="msg-avatar">你</div><div class="msg-bubble"><div class="user-question">${esc(text)}</div></div>`;
+  getMessages().appendChild(row);
+  scrollToBottom(false);
+}
 
-    fetch(url, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: body,
-    })
+function addAILoader(message) {
+  hideWelcome();
+  const steps = [
+    "理解问题并生成研究计划",
+    "调用 Market Gateway Tools",
+    "整理证据链并交叉验证",
+    "生成结构化市场情报"
+  ];
+  const row = document.createElement('div');
+  row.className = 'msg-row ai loading-indicator-msg';
+  row.id = 'ai-loading';
+  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble"><div class="loading-text">${esc(message)}</div><div class="research-steps" id="stepList">${steps.map((p,i) => `<div class="research-step" data-index="${i}"><span class="icon">○</span>${esc(p)}</div>`).join('')}</div></div>`;
+  getMessages().appendChild(row);
+  scrollToBottom(false);
+}
+
+function updateLoader(index, text) {
+  const row = document.getElementById('ai-loading');
+  if (!row) return;
+  const txt = row.querySelector('.loading-text');
+  if (txt) txt.textContent = text;
+  const list = document.getElementById('stepList');
+  if (!list) return;
+  const items = list.querySelectorAll('.research-step');
+  items.forEach((el, i) => {
+    el.classList.remove('done', 'active');
+    if (i < index) { el.classList.add('done'); el.querySelector('.icon').textContent = '✓'; }
+    else if (i === index) { el.classList.add('active'); el.querySelector('.icon').textContent = '◉'; }
+    else { el.querySelector('.icon').textContent = '○'; }
+  });
+  scrollToBottom(true);
+}
+
+function removeLoader() {
+  const row = document.getElementById('ai-loading');
+  if (row) row.remove();
+}
+
+function addErrorBubble(message) {
+  const row = document.createElement('div');
+  row.className = 'msg-row ai';
+  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble"><div class="error-msg"><strong>调查失败</strong><br>${esc(message)}</div></div>`;
+  getMessages().appendChild(row);
+  scrollToBottom(false);
+}
+
+function addAIResponse(report) {
+  const row = document.createElement('div');
+  row.className = 'msg-row ai';
+  const c = confColor(report.confidence || 'low');
+  const badgeCls = stateBadgeClass(report.state_label);
+  const pct = confidencePct(report.confidence);
+
+  const anomalies = (report.anomalies || []).map(a => `
+    <div class="anomaly-card"><div class="anomaly-header">
+      <span class="anomaly-type">🚨 ${esc(a.description || a.type || 'Anomaly')}</span>
+      ${a.severity?`<span class="anomaly-severity ${esc(a.severity)}">${esc(a.severity.toUpperCase())}</span>`:''}
+    </div><div class="anomaly-detail">
+      ${a.metric?`<div><strong>指标:</strong> ${esc(a.metric)}</div>`:''}
+      ${a.value!=null?`<div><strong>当前值:</strong> ${esc(String(a.value))}</div>`:''}
+      ${a.normal_range?`<div><strong>正常范围:</strong> ${esc(a.normal_range)}</div>`:''}
+      ${a.possible_meaning?`<div><strong>可能含义:</strong> ${esc(a.possible_meaning)}</div>`:''}
+    </div><div class="anomaly-status">状态: ${esc(a.status||'Investigating...')}</div></div>`).join('');
+
+  const tools = (report.used_tools || []).map(t => `<span class="tool-tag">${esc(t)}</span>`).join('');
+  const strongHtml = report.strong_areas?.length
+    ? `<div class="section"><h2>🔥 What's Moving</h2><ul>${report.strong_areas.map(a=>`<li>${esc(a)}</li>`).join('')}</ul></div>` : '';
+  const changedHtml = report.what_changed?.length
+    ? `<div class="section"><h2>↔️ What Changed</h2><ul>${report.what_changed.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></div>` : '';
+  const mattersHtml = report.what_matters?.length
+    ? `<div class="section"><h2>👁️ What Matters</h2><ul>${report.what_matters.map(m=>`<li>${esc(m)}</li>`).join('')}</ul></div>` : '';
+  const risksHtml = report.risks?.length
+    ? `<div class="section"><h2>⚠️ Risks & Contradiction</h2><ul>${report.risks.map(r=>`<li>${esc(r)}</li>`).join('')}</ul></div>` : '';
+  const anomalyHtml = report.anomalies?.length
+    ? `<div class="section"><h2>🚨 What's Unusual</h2><div class="anomaly-grid">${anomalies}</div></div>` : '';
+
+  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble"><div class="result-card">
+    <div class="result-header">
+      <div class="result-title">${esc(report.title || '今日市场情报')}</div>
+      <div class="state-badges"><div class="state-badge ${badgeCls}">${esc(report.state_label||'N/A')} · ${esc(report.market_state||'')}</div></div>
+      <div class="conf-section"><div class="conf-row">
+        <span class="conf-label" style="color:${c}">${(report.confidence||'LOW').toUpperCase()}</span>
+        <div class="conf-bar"><div class="conf-fill" style="width:${pct}%;background:${c}"></div></div>
+        <span>${report.confidence==='high'?'数据高度一致':report.confidence==='medium'?'存在一定支持，仍有不确定性':'证据不足'}</span>
+      </div></div>
+    </div>
+    <div class="section"><h2>📋 What Happened</h2><div class="section-body">${esc(report.what_happened)}</div></div>
+    ${report.why?.length?`<div class="section"><h2>🔬 Why</h2><ul>${report.why.map(w=>`<li>${esc(w)}</li>`).join('')}</ul></div>`:''}
+    ${strongHtml}${changedHtml}
+    ${mattersHtml}${risksHtml}${anomalyHtml}
+    ${report.data_caveats?.length?`<div class="section"><h2>📝 Data Caveats</h2><ul>${report.data_caveats.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></div>`:''}
+    <div class="section"><h2>⚙️ Tools Used (${report.used_tools?.length||0})</h2><div class="tool-tags">${tools||'<span class="tool-tag">没有成功调用 Tool</span>'}</div></div>
+  </div></div>`;
+  getMessages().appendChild(row);
+  scrollToBottom(true);
+}
+
+// ── Auto-resize textarea ───────────────────
+function autoResizeTa() {
+  const ta = document.getElementById('q');
+  if (!ta) return;
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+}
+
+// ── SSE Consumer ───────────────────────────
+function runSSE(question, onProgress, resolve, reject) {
+  const url = '/api/ask/stream';
+  const body = JSON.stringify({ question, conversation_id: currentConversationId });
+
+  fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body })
     .then(async (response) => {
       if (!response.ok) {
-        const err = await response.json().catch(() => ({detail: 'Request failed'}));
-        reject(new Error(err.detail || '请求失败'));
-        return;
+        const err = await response.json().catch(() => ({detail:'Request failed'}));
+        reject(new Error(err.detail || '请求失败')); return;
       }
-
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -365,206 +412,108 @@ function runSSE(question, container, onProgress) {
       while (true) {
         const {done, value} = await reader.read();
         if (done) break;
-
-        buffer += decoder.decode(value, {stream: true});
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const chunk of lines) {
+        buffer += decoder.decode(value, {stream:true});
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() || '';
+        for (const chunk of chunks) {
           const trimmed = chunk.trim();
           if (!trimmed) continue;
-
-          // Parse SSE events
-          const events = trimmed.split('\n');
+          const lines = trimmed.split('\n');
           let eventType = null, eventData = null;
-
-          for (const line of events) {
+          for (const line of lines) {
             if (line.startsWith('event: ')) eventType = line.slice(7).trim();
             if (line.startsWith('data: ')) eventData = line.slice(6).trim();
           }
-
           if (!eventType || !eventData) continue;
-
           try {
             const data = JSON.parse(eventData);
-
             if (eventType === 'progress') {
               onProgress(data);
-              if (!started) {
-                started = true;
-                // Keep the loading state
-              }
+              started = true;
             }
-
             if (eventType === 'result') {
-              renderResult(data, container);
-              resolve();
+              // Strip trailing newline from loading indicator
+              resolve(data);
               return;
             }
-          } catch(e) {
-            console.warn('SSE parse error:', e);
-          }
+          } catch(e) { console.warn('SSE parse:', e); }
         }
       }
-
       if (!started) reject(new Error('未收到数据'));
-      else resolve();
-    })
-    .catch(reject);
-  });
+      else resolve(null);
+    }).catch(reject);
 }
 
-// ── Render Result ─────────────────────────
-function renderResult(report, container) {
-  const c = confColor(report.confidence || 'low');
-  const badgeCls = stateBadgeClass(report.state_label);
-  const confPct = confidencePct(report.confidence);
+// ── Main ask function ──────────────────────
+async function ask() {
+  const ta = document.getElementById('q');
+  const q = ta ? ta.value.trim() : '';
+  if (!q) return;
 
-  // Build evidence items
-  const evidence = (report.evidence || []).map(e => `
-    <div class="ev-item">
-      <div class="ev-meta">
-        <span class="ev-tag src">${esc(e.source_tool || e.tool)}</span>
-        <span class="ev-tag metric">${esc(e.metric || '')}</span>
-        ${(e.partial || e.status !== 'success') ? '<span class="ev-tag" style="background:rgba(245,158,11,.12);color:#f59e0b">'+esc(e.status || 'partial')+'</span>' : ''}
-        ${e.timestamp ? '<span>'+esc(e.timestamp)+'</span>' : ''}
-      </div>
-      ${esc(JSON.stringify(e.value ?? e, null, 2))}
-    </div>
-  `).join('');
+  if (!currentConversationId) currentConversationId = crypto.randomUUID();
 
-  // Build anomalies
-  const anomalies = (report.anomalies || []).map(a => `
-    <div class="anomaly-card">
-      <div class="anomaly-header">
-        <span class="anomaly-type">🚨 ${esc(a.description || a.type || 'Anomaly')}</span>
-        ${a.severity ? `<span class="anomaly-severity ${esc(a.severity)}">${esc(a.severity.toUpperCase())}</span>` : ''}
-      </div>
-      <div class="anomaly-detail">
-        ${a.metric ? `<div><strong>指标:</strong> ${esc(a.metric)}</div>` : ''}
-        ${a.value != null ? `<div><strong>当前值:</strong> ${esc(String(a.value))}</div>` : ''}
-        ${a.normal_range ? `<div><strong>正常范围:</strong> ${esc(a.normal_range)}</div>` : ''}
-        ${a.possible_meaning ? `<div><strong>可能含义:</strong> ${esc(a.possible_meaning)}</div>` : ''}
-      </div>
-      <div class="anomaly-status">状态: ${esc(a.status || 'Investigating...')}</div>
-    </div>
-  `).join('');
+  const btn = document.getElementById('askBtn');
+  btn.disabled = true;
 
-  // Tools trace
-  const tools = (report.used_tools || []).map(t => `<span class="tool-tag">${esc(t)}</span>`).join('');
+  // Add user bubble
+  addUserBubble(q);
+  ta.value = '';
+  ta.style.height = 'auto';
+  autoResizeTa();
 
-  // What's Moving (strong_areas)
-  const strongHtml = report.strong_areas?.length
-    ? `<div class="section">
-        <h2>🔥 What's Moving</h2>
-        <ul>${report.strong_areas.map(a=>`<li>${esc(a)}</li>`).join('')}</ul>
-      </div>` : '';
+  // Show loading
+  addAILoader('正在调查…');
 
-  // What Changed
-  const changedHtml = report.what_changed?.length
-    ? `<div class="section">
-        <h2>↔️ What Changed</h2>
-        <ul>${report.what_changed.map(c=>`<li>${esc(c)}</li>`).join('')}</ul>
-      </div>` : '';
+  let timedOut = false;
+  lastErrorTimeout = setTimeout(() => { timedOut = true }, 120000);
 
-  // What Matters
-  const mattersHtml = report.what_matters?.length
-    ? `<div class="section">
-        <h2>👁️ What Matters</h2>
-        <ul>${report.what_matters.map(m=>`<li>${esc(m)}</li>`).join('')}</ul>
-      </div>` : '';
+  try {
+    let done = false;
+    try {
+      await new Promise((resolve, reject) => {
+        runSSE(q, (data) => updateLoader(0, data.message || '调查中…'), resolve, reject);
+      });
+      done = true;
+    } catch(e) {
+      if (timedOut) throw new Error('请求超时，请稍后重试');
+    }
 
-  // Risks
-  const risksHtml = report.risks?.length
-    ? `<div class="section">
-        <h2>⚠️ Risks & Contradiction</h2>
-        <ul>${report.risks.map(r=>`<li>${esc(r)}</li>`).join('')}</ul>
-      </div>` : '';
-
-  // Anomalies section
-  const anomalyHtml = report.anomalies?.length
-    ? `<div class="section">
-        <h2>🚨 What's Unusual</h2>
-        <div class="anomaly-grid">${anomalies}</div>
-      </div>` : '';
-
-  container.innerHTML = `
-    <div class="result-card">
-      <div class="result-header">
-        <div class="result-title">${esc(report.title || '今日市场情报')}</div>
-        <div class="state-badges">
-          <div class="state-badge ${badgeCls}">
-            ${esc(report.state_label || 'N/A')} · ${esc(report.market_state || '')}
-          </div>
-        </div>
-
-        <!-- Confidence -->
-        <div class="conf-section">
-          <div class="conf-row">
-            <span class="conf-label" style="color:${c}">${(report.confidence||'LOW').toUpperCase()}</span>
-            <div class="conf-bar"><div class="conf-fill" style="width:${confPct}%;background:${c}"></div></div>
-            <span>${report.confidence==='high'?'数据高度一致':report.confidence==='medium'?'存在一定支持，仍有不确定性':'证据不足'}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- What Happened -->
-      <div class="section">
-        <h2>📋 What Happened</h2>
-        <div class="section-body">${esc(report.what_happened)}</div>
-      </div>
-
-      <!-- Why -->
-      ${report.why?.length ? `
-      <div class="section">
-        <h2>🔬 Why</h2>
-        <ul>${report.why.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>
-      </div>` : ''}
-
-      ${strongHtml}
-      ${changedHtml}
-
-      <!-- Evidence Toggle -->
-      ${(report.evidence?.length) ? `
-      <div class="section">
-        <h2>🧱 Evidence (${report.evidence.length})</h2>
-        <div class="ev-toggle" onclick="toggleEvidence(this)" style="display:none"></div>
-        <div class="ev-grid">${evidence}</div>
-      </div>` : ''}
-
-      ${mattersHtml}
-      ${risksHtml}
-      ${anomalyHtml}
-
-      <!-- Data Caveats -->
-      ${report.data_caveats?.length ? `
-      <div class="section">
-        <h2>📝 Data Caveats</h2>
-        <ul>${report.data_caveats.map(c=>`<li>${esc(c)}</li>`).join('')}</ul>
-      </div>` : ''}
-
-      <!-- Tool Trace -->
-      <div class="section">
-        <h2>⚙️ Tools Used (${report.used_tools?.length || 0})</h2>
-        <div class="tool-tags">${tools || '<span class="tool-tag">没有成功调用 Tool</span>'}</div>
-      </div>
-    </div>`;
+    if (!done) {
+      const r = await fetch('/api/ask', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({question: q, conversation_id: currentConversationId})
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || '请求失败');
+      removeLoader();
+      renderResult(data);
+    }
+  } catch(e) {
+    removeLoader();
+    addErrorBubble(e.message);
+  } finally {
+    btn.disabled = false;
+    clearTimeout(lastErrorTimeout);
+    // Reset hint for follow-up
+    const hint = document.getElementById('hint');
+    if (hint) hint.textContent = '追问…（例如：那茅台呢？）';
+  }
 }
 
-function toggleEvidence(el) {
-  const grid = el.nextElementSibling;
-  const isOpen = grid.style.display !== 'none';
-  grid.style.display = isOpen ? 'none' : 'block';
-  el.textContent = isOpen ? 'Show Evidence ▾' : 'Hide Evidence ▴';
+function renderResult(data) {
+  const report = data.report || data;
+  if (data.conversation_id) currentConversationId = data.conversation_id;
+  addAIResponse(report);
 }
 
-// Enter to submit
+// ── Events ──────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const ta = document.getElementById('q');
   if (ta) {
-    ta.addEventListener('keydown', e => {
+    ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
     });
+    ta.addEventListener('input', autoResizeTa);
   }
 });
 </script>
