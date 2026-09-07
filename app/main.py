@@ -21,17 +21,23 @@ logger = logging.getLogger("mosaic.app")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):  # noqa: F841 — FastAPI passes app instance
     """Application startup health check + brief scheduler."""
-    settings = get_settings()
+    global _settings, _orchestrator
+
+    # 初始化 settings
+    _settings = get_settings()
     missing = []
-    if not settings.openai_api_key:
+    if not _settings.openai_api_key:
         missing.append("OPENAI_API_KEY")
-    if settings.market_gateway_mode == "http" and not settings.market_gateway_api_key:
+    if _settings.market_gateway_mode == "http" and not _settings.market_gateway_api_key:
         missing.append("MARKET_GATEWAY_API_KEY (HTTP mode)")
     if missing:
         logger.warning("Missing configuration: %s", ", ".join(missing))
     else:
         logger.info("Configuration OK: gateway=%s model=%s",
-                     settings.market_gateway_mode, settings.openai_model)
+                     _settings.market_gateway_mode, _settings.openai_model)
+
+    # 懒初始化 orchestrator
+    _orchestrator = Orchestrator(_settings)
 
     # Start brief scheduler
     from app.scheduler.briefs import start_brief_scheduler
@@ -48,16 +54,37 @@ async def lifespan(_app: FastAPI):  # noqa: F841 — FastAPI passes app instance
 
 app = FastAPI(
     title="Mosaic",
-    version="0.1.0",
+    version="0.1.1",
     description="Market Intelligence Agent — See the market, not just the data.",
     lifespan=lifespan,
 )
-settings = get_settings()
-orchestrator = Orchestrator(settings)
 
-# 初始化 Market Memory
+# 懒加载：避免模块加载时初始化崩溃
+_settings: dict | None = None
+_orchestrator: object | None = None
+_settings_lock = __import__("threading").Lock()
+
+# 初始化 Market Memory（轻量，文件缓存，模块级安全）
 from app.memory.storage import MarketMemory
 memory = MarketMemory()
+
+
+def _get_settings():
+    global _settings
+    if _settings is None:
+        with _settings_lock:
+            if _settings is None:
+                _settings = get_settings()
+    return _settings
+
+
+def _get_orchestrator():
+    global _orchestrator
+    if _orchestrator is None:
+        with _settings_lock:
+            if _orchestrator is None:
+                _orchestrator = Orchestrator(_get_settings())
+    return _orchestrator
 
 INDEX = Path(__file__).parent / "web" / "index.html"
 
@@ -65,12 +92,13 @@ INDEX = Path(__file__).parent / "web" / "index.html"
 @app.get("/health")
 async def health():
     from app.scheduler.briefs import is_running as scheduler_running
+    _s = _get_settings()
     return {
         "status": "ok",
         "service": "mosaic",
-        "gateway_mode": settings.market_gateway_mode,
-        "model": settings.openai_model,
-        "max_tool_calls": settings.max_tool_calls,
+        "gateway_mode": _s.market_gateway_mode,
+        "model": _s.openai_model,
+        "max_tool_calls": _s.max_tool_calls,
         "brief_scheduler": "running" if scheduler_running() else "stopped",
     }
 
@@ -80,7 +108,7 @@ async def morning_brief_endpoint():
     """触发晨间简报生成。"""
     try:
         from app.scheduler.briefs import generate_morning_brief
-        brief = await generate_morning_brief(settings=settings, memory=memory)
+        brief = await generate_morning_brief(settings=_get_settings(), memory=memory)
         memory.save_daily_state(data={"type": "morning_brief", **brief})
         return JSONResponse(content=brief)
     except Exception as exc:
@@ -93,7 +121,7 @@ async def evening_brief_endpoint():
     """触发晚间简报生成。"""
     try:
         from app.scheduler.briefs import generate_evening_brief
-        brief = await generate_evening_brief(settings=settings, memory=memory)
+        brief = await generate_evening_brief(settings=_get_settings(), memory=memory)
         memory.save_daily_state(data={"type": "evening_brief", **brief})
         return JSONResponse(content=brief)
     except Exception as exc:
@@ -126,7 +154,7 @@ async def ask(request: dict):
     try:
         logger.info("Received question: %s (len=%d) domain=%s conv_id=%s",
                      question[:50], len(question), domain, conversation_id)
-        result = await orchestrator.run(question, domain=domain, conversation_id=conversation_id)
+        result = await _get_orchestrator().run(question, domain=domain, conversation_id=conversation_id)
         data = result.model_dump()
 
         # 保存研究记录到 Memory
@@ -190,7 +218,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
 
     # Phase 2-4: Delegate to full investigate, but emit progress periodically
     # We run investigate() in a background task and poll its progress
-    detective = orchestrator.market_detective
+    detective = _get_orchestrator().market_detective
 
     async def run_investigation():
         """Run the full investigation and return the result."""
