@@ -1,129 +1,191 @@
-"""Market Memory — 市场记忆持久化。
+"""Market Memory — 市场记忆持久化 (SQLite)。
 
-保存每日 Market State、主题强弱、异常记录、重要变化和用户研究记录，
+存储每日 Market State、主题强弱、异常记录、重要变化和用户研究记录，
 支持跨日历史比较（PRD §38-39）。
 
-存储方案：JSON 文件（轻量 MVP，后续可换 SQLite/PostgreSQL）
-存储路径：~/.mosaic/memory/ 或项目内 .mosaic_memory/
-
-核心功能：
-- save_daily_state: 保存每日 Market State 快照
-- get_recent_states: 获取最近 N 天的状态（用于对比变化）
-- record_anomaly: 记录异常事件
-- get_anomalies: 查询历史异常
-- save_research: 保存用户研究记录
-- search_context: 根据关键词搜索记忆内容（给 Reasoning 注入历史上下文）
+存储方案：SQLite WAL 模式（ACID + 并发安全）
+存储路径：~/.mosaic/memory.db
 """
 
+from datetime import UTC, datetime
 import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from sqlite3 import Connection as SQLite3Connection
+from typing import Any, final
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-# 默认存储位置
-DEFAULT_MEMORY_DIR = Path.home() / ".mosaic" / "memory"
+
+def _sqlite_connection_factory(path: Path) -> SQLite3Connection:
+    """创建 SQLite 连接，开启 WAL 模式和 JSON1 扩展。"""
+    conn = SQLite3Connection(str(path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    # SQLite 3.38+ 内置 json() 函数；旧版本需要加载扩展（极少见）
+    return conn
 
 
+# ── Schema ────────────────────────────────────────────────────────────────
+
+_INIT_SQL = """
+CREATE TABLE IF NOT EXISTS daily_states (
+    date        TEXT PRIMARY KEY,
+    data        TEXT NOT NULL,
+    saved_at    TEXT,
+    version     TEXT DEFAULT '0.1'
+);
+
+CREATE TABLE IF NOT EXISTS anomalies (
+    id          TEXT PRIMARY KEY,
+    date        TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    recorded_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS research_records (
+    id          TEXT PRIMARY KEY,
+    question    TEXT NOT NULL,
+    response    TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    user_id     TEXT DEFAULT 'anonymous'
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    turn_index      INTEGER NOT NULL,
+    question        TEXT NOT NULL,
+    answer_summary  TEXT,
+    created_at      TEXT,
+    UNIQUE(conversation_id, turn_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_anomalies_date ON anomalies(date DESC);
+CREATE INDEX IF NOT EXISTS idx_research_created ON research_records(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_conv ON conversations(conversation_id, turn_index);
+"""
+
+
+@final
 class MarketMemory:
-    """市场记忆系统。
+    """市场记忆系统（SQLite 后端）。
 
-    使用目录结构组织数据：
-    ~/.mosaic/memory/
-    ├── daily/         # 每日 Market State
-    │   └── 2025-09-05.json
-    ├── anomalies/     # 异常记录
-    │   └── 2025-09-05.json
-    └── research/      # 用户研究记录
-        └── 2025-09-05_163247.json
+    使用单个数据库文件组织所有数据：
+    ~/.mosaic/memory.db
+
+    表结构：daily_states / anomalies / research_records / conversations
     """
 
-    def __init__(self, base_dir: Path | None = None):
-        self.base_dir = base_dir or DEFAULT_MEMORY_DIR
-        self._ensure_dirs()
+    def __init__(self, db_path: Path | None = None):
+        self.db_path = db_path or (Path.home() / ".mosaic" / "memory.db")
+        self._conn: SQLite3Connection | None = None
+        # Ensure directory exists and initialize schema eagerly (before any caller uses conn)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_schema()
 
-    def _ensure_dirs(self) -> None:
-        for sub in ("daily", "anomalies", "research", "conversations"):
-            (self.base_dir / sub).mkdir(parents=True, exist_ok=True)
+    @property
+    def conn(self) -> SQLite3Connection:
+        if self._conn is None:
+            self._conn = _sqlite_connection_factory(self.db_path)
+            self._conn.row_factory = None  # return tuples, not dicts
+        return self._conn
+
+    def _ensure_schema(self) -> None:
+        """初始化数据库 schema（幂等）。"""
+        with self.conn as c:
+            c.executescript(_INIT_SQL)
+
+    # ── Helpers ─────────────────────────────────
 
     def _today(self) -> str:
         return datetime.now(UTC).strftime("%Y-%m-%d")
 
-    # ── Daily State ────────────────────────
+    # ── Daily State ───────────────────────────
 
     def save_daily_state(self, date: str | None = None, data: dict[str, Any] | None = None) -> str:
-        """保存每日 Market State 快照。
+        """保存每日 Market State 快照（upsert，合并字段）。
 
         Args:
             date: YYYY-MM-DD 格式日期；None → 今天
             data: {a_share_state, crypto_state, themes, strong_areas, ...}
 
         Returns:
-            保存的文件路径
+            保存的日期字符串
         """
         date = date or self._today()
-        filename = f"{date}.json"
-        filepath = self.base_dir / "daily" / filename
-
-        if filepath.exists():
-            try:
-                existing = json.loads(filepath.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    existing.update(data)
-                data = existing
-            except (json.JSONDecodeError, OSError) as exc:
-                logger.warning("Failed to read existing state %s: %s", filepath, exc)
-
-        data = data or {}
-        data.setdefault("_saved_at", datetime.now(UTC).isoformat())
+        data = dict(data) if data else {}
+        ts = datetime.now(UTC).isoformat()
+        data.setdefault("_saved_at", ts)
         data.setdefault("_version", "0.1")
 
-        try:
-            filepath.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-            logger.info("Saved daily state for %s → %s", date, filepath)
-        except OSError as exc:
-            logger.error("Failed to save daily state: %s", exc)
+        # Read existing to merge (single round-trip)
+        existing = self.conn.execute(
+            "SELECT data FROM daily_states WHERE date = ?", (date,)
+        ).fetchone()
 
-        return str(filepath)
+        if existing and existing[0]:
+            try:
+                merged = json.loads(existing[0])
+                if isinstance(merged, dict):
+                    merged.update(data)
+                data = merged
+            except (json.JSONDecodeError, TypeError):
+                pass  # Corrupt data → use new data as-is
+
+        self.conn.execute(
+            """INSERT INTO daily_states (date, data, saved_at, version)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                   data = excluded.data,
+                   saved_at = excluded.saved_at,
+                   version = excluded.version""",
+            (date, json.dumps(data, ensure_ascii=False, default=str), ts, "0.1"),
+        )
+        logger.info("Saved daily state for %s", date)
+        return date
 
     def get_daily_state(self, date: str | None = None) -> dict[str, Any] | None:
         """读取指定日期的 Market State。"""
         date = date or self._today()
-        filepath = self.base_dir / "daily" / f"{date}.json"
-        if not filepath.exists():
+        row = self.conn.execute(
+            "SELECT data FROM daily_states WHERE date = ?", (date,)
+        ).fetchone()
+        if row is None:
             return None
         try:
-            return json.loads(filepath.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to read daily state %s: %s", filepath, exc)
+            return json.loads(row[0])
+        except json.JSONDecodeError:
+            logger.warning("Corrupt daily state for %s", date)
             return None
 
     def get_recent_states(self, days: int = 7, domain: str | None = None) -> list[dict[str, Any]]:
         """获取最近 N 天的 Market State。
 
         Returns:
-            [{date, a_share_state, crypto_state, ...}, ...] 按日期倒序
+            [{data, _file_date}, ...] 按日期倒序
         """
+        rows = self.conn.execute(
+            "SELECT date, data FROM daily_states ORDER BY date DESC LIMIT ?",
+            (days,),
+        ).fetchall()
+
         states: list[dict[str, Any]] = []
-        daily_dir = self.base_dir / "daily"
-
-        if not daily_dir.is_dir():
-            return states
-
-        for fpath in sorted(daily_dir.glob("*.json"), reverse=True)[:days]:
+        for date_str, data_json in rows:
             try:
-                data = json.loads(fpath.read_text(encoding="utf-8"))
-                data["_file_date"] = fpath.stem
-                if domain is None or data.get(domain.replace("_", "-")):
-                    states.append(data)
-            except (json.JSONDecodeError, OSError):
+                data = json.loads(data_json)
+            except json.JSONDecodeError:
                 continue
-
+            if domain is not None:
+                key = domain.replace("_", "-")
+                if key not in data:
+                    continue
+            data["_file_date"] = date_str
+            states.append(data)
         return states
 
-    # ── Anomalies ──────────────────────────
+    # ── Anomalies ─────────────────────────────
 
     def record_anomaly(self, anomaly_data: dict[str, Any], date: str | None = None) -> str:
         """记录一条异常事件。
@@ -133,24 +195,17 @@ class MarketMemory:
             date: YYYY-MM-DD 格式日期
 
         Returns:
-            保存路径
+            生成的 UUID
         """
         date = date or self._today()
-        filepath = self.base_dir / "anomalies" / f"{date}.json"
-
-        records: list[dict[str, Any]] = []
-        if filepath.exists():
-            try:
-                records = json.loads(filepath.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                records = []
-
-        records.append({**anomaly_data, "_recorded_at": datetime.now(UTC).isoformat()})
-        filepath.write_text(
-            json.dumps(records, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
+        record_id = str(uuid4())
+        ts = datetime.now(UTC).isoformat()
+        self.conn.execute(
+            "INSERT INTO anomalies (id, date, data, recorded_at) VALUES (?, ?, ?, ?)",
+            (record_id, date, json.dumps(anomaly_data, ensure_ascii=False, default=str), ts),
         )
-        return str(filepath)
+        logger.info("Recorded anomaly %s for %s", record_id[:8], date)
+        return record_id
 
     def get_anomalies(self, since: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         """查询历史异常。
@@ -160,139 +215,94 @@ class MarketMemory:
             limit: 最多返回多少条
 
         Returns:
-            [{..., _source_file: "..."} , ...] 按时间倒序
+            [{data, _source_date}, ...] 按时间倒序
         """
-        anomalies: list[dict[str, Any]] = []
-        anomalies_dir = self.base_dir / "anomalies"
+        if since:
+            rows = self.conn.execute(
+                "SELECT date, data FROM anomalies WHERE date >= ? ORDER BY date DESC LIMIT ?",
+                (since, limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT date, data FROM anomalies ORDER BY date DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
 
-        if not anomalies_dir.is_dir():
-            return anomalies
+        return [
+            {"_source_date": date_str, **json.loads(data_json)}
+            for date_str, data_json in rows
+        ]
 
-        for fpath in sorted(anomalies_dir.glob("*.json"), reverse=True):
-            file_date = fpath.stem
-            if since and file_date < since:
-                break
-
-            try:
-                records = json.loads(fpath.read_text(encoding="utf-8"))
-                for rec in records:
-                    rec["_source_file"] = str(fpath.relative_to(self.base_dir))
-                anomalies.extend(records[:limit])
-            except (json.JSONDecodeError, OSError):
-                continue
-
-        return anomalies[:limit]
-
-    # ── Research History ───────────────────
+    # ── Research History ──────────────────────
 
     def save_research(self, question: str, response: dict[str, Any], user_id: str | None = None) -> str:
         """保存一次用户研究的完整记录。
 
-        用于后续回溯和趋势分析。
+        Returns:
+            生成的记录 ID
         """
-        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        record_id = str(uuid4())
+        ts = datetime.now(UTC).isoformat()
         uid = (user_id or "anonymous").replace("/", "_")
-        filename = f"{ts}_{uid}.json"
-        filepath = self.base_dir / "research" / filename
+        self.conn.execute(
+            """INSERT INTO research_records (id, question, response, created_at, user_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (record_id, question, json.dumps(response, ensure_ascii=False, default=str), ts, uid),
+        )
+        logger.info("Saved research '%s' → %s", question[:40], record_id[:8])
+        return record_id
 
-        record = {
-            "question": question,
-            "response": response,
-            "_timestamp": datetime.now(UTC).isoformat(),
-            "_version": "0.1",
-        }
-
-        try:
-            filepath.write_text(
-                json.dumps(record, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
-            logger.info("Saved research record for '%s' → %s", question[:40], filepath)
-        except OSError as exc:
-            logger.error("Failed to save research: %s", exc)
-
-        return str(filepath)
-
-    # ── Conversation History ───────────────
+    # ── Conversation History ──────────────────
 
     def save_turn(self, conversation_id: str, question: str, answer_summary: str) -> str:
         """保存一轮对话（append-store 模式）。
 
-        Args:
-            conversation_id: 对话会话 ID
-            question: 用户问题
-            answer_summary: AI 回答摘要（~200 chars）
-
         Returns:
-            保存路径
+            新轮次索引
         """
-        filepath = self.base_dir / "conversations" / f"{conversation_id}.json"
+        row = self.conn.execute(
+            "SELECT COALESCE(MAX(turn_index), 0) FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        turn_index = row[0] + 1
 
-        turns: list[dict[str, Any]] = []
-        if filepath.exists():
-            try:
-                turns = json.loads(filepath.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                turns = []
-
-        turn_index = len(turns) + 1
-        turns.append({
-            "turn_index": turn_index,
-            "question": question,
-            "answer_summary": answer_summary,
-            "_timestamp": datetime.now(UTC).isoformat(),
-        })
-
-        filepath.write_text(
-            json.dumps(turns, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
+        ts = datetime.now(UTC).isoformat()
+        self.conn.execute(
+            """INSERT INTO conversations (id, conversation_id, turn_index, question, answer_summary, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (str(uuid4()), conversation_id, turn_index, question, answer_summary, ts),
         )
-        return str(filepath)
+        return turn_index
 
     def get_conversation_history(self, conversation_id: str, last_n: int = 10) -> str:
         """获取最近 N 轮对话历史，返回纯文本格式供 Prompt 注入。
 
-        Args:
-            conversation_id: 对话会话 ID
-            last_n: 最多返回多少轮
-
         Returns:
-            格式化的纯文本，如：
-            --- 对话历史 (最后 3 轮) ---
-            Q1: 今天A股发生了什么？
-            A1: 今日市场整体走弱，涨停同步降温，状态 Theme Cooling。
-            Q2: 那贵州茅台呢？
-            A2: 贵州茅台今日小幅下跌，资金净流出 2.3 亿，暂无异常。
-            --- 对话历史结束 ---
+            格式化的纯文本
         """
-        filepath = self.base_dir / "conversations" / f"{conversation_id}.json"
+        rows = self.conn.execute(
+            """SELECT turn_index, question, answer_summary
+               FROM conversations
+               WHERE conversation_id = ?
+               ORDER BY turn_index DESC
+               LIMIT ?""",
+            (conversation_id, last_n),
+        ).fetchall()
 
-        if not filepath.exists():
+        if not rows:
             return ""
 
-        try:
-            turns = json.loads(filepath.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return ""
-
-        if not turns:
-            return ""
-
-        # 取最近 last_n 轮
-        recent = turns[-last_n:]
-
-        lines = [f"--- 对话历史 (最后 {len(recent)} 轮) ---"]
-        for t in recent:
-            q = t.get("question", "?")
-            a = t.get("answer_summary", "")
-            lines.append(f"Q{t.get('turn_index', '?')}: {q}")
-            if a:
-                lines.append(f"A{t.get('turn_index', '?')}: {a}")
+        # Reverse to chronological order (oldest first, newest last)
+        lines = [f"--- 对话历史 (最后 {len(rows)} 轮) ---"]
+        for turn_index, question, answer_summary in reversed(rows):
+            lines.append(f"Q{turn_index}: {question}")
+            if answer_summary:
+                lines.append(f"A{turn_index}: {answer_summary}")
 
         lines.append("--- 对话历史结束 ---")
         return "\n".join(lines)
 
-    # ── Search / Context ───────────────────
+    # ── Search / Context ──────────────────────
 
     def get_context_for_question(self, question: str, days_back: int = 7) -> str:
         """为给定问题生成历史上下文文本（供 Reasoning Prompt 注入）。

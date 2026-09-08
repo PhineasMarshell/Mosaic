@@ -252,6 +252,7 @@ Mosaic/
 │   ├── config.py              # Settings (Pydantic Settings)
 │   ├── cache.py               # TTL 内存缓存
 │   ├── logging_config.py      # 日志配置
+│   ├── evaluation.py          # 评估工具函数
 │   │
 │   ├── agent/
 │   │   ├── orchestrator.py    # 总控调度
@@ -265,7 +266,8 @@ Mosaic/
 │   │   ├── mcp_client.py      # MCP 协议客户端
 │   │   ├── http_client.py     # HTTP REST 客户端
 │   │   ├── tool_registry.py   # 多域工具注册表 (35 tools)
-│   │   └── normalizer.py      # 跨域数据规范化层
+│   │   ├── normalizer.py      # 跨域数据规范化层
+│   │   └── stock_codes.py     # 股票代码映射表
 │   │
 │   ├── research/
 │   │   ├── market_detective.py # 主入口：规划→执行→评估→推理+异常检测
@@ -312,7 +314,9 @@ Mosaic/
 │   ├── test_anomaly_detector.py ← 新增（44 tests）
 │   ├── test_market_memory.py  ← 新增（12 tests）
 │   ├── test_conversation.py   ← 新增：对话历史管理
-│   └── test_hk_northbound.py  ← 新增：港股通北向资金数据解析
+│   ├── test_hk_northbound.py  ← 新增：港股通北向资金数据解析
+│   ├── test_normalizer_f10.py ← 新增：F10 数据解析
+│   └── test_reasoning_parsing.py ← 新增：推理引擎解析
 │
 ├── scripts/
 │   └── verify_commodities.py  # OKX/Binance/Bybit 商品合约可用性验证
@@ -386,3 +390,4 @@ Internal project — see [Mosaic产品设计文档](../Mosaic产品设计文档.
 - **内部工具机制**：支持 `http_method="INTERNAL"` 工具绕过 Gateway 直接调用本地函数
 - **大宗商品贵金属**：OKX 永续合约接入 XAG(白银)、XPT(铂金)，共三个品种
 - **新增测试**：HK 北向资金解析、对话历史管理等 10+ 用例
+- **Bug 修复**：F10 数据解析和域名标注 bug（`test_normalizer_f10.py`）
