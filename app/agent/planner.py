@@ -13,12 +13,14 @@
       → 返回 ResearchPlan
 """
 
-import json
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from app.agent.prompts import PLANNER_PROMPT
 from app.config import Settings
+from app.errors import LLMOutputError
 from app.gateway.tool_registry import registry_text, tools_by_domain
+from app.llm_json import parse_json_object
 from app.models.research import DEFAULT_DOMAINS, MarketDomain, ResearchPlan
 
 
@@ -76,31 +78,19 @@ class Planner:
             temperature=0,
         )
 
-        content = response.choices[0].message.content or "{}"
+        content = response.choices[0].message.content
 
-        # ── JSON 提取：剥离可能的 Markdown 代码块 ──
-        import re
-        cleaned = None
-        # 尝试 ````json ... ``` 或 ```` ... ```
-        match = re.search(r"(?:```(?:json)?\s*?\n)([\s\S]*?)(?:```)", content)
-        if match:
-            cleaned = match.group(1).strip()
-        else:
-            # 直接就是纯 JSON
-            first_brace = content.find("{")
-            last_brace = content.rfind("}")
-            if first_brace != -1 and last_brace > first_brace:
-                cleaned = content[first_brace:last_brace + 1]
-            else:
-                cleaned = content.strip()
+        # 以前是 `content or "{}"` + 一段内联的围栏剥离：空 completion 会被变成
+        # 一个合法的空计划，而 ResearchPlan 全字段有默认值 → 校验通过 →
+        # domain 静默变成 "a_share"，接着触发 9 个 A 股兜底工具。
+        # qwen3.7-flash 是 thinking model，思考阶段被截断时 content 就是空的。
+        data = parse_json_object(content, source="Planner")
 
         try:
-            data = json.loads(cleaned or "{}")
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Planner returned invalid JSON:\nraw={content!r}\nerror={exc}"
-            ) from exc
+            plan = ResearchPlan.model_validate(data)
+        except ValidationError as exc:
+            # 模型吐的 JSON 语法合法但不符合 schema —— 同样是上游故障，不是客户端的错
+            raise LLMOutputError(f"Planner returned JSON that violates the schema: {exc}") from exc
 
-        plan = ResearchPlan.model_validate(data)
         plan.steps = plan.steps[: self.settings.max_research_steps]
         return plan

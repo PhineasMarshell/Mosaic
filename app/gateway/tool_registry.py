@@ -596,9 +596,20 @@ def build_mcp_tool_index(mcp_tools: list[Any]) -> dict[str, Any]:
 
 
 def get_enabled_domains() -> list[MarketDomain]:
-    """返回当前启用的市场域列表（排除 unknown）。"""
+    """返回当前**可作为研究目标**的市场域列表。
+
+    排除两类：
+      - ``unknown``：health / market_health 这类自检工具，不是市场
+      - ``cross``：klines / snapshot / window 是"任何域都能用"的工具标记，
+        不是一个可以研究的市场。它也不在 MarketDomain 的字面量里。
+
+    以前只排除 unknown，于是 "cross" 混进了这个列表，而 main.py 拿它当
+    /api/ask 的 domain 白名单 —— 结果 ``{"question":"贵州茅台怎么样",
+    "domain":"cross"}`` 能通过校验，落进兜底的 crypto 分支去研究 BTC/USDT，
+    同时 daily state 里还会多出一个非法的 "cross" 键。
+    """
     seen: set[str] = set()
     for t in ALL_TOOLS:
-        if t.domain != "unknown":
+        if t.domain not in ("unknown", "cross"):
             seen.add(t.domain)
     return sorted(seen)

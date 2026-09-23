@@ -57,7 +57,11 @@ class HumanFormatter(logging.Formatter):
         return f"[{ts}] {level} {logger_name}: {msg}"
 
 
-def setup_logging(level: str = "INFO", json_format: bool | None = None) -> None:
+def setup_logging(
+    level: str = "INFO",
+    json_format: bool | None = None,
+    propagate: bool = False,
+) -> None:
     """
     配置 Mosaic 全局日志系统。
 
@@ -65,26 +69,33 @@ def setup_logging(level: str = "INFO", json_format: bool | None = None) -> None:
         level: 日志级别 (DEBUG/INFO/WARNING/ERROR)
         json_format: True=JSON 输出, False=human-readable, None=自动检测
                       (TTY→human, pipe→json)
+        propagate: 是否让记录继续冒泡到 root logger。默认 False ——
+                   uvicorn 会在 root 上挂自己的 handler，不关掉就会每条打两遍。
+                   测试里想让 pytest 的 caplog 抓到日志时需要传 True，
+                   因为 caplog 的 handler 挂在 root 上。
     """
     if json_format is None:
         json_format = not sys.stdout.isatty()
 
     formatter = JSONFormatter() if json_format else HumanFormatter()
 
-    root = logging.getLogger("mosaic")
-    root.setLevel(getattr(logging, level.upper(), logging.INFO))
-    root.handlers.clear()
+    # 注意：这是 "mosaic" 命名空间的 logger，不是真正的 root logger。
+    # 变量以前叫 root，很容易误以为已经清掉了全局 handler。
+    mosaic_logger = logging.getLogger("mosaic")
+    mosaic_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    mosaic_logger.handlers.clear()
+    mosaic_logger.propagate = propagate
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
-    root.addHandler(handler)
+    mosaic_logger.addHandler(handler)
 
     # Suppress noisy third-party logs
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("mcp").setLevel(logging.WARNING)
     logging.getLogger("anyio").setLevel(logging.WARNING)
 
-    logging.info("Logging initialized: level=%s json=%s", level, json_format)
+    mosaic_logger.info("Logging initialized: level=%s json=%s", level, json_format)
 
 
 def get_logger(name: str) -> logging.Logger:

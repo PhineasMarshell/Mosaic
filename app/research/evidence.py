@@ -5,6 +5,10 @@
 - 聚合列表数据为统计摘要（min/max/average/count）
 - 只保留有意义的市场指标（价格、成交量、高低价等）
 - 生成人类可读的证据描述
+
+性能注意：单次 klines 调用能产生 300+ NormalizedDatum，如果不设上限会
+向 evaluator/reasoning LLM 发送 149KB 的 JSON prompt。这里设硬上限防止这种
+情况——超出上限的条目被截断而不是全部塞进 prompt。
 """
 
 import re
@@ -15,14 +19,15 @@ from app.models.evidence import Evidence
 from app.models.market import NormalizedDatum, ToolResult
 
 
-# 要过滤的工具参数字段（这些是 API 调用参数，不是证据）
+# ── 上限常量 ────────────────────────────────────
+_MAX_EVIDENCE_ITEMS = 80
+
+# ── 过滤键：原始工具参数（不是证据）─────────────
 _FILTERED_PARAM_KEYS = {
-    # 通用参数
     "exchange", "type", "interval", "start", "end", "symbol",
     "q", "keyword", "refresh", "datasets",
     "include_data", "settled_only", "limit", "offset", "direction",
-    # 响应元数据
-    "ok", "source", "source_used", "count", "items", "missing",
+    "ok", "source", "source_used", "items", "missing",
     "partial", "status", "note", "error", "detail",
 }
 
@@ -198,8 +203,10 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
                 if _is_tool_param(datum.metric):
                     continue
 
-                # 检测是否是 K 线数据（路径包含 candles[N].field）
-                if re.search(r"\.candles?\[\d+\]\.\w+$", datum.metric.lower()):
+                # 检测是否是 K 线数据（路径格式：candles[N].field 或 candles?[N].field）
+                # ⚠️ normalizer 发出的顶层路径没有前导点（如 "candles[0].c"），
+                # 以前这里写的是 r"\.candles?" → 永远匹配不上，K 线摘要全部失效。
+                if re.search(r"candles?\[\d+\]\.\w+$", datum.metric.lower()):
                     candle_metrics.append((datum.metric, datum.value))
                 else:
                     valid_metrics.append((datum.metric, datum.value))

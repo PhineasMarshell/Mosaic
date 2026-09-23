@@ -74,10 +74,10 @@ async def _run_scheduler(morning_fn, evening_fn):
 async def generate_morning_brief(settings=None, memory=None) -> dict[str, Any]:
     """生成 Morning Brief。"""
     from app.config import get_settings as _get_settings
-    from app.memory.storage import MarketMemory as _MarketMemory
+    from app.memory.storage import get_memory as _get_memory
 
     settings = settings or _get_settings()
-    memory = memory or _MarketMemory()
+    memory = memory or _get_memory()
 
     # 获取最近几天的状态
     recent_states = memory.get_recent_states(days=7)
@@ -114,10 +114,10 @@ async def generate_morning_brief(settings=None, memory=None) -> dict[str, Any]:
 async def generate_evening_brief(settings=None, memory=None) -> dict[str, Any]:
     """生成 Evening Brief。"""
     from app.config import get_settings as _get_settings
-    from app.memory.storage import MarketMemory as _MarketMemory
+    from app.memory.storage import get_memory as _get_memory
 
     settings = settings or _get_settings()
-    memory = memory or _MarketMemory()
+    memory = memory or _get_memory()
 
     # 获取今天的 daily state
     today_state = memory.get_daily_state()

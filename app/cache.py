@@ -76,12 +76,12 @@ class Cache:
     @property
     def stats(self) -> dict[str, int]:
         total = self._hits + self._misses
-        rate = round(self._hits / total * 100, 1) if total else 0
+        rate = round(self._hits / total * 100, 0) if total else 0
         return {
             "size": len(self._store),
             "hits": self._hits,
             "misses": self._misses,
-            "hit_rate_pct": rate,
+            "hit_rate_pct": int(rate),
         }
 
 

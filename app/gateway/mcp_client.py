@@ -105,6 +105,22 @@ class MarketGatewayClient:
                     self.session.call_tool(tool_name, arguments=arguments),
                     timeout=self.settings.research_timeout_seconds,
                 )
+                if getattr(result, "is_error", False):
+                    # MCP 规范里工具级失败是**带内** signalling：call_tool 会返回
+                    # isError=True 而不是抛异常。这个标志以前从没被读过，于是
+                    # "Server Error: symbol KPEPE not supported" 这类上游错误会被
+                    # 归一化成 status="success" 的证据，直接喂给 Reasoning LLM。
+                    # 不重试：工具级错误通常是确定性的（symbol 错、参数非法），
+                    # 重试只会白等一轮 research_timeout_seconds。
+                    text = _mcp_result_to_text(result)
+                    logger.warning(
+                        "MCP call %s returned a tool-level error: %s",
+                        tool_name, text[:200],
+                    )
+                    return normalize_tool_result(
+                        tool_name, arguments, None,
+                        error=text or f"MCP tool {tool_name} returned an error",
+                    )
                 raw = _mcp_result_to_json(result)
                 return normalize_tool_result(tool_name, arguments, raw)
             except asyncio.TimeoutError:
@@ -134,10 +150,23 @@ class MarketGatewayClient:
         )
 
 
+def _mcp_result_to_text(result: Any) -> str:
+    """把 CallToolResult 的文本内容拼成一个字符串（用于错误信息）。"""
+    parts = []
+    for item in getattr(result, "content", None) or []:
+        text = getattr(item, "text", None)
+        if text is not None:
+            parts.append(str(text))
+    return "\n".join(parts).strip()
+
+
 def _mcp_result_to_json(result: Any) -> Any:
     """将 MCP ToolResult 转换为 Python 对象。"""
-    if hasattr(result, "structuredContent") and result.structuredContent is not None:
-        return result.structuredContent
+    # SDK 的字段是 snake_case 的 structured_content；以前这里写的是驼峰
+    # structuredContent，hasattr 永远为 False，快路径是死代码。
+    structured = getattr(result, "structured_content", None)
+    if structured is not None:
+        return structured
 
     contents = getattr(result, "content", None) or []
     parsed = []

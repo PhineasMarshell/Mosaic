@@ -107,20 +107,18 @@ class MarketGatewayHttpClient:
                 # --------------------------------------------------
                 error_cls = _classify_http_error(response.status_code)
 
-                if response.status_code == 401:
-                    raise HTTPAuthError(
-                        f"Authentication failed (401)"
-                    )
-
-                if response.status_code == 403:
-                    raise HTTPAuthError(
-                        f"Permission denied (403)"
-                    )
-
-                if response.status_code == 413:
-                    raise HTTPGatewayError(
-                        f"Request too large or malformed (413)"
-                    )
+                if response.status_code in (401, 403, 413):
+                    # 以前这三个分支 raise 之后由下面的 except 兜住，而 except 用的
+                    # 是 last_error —— 首次尝试时它还是 None。于是 error=None 传进
+                    # normalize_tool_result，被归一化成 status="success"、
+                    # value="None" 的"证据"：API key 过期时，每个工具都"成功"返回
+                    # 一条 None，has_evidence=True，LLM 就着一堆 None 写报告。
+                    reason = {
+                        401: "Authentication failed",
+                        403: "Permission denied",
+                        413: "Request too large or malformed",
+                    }[response.status_code]
+                    raise error_cls(f"{reason} ({response.status_code})")
 
                 if response.status_code == 422:
                     # 记录错误详情供后续报告使用
@@ -153,13 +151,15 @@ class MarketGatewayHttpClient:
                     "HTTP call %s attempt %d/%d failed: %s",
                     tool_name, attempt + 1, max_attempts, exc,
                 )
-            except (HTTPAuthError, HTTPGatewayError):
-                # 这些是致命错误，不再重试
+            except HTTPGatewayError as exc:
+                # 致命错误（认证/权限/请求非法），不再重试。
+                # 必须用 str(exc) —— last_error 在首次尝试时还是 None。
+                logger.warning("HTTP call %s failed permanently: %s", tool_name, exc)
                 return normalize_tool_result(
                     tool_name,
                     arguments,
                     None,
-                    error=last_error,
+                    error=str(exc) or "HTTP gateway error",
                 )
             except Exception as exc:
                 last_error = str(exc)

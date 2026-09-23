@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.agent.orchestrator import Orchestrator
 from app.config import get_settings
+from app.errors import LLMOutputError, UpstreamTimeoutError
 from app.logging_config import setup_logging
 
 setup_logging(level="INFO")
@@ -65,8 +66,8 @@ _orchestrator: object | None = None
 _settings_lock = __import__("threading").Lock()
 
 # 初始化 Market Memory（轻量，文件缓存，模块级安全）
-from app.memory.storage import MarketMemory
-memory = MarketMemory()
+from app.memory.storage import get_memory
+memory = get_memory()
 
 
 def _get_settings():
@@ -99,6 +100,7 @@ async def health():
         "gateway_mode": _s.market_gateway_mode,
         "model": _s.openai_model,
         "max_tool_calls": _s.max_tool_calls,
+        "research_budget_seconds": _s.research_budget_seconds,
         "brief_scheduler": "running" if scheduler_running() else "stopped",
     }
 
@@ -129,32 +131,57 @@ async def evening_brief_endpoint():
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/ask")
-async def ask(request: dict):
-    """Ask endpoint — accepts dict to match frontend payload."""
-    question = request.get("question", "").strip()
+def _parse_ask_payload(request: dict, endpoint: str) -> tuple[str, str | None, str | None]:
+    """校验 ``/api/ask`` 与 ``/api/ask/stream`` 的请求体。
+
+    返回 ``(question, domain, conversation_id)``，不合法就抛 400。
+
+    两个端点以前各自复制了一份校验逻辑，而且**拒绝时一行日志都不打** ——
+    于是访问日志里只剩裸的 ``400 Bad Request``，既看不出是空 question 还是
+    非法 domain，也无从判断请求是谁发的。所有拒绝路径现在都留 WARNING。
+    """
+    raw_question = request.get("question")
+    # 非字符串（比如前端误传了 DOM 节点，JSON 化后变成 {}）以前会走到
+    # ``.strip()`` 抛 AttributeError → 500；这里统一归为 400。
+    question = raw_question.strip() if isinstance(raw_question, str) else ""
     if not question:
+        logger.warning("%s rejected: empty or non-string question (got %r, keys=%s)",
+                       endpoint, raw_question, sorted(request.keys()))
         raise HTTPException(status_code=400, detail="question cannot be empty")
 
     domain = request.get("domain") or None  # optional explicit domain override
     conversation_id = request.get("conversation_id") or None  # optional conversation session
 
-    # 检查 domain 是否有效（支持从 tool_registry 动态获取）
-    from app.gateway.tool_registry import get_enabled_domains, ALL_TOOLS
+    if domain is not None:
+        from app.gateway.tool_registry import get_enabled_domains
 
-    # 构建支持的域列表（排除 unknown）
-    supported_domains = get_enabled_domains()
+        supported_domains = get_enabled_domains()
+        if domain not in supported_domains:
+            logger.warning("%s rejected: unsupported domain=%r (supported=%s)",
+                           endpoint, domain, supported_domains)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported domain: {domain}. Supported: {supported_domains}",
+            )
 
-    if domain and domain not in supported_domains:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported domain: {domain}. Supported: {supported_domains}"
-        )
+    return question, domain, conversation_id
+
+
+@app.post("/api/ask")
+async def ask(request: dict):
+    """Ask endpoint — accepts dict to match frontend payload."""
+    question, domain, conversation_id = _parse_ask_payload(request, "POST /api/ask")
+    settings = _get_settings()
 
     try:
         logger.info("Received question: %s (len=%d) domain=%s conv_id=%s",
                      question[:50], len(question), domain, conversation_id)
-        result = await _get_orchestrator().run(question, domain=domain, conversation_id=conversation_id)
+        # 同步端点以前没有任何总超时：调查可以一直跑到把每个工具的
+        # 30s 超时逐个耗尽（max_tool_calls=12 → 最坏几分钟），浏览器只能干等。
+        result = await asyncio.wait_for(
+            _get_orchestrator().run(question, domain=domain, conversation_id=conversation_id),
+            timeout=settings.research_budget_seconds,
+        )
         data = result.model_dump()
 
         # 保存研究记录到 Memory
@@ -190,6 +217,20 @@ async def ask(request: dict):
             logger.debug("Daily state save failed (non-fatal): %s", exc)
 
         return JSONResponse(content=data)
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        logger.warning("Research exceeded %ds budget: %s",
+                       settings.research_budget_seconds, question[:50])
+        raise HTTPException(
+            status_code=504,
+            detail=f"Research timed out after {settings.research_budget_seconds}s",
+        ) from exc
+    except LLMOutputError as exc:
+        # 必须排在 ValueError 之前 —— LLMOutputError 是 ValueError 的子类
+        logger.error("Upstream LLM output unusable: %s", str(exc)[:800])
+        raise HTTPException(
+            status_code=502,
+            detail="上游模型返回了无法解析的内容，请重试或更换模型",
+        ) from exc
     except ValueError as exc:
         logger.warning("Invalid input: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -201,70 +242,106 @@ async def ask(request: dict):
 async def _stream_research(question: str, domain: str | None, conversation_id: str | None = None):
     """SSE event generator — wraps MarketDetective.investigate() with progress events.
 
-    Instead of duplicating the investigation logic (which caused import errors
-    for internal functions like _cross_tool_defaults), this delegates to the
-    full investigate pipeline and emits progress events along the way.
+    Emits progress events at each phase, then the final result.
+    If the investigation raises an exception, yields a result event with error info
+    so the frontend can surface it.
+
+    调查期间每 ``stream_heartbeat_seconds`` 推一条 ``working`` 事件：
+    以前只在开头连发两条 progress，然后整个调查过程（可能几分钟）连接上
+    一个字节都没有，浏览器/代理很容易把这种静默连接当死的掐掉。
     """
     import asyncio
+
+    settings = _get_settings()
+    budget = settings.research_budget_seconds
+    heartbeat = max(1, settings.stream_heartbeat_seconds)
 
     def json_event(event: str, data: dict):
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-    # Phase 1: Planning
-    yield json_event("progress", {
-        "step": "planning",
-        "message": "理解问题并生成研究计划",
-    })
-
-    # Phase 2-4: Delegate to full investigate, but emit progress periodically
-    # We run investigate() in a background task and poll its progress
     detective = _get_orchestrator().market_detective
+    task = asyncio.create_task(
+        detective.investigate(question, domain=domain, conversation_id=conversation_id)
+    )
 
-    async def run_investigation():
-        """Run the full investigation and return the result."""
-        return await detective.investigate(question, domain=domain, conversation_id=conversation_id)
-
-    task = asyncio.create_task(run_investigation())
-
-    # Emit periodic progress events while investigation runs
-    phase_names = [
-        "tool_call", "evaluating", "reasoning"
-    ]
-    phase_idx = 0
-    last_phase = "planning"
-
-    while not task.done():
-        await asyncio.sleep(2)  # Check every 2 seconds
-        current_phase = phase_names[phase_idx % len(phase_names)]
-        phase_idx += 1
-        yield json_event("progress", {
-            "step": current_phase,
-            "message": _get_step_message(current_phase),
-        })
-        last_phase = current_phase
-
-    # Wait for completion (with timeout safety)
     try:
-        result = await asyncio.wait_for(task, timeout=110)
-    except asyncio.TimeoutError:
-        yield json_event("error", {"message": "Research timed out"})
-        return
+        # Phase 1: Planning
+        yield json_event("progress", {"step": "planning", "message": _get_step_message("planning")})
 
-    # Emit final progress
-    yield json_event("progress", {
-        "step": "done",
-        "message": "调查完成",
-    })
+        # Phase 2: Tool execution（真正的耗时阶段，靠心跳保活）
+        yield json_event("progress", {"step": "tool_call", "message": _get_step_message("tool_call")})
 
-    # Save to memory (research record + daily state + conversation turn)
-    # Using background tasks so they don't block the final result event
-    save_result = result.model_dump()
-    if conversation_id:
-        asyncio.create_task(_save_turn(conversation_id, question, save_result))
-    asyncio.create_task(_save_research_and_state(question, save_result))
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        deadline = started_at + budget
 
-    # Send result
-    yield json_event("result", result.model_dump())
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                task.cancel()
+                raise UpstreamTimeoutError(f"Research exceeded the {budget}s budget")
+            try:
+                # shield：心跳到点不能顺手把真正的调查任务取消掉
+                result = await asyncio.wait_for(
+                    asyncio.shield(task), timeout=min(heartbeat, remaining)
+                )
+                break
+            except (asyncio.TimeoutError, TimeoutError):
+                elapsed = int(loop.time() - started_at)
+                yield json_event("progress", {
+                    "step": "working",
+                    "message": f"仍在调查中…（{elapsed}s / 预算 {budget}s）",
+                })
+
+        # Emit evaluating + reasoning phase
+        yield json_event("progress", {"step": "evaluating", "message": _get_step_message("evaluating")})
+        yield json_event("progress", {"step": "reasoning", "message": _get_step_message("reasoning")})
+
+        # Emit completion
+        yield json_event("progress", {"step": "done", "message": "调查完成"})
+
+        # Save to memory (background, don't block response)
+        save_result = result.model_dump()
+        if conversation_id:
+            asyncio.create_task(_save_turn(conversation_id, question, save_result))
+        asyncio.create_task(_save_research_and_state(question, save_result))
+
+        # Send result
+        yield json_event("result", save_result)
+
+    except (UpstreamTimeoutError, asyncio.TimeoutError, TimeoutError) as exc:
+        logger.warning("Stream research exceeded %ds budget for: %s", budget, question[:50])
+        yield json_event("progress", {"step": "error", "message": "研究超时，请重试"})
+        yield json_event("result", {
+            "error": f"Research timed out after {budget}s",
+            "code": "timeout",
+            "question": question,
+        })
+    except LLMOutputError as exc:
+        logger.error("Stream research got unusable LLM output for: %s — %s",
+                     question[:50], str(exc)[:800])
+        yield json_event("progress", {"step": "error", "message": "上游模型返回了无法解析的内容"})
+        yield json_event("result", {
+            "error": "上游模型返回了无法解析的内容，请重试或更换模型",
+            "code": "upstream",
+            "question": question,
+        })
+    except Exception as exc:
+        logger.exception("Stream research failed for: %s", question[:50])
+        yield json_event("progress", {
+            "step": "error",
+            "message": f"研究失败: {str(exc)[:100]}",
+        })
+        yield json_event("result", {
+            "error": str(exc),
+            "code": "internal",
+            "question": question,
+        })
+    finally:
+        # 客户端断开（刷新页面）时生成器会被 aclose()，这里负责收尸，
+        # 否则调查任务会变成游离 task，MCP 子进程也可能跟着泄漏。
+        if not task.done():
+            task.cancel()
 
 
 def _get_step_message(step: str) -> str:
@@ -272,6 +349,7 @@ def _get_step_message(step: str) -> str:
     messages = {
         "planning": "理解问题并生成研究计划",
         "tool_call": "正在调取市场数据…",
+        "working": "仍在调查中…",
         "evaluating": "正在整理证据链并交叉验证…",
         "reasoning": "正在生成结构化市场情报…",
     }
@@ -319,15 +397,7 @@ async def _save_research_and_state(question: str, report_dict: dict) -> None:
 @app.post("/api/ask/stream")
 async def ask_stream(request: dict):
     """SSE streaming Ask endpoint — returns real-time research progress."""
-    question = request.get("question", "").strip()
-    if not question:
-        raise HTTPException(status_code=400, detail="question cannot be empty")
-
-    domain = request.get("domain") or None
-    conversation_id = request.get("conversation_id") or None
-    supported_domains = get_enabled_domains()
-    if domain and domain not in supported_domains:
-        raise HTTPException(status_code=400, detail=f"Unsupported domain: {domain}. Supported: {supported_domains}")
+    question, domain, conversation_id = _parse_ask_payload(request, "POST /api/ask/stream")
 
     try:
         logger.info("Streaming question: %s domain=%s conv_id=%s", question[:50], domain, conversation_id)

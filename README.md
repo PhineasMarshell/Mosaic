@@ -219,11 +219,35 @@ curl http://127.0.0.1:8000/health
 MAX_TOOL_CALLS=12
 MAX_RESEARCH_STEPS=8
 MAX_RETRY_PER_TOOL=1
-RESEARCH_TIMEOUT_SECONDS=30
-LLM_TIMEOUT_SECONDS=90
+RESEARCH_TIMEOUT_SECONDS=30      # 单次工具调用 / MCP 握手超时
+RESEARCH_BUDGET_SECONDS=300      # 一次完整调查的总预算
+STREAM_HEARTBEAT_SECONDS=15      # SSE 静默期心跳间隔
+LLM_TIMEOUT_SECONDS=90           # 单次 LLM 调用超时
 ```
 
 都是 `.env` 中的配置项，不是硬编码。
+
+### 两层超时的关系（重要）
+
+`RESEARCH_TIMEOUT_SECONDS` 管的是**单个工具调用**，`RESEARCH_BUDGET_SECONDS`
+管的是**一整次调查**（planner LLM → N 个工具 → evidence gate → reasoning LLM）。
+
+后者必须显著大于前者，否则 HTTP 层会在研究跑完之前把它掐断。历史上这两个值
+耦合成了 `RESEARCH_TIMEOUT_SECONDS + 30 = 60s`，而一次真实调查动辄需要几分钟
+—— 于是几乎每个问题都必然超时，前端再把同样的活从头重跑一遍。
+
+超时后的 HTTP 语义：
+
+| 场景 | 状态码 |
+|------|--------|
+| `question` 为空 / `domain` 非法 | 400 |
+| 上游模型返回无法解析的内容（`LLMOutputError`） | 502 |
+| 调查超出 `RESEARCH_BUDGET_SECONDS` | 504 |
+| 其它未预期异常 | 500 |
+
+SSE 端点不会用状态码表达失败（响应头早已发出），而是在 `result` 事件里带
+`error` + `code`（`timeout` / `upstream` / `internal`），前端据此显示错误气泡
+和重试按钮，**不会自动重跑**。
 
 ## 缓存策略
 

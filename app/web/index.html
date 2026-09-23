@@ -227,6 +227,11 @@
 // ── State ────────────────────────────────────
 let currentConversationId = null;
 let lastErrorTimeout = null;
+// 服务端一次调查的总预算（秒）。启动时从 /health 读，读不到就用默认值。
+// 客户端的放弃时限必须 **大于** 它，否则超时标记会先于真实错误置位，
+// 把「上游模型坏了」这类错误一律显示成「请求超时」。
+let serverBudgetS = 300;
+const CLIENT_TIMEOUT_MARGIN_S = 60;
 
 // ── Helpers ──────────────────────────────────
 function fill(v) { document.getElementById('q').value = v; ask(); }
@@ -326,10 +331,13 @@ function removeLoader() {
   if (row) row.remove();
 }
 
-function addErrorBubble(message) {
+function addErrorBubble(message, canRetry) {
   const row = document.createElement('div');
   row.className = 'msg-row ai';
-  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble"><div class="error-msg"><strong>调查失败</strong><br>${esc(message)}</div></div>`;
+  const retry = canRetry && lastQuestion
+    ? `<div style="margin-top:8px"><button class="quick-btn" onclick="retryLastQuestion()">↻ 重试「${esc(lastQuestion.slice(0, 20))}」</button></div>`
+    : '';
+  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble"><div class="error-msg"><strong>调查失败</strong><br>${esc(message)}${retry}</div></div>`;
   getMessages().appendChild(row);
   scrollToBottom(false);
 }
@@ -394,20 +402,34 @@ function autoResizeTa() {
 }
 
 // ── SSE Consumer ───────────────────────────
-function runSSE(question, onProgress, resolve, reject) {
+// reject 出来的 Error 带 kind 字段：
+//   'transport' — 流式通道本身没走通（HTTP 非 2xx / 连接被掐 / 一个事件都没收到）
+//   'research'  — 后端明确报告调查失败（超时 / 上游模型 / 内部错误）
+// 只有 transport 且「一个事件都没收到」时才值得退回同步接口重试：
+// 那种情况通常是代理不支持 SSE。后端已经跑了三分钟的调查失败，
+// 再同步重跑一遍只会让用户多等三分钟拿到同样的错误。
+function runSSE(question, onProgress, resolve, reject, signal) {
   const url = '/api/ask/stream';
   const body = JSON.stringify({ question, conversation_id: currentConversationId });
+  let started = false;
 
-  fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body })
+  const fail = (message, kind, retryableViaSync) => {
+    const e = new Error(message);
+    e.kind = kind;
+    e.retryableViaSync = !!retryableViaSync;
+    reject(e);
+  };
+
+  fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body, signal })
     .then(async (response) => {
       if (!response.ok) {
         const err = await response.json().catch(() => ({detail:'Request failed'}));
-        reject(new Error(err.detail || '请求失败')); return;
+        fail(err.detail || `请求失败 (${response.status})`, 'transport', true);
+        return;
       }
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let started = false;
 
       while (true) {
         const {done, value} = await reader.read();
@@ -432,6 +454,15 @@ function runSSE(question, onProgress, resolve, reject) {
               started = true;
             }
             if (eventType === 'result') {
+              // Check if result contains an error (backend yielded error result)
+              if (data && data.error) {
+                fail(data.error, 'research', false);
+                return;
+              }
+              if (!data || (!data.report && !data.what_happened)) {
+                fail('后端返回了空结果', 'research', false);
+                return;
+              }
               // Strip trailing newline from loading indicator
               resolve(data);
               return;
@@ -439,18 +470,47 @@ function runSSE(question, onProgress, resolve, reject) {
           } catch(e) { console.warn('SSE parse:', e); }
         }
       }
-      if (!started) reject(new Error('未收到数据'));
-      else resolve(null);
-    }).catch(reject);
+      // 流结束了却没收到 result 事件 —— 连接被中途掐断。
+      // 以前这里 resolve(null)，调用方当成成功去渲染 null.report 直接抛
+      // TypeError，用户看到 "Cannot read properties of null"。
+      fail(started ? '连接中断，未收到调查结果' : '未收到任何数据（可能不支持流式）',
+           'transport', !started);
+    })
+    .catch((err) => {
+      if (err && err.name === 'AbortError') { reject(err); return; }
+      if (err && err.kind) { reject(err); return; }   // 已经是 fail() 造好的
+      fail((err && err.message) || '网络错误', 'transport', !started);
+    });
 }
 
 // ── Main ask function ──────────────────────
+let lastQuestion = null;
+
+function retryLastQuestion() {
+  if (!lastQuestion) return;
+  const ta = document.getElementById('q');
+  if (ta) ta.value = lastQuestion;
+  ask();
+}
+
+async function askSync(q, signal) {
+  const r = await fetch('/api/ask', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({question: q, conversation_id: currentConversationId}),
+    signal,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || `请求失败 (${r.status})`);
+  return data;
+}
+
 async function ask() {
   const ta = document.getElementById('q');
   const q = ta ? ta.value.trim() : '';
   if (!q) return;
 
   if (!currentConversationId) currentConversationId = crypto.randomUUID();
+  lastQuestion = q;
 
   const btn = document.getElementById('askBtn');
   btn.disabled = true;
@@ -464,33 +524,34 @@ async function ask() {
   // Show loading
   addAILoader('正在调查…');
 
-  let timedOut = false;
-  lastErrorTimeout = setTimeout(() => { timedOut = true }, 120000);
+  // 客户端兜底时限 = 服务端预算 + 余量。真的到点了就 abort，
+  // 而不是像以前那样只置一个标记、让 fetch 永远挂着。
+  const controller = new AbortController();
+  const limitS = serverBudgetS + CLIENT_TIMEOUT_MARGIN_S;
+  lastErrorTimeout = setTimeout(() => controller.abort(), limitS * 1000);
 
   try {
-    let done = false;
+    let resultData = null;
     try {
       await new Promise((resolve, reject) => {
-        runSSE(q, (data) => updateLoader(0, data.message || '调查中…'), resolve, reject);
+        runSSE(q, (data) => updateLoader(0, data.message || '调查中…'),
+               (data) => { resultData = data; resolve(data); }, reject, controller.signal);
       });
-      done = true;
     } catch(e) {
-      if (timedOut) throw new Error('请求超时，请稍后重试');
+      if (e && e.name === 'AbortError') throw new Error(`调查超过 ${limitS}s，已中止`);
+      if (e && e.kind === 'transport' && e.retryableViaSync) {
+        // 流式通道压根没建立起来（多半是代理不支持 SSE）→ 退回同步接口
+        resultData = await askSync(q, controller.signal);
+      } else {
+        // 后端已经明确报错了：重跑一遍只是让用户再等一个预算周期
+        throw e;
+      }
     }
-
-    if (!done) {
-      const r = await fetch('/api/ask', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({question: q, conversation_id: currentConversationId})
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || '请求失败');
-      removeLoader();
-      renderResult(data);
-    }
+    removeLoader();
+    renderResult(resultData);
   } catch(e) {
     removeLoader();
-    addErrorBubble(e.message);
+    addErrorBubble(e.message || String(e), true);
   } finally {
     btn.disabled = false;
     clearTimeout(lastErrorTimeout);
@@ -501,6 +562,7 @@ async function ask() {
 }
 
 function renderResult(data) {
+  if (!data) { addErrorBubble('后端返回了空结果', true); return; }
   const report = data.report || data;
   if (data.conversation_id) currentConversationId = data.conversation_id;
   addAIResponse(report);
@@ -515,6 +577,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     ta.addEventListener('input', autoResizeTa);
   }
+
+  // 对齐客户端兜底时限与服务端研究预算；失败就沿用默认值，不阻塞 UI
+  fetch('/health').then(r => r.json()).then(h => {
+    if (h && Number.isFinite(h.research_budget_seconds)) {
+      serverBudgetS = h.research_budget_seconds;
+    }
+  }).catch(() => {});
 });
 </script>
 </body>

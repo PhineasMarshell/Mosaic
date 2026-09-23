@@ -8,7 +8,6 @@
 """
 
 import json
-import re
 from typing import Literal
 
 from openai import AsyncOpenAI
@@ -17,6 +16,10 @@ from pydantic import BaseModel, Field
 from app.agent.evidence_gate import EvidenceGateResult
 from app.config import Settings
 from app.gateway.tool_registry import ALL_TOOLS, resolve_tool_by_name
+# _extract_json 以前定义在本文件里，是三个 LLM 调用点中实现最完整的一份
+# （围栏剥离 + 大括号兜底）。已提升到 app.llm_json 供 planner/reasoning 共用，
+# 这里保留原名字，既有调用点和测试都不用改。
+from app.llm_json import extract_json_text as _extract_json
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
 from app.models.research import MarketDomain, ToolCallPlan
@@ -261,9 +264,9 @@ class EvidenceEvaluator:
             if step.tool_key in known_tool_keys:
                 continue
             # 验证推荐的工具属于目标域 OR 是跨域通用工具
-            try:
-                meta = resolve_tool_by_name(step.tool_key)
-            except KeyError:
+            # ⚠️ LLM 可能用 business key（如 sentiment）或 operationId 推荐，两者都要能解析
+            meta = _resolve_tool_meta(step.tool_key)
+            if meta is None:
                 continue
             if meta.domain != domain and meta.domain != "unknown" and meta.domain != "cross":
                 continue
@@ -334,38 +337,13 @@ def tool_name_to_key(tool_name: str) -> str | None:
     return None
 
 
-def _extract_json(text: str) -> str | None:
-    """从 LLM 响应中提取 JSON。处理 Markdown 代码块等情况。"""
-    if not text:
-        return None
-
-    text = text.strip()
-
-    try:
-        json.loads(text)
-        return text
-    except json.JSONDecodeError:
-        pass
-
-    match = re.search(r"(?:```(?:json)?\s*?\n)([\s\S]*?)(?:```)", text)
-    if match:
-        candidate = match.group(1).strip()
-        try:
-            json.loads(candidate)
-            return candidate
-        except json.JSONDecodeError:
-            pass
-
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace > first_brace:
-        candidate = text[first_brace:last_brace + 1]
-        try:
-            json.loads(candidate)
-            return candidate
-        except json.JSONDecodeError:
-            pass
-
+def _resolve_tool_meta(ref: str):
+    """business key 或 operationId → ToolMeta；都解析不了返回 None。"""
+    from app.gateway.tool_registry import BY_KEY, BY_NAME
+    if ref in BY_KEY:
+        return BY_KEY[ref]
+    if ref in BY_NAME:
+        return BY_NAME[ref]
     return None
 
 

@@ -19,8 +19,26 @@ logger = logging.getLogger(__name__)
 
 
 def _sqlite_connection_factory(path: Path) -> SQLite3Connection:
-    """创建 SQLite 连接，开启 WAL 模式和 JSON1 扩展。"""
-    conn = SQLite3Connection(str(path))
+    """创建 SQLite 连接，开启 WAL 模式和 JSON1 扩展。
+
+    ``isolation_level=None`` = autocommit。**这不是可选的优化**：
+    sqlite3 默认是隐式事务模式，每条 INSERT 会开一个事务，而本模块的四个写入
+    方法（save_daily_state / record_anomaly / save_research / save_turn）过去
+    都是裸 ``conn.execute(...)``，一次 commit 都没有 —— 于是：
+
+      * 进程退出时整个未提交事务被回滚，当天写入全部丢失；
+      * 其它连接（investigate() 自己 new 的 MarketMemory）永远读不到这些数据，
+        多轮对话上下文和跨日历史因此一直是空的，且不报任何错。
+
+    实测：迁移到 SQLite 之后 ~/.mosaic/memory.db 四张表长期 0 行，
+    而 235 个单元测试全绿（它们只用同一条连接读写，能看见自己未提交的数据）。
+
+    autocommit 的代价是 save_daily_state 的 SELECT→merge→UPSERT 不再是单个
+    事务。当前所有调用方都跑在单线程事件循环上、方法内没有 await 点，
+    所以构造不出交错；如果将来改用 asyncio.to_thread 或多 worker，
+    需要把这段改成单条 UPSERT 或显式 BEGIN IMMEDIATE。
+    """
+    conn = SQLite3Connection(str(path), isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     # SQLite 3.38+ 内置 json() 函数；旧版本需要加载扩展（极少见）
@@ -331,3 +349,30 @@ class MarketMemory:
 
         lines.append("--- 历史上下文结束 ---")
         return "\n".join(lines)
+
+
+# ── 进程内共享实例 ──────────────────────────
+
+_shared_memory: MarketMemory | None = None
+_shared_memory_lock = __import__("threading").Lock()
+
+
+def get_memory() -> MarketMemory:
+    """返回进程内共享的 MarketMemory。
+
+    以前每个调用点都自己 ``MarketMemory()``：一次调查里 main.py 的单例、
+    investigate() 的对话历史读取、investigate() 的跨日上下文读取，各开一条
+    连接且从不关闭（连接/FD 随请求量增长）。
+
+    更严重的是它和未提交事务叠加后的效果：写入方那条连接能看见自己未提交的
+    数据，别的连接看不见 —— 于是多轮对话上下文永远是空字符串，追问功能
+    实际上是坏的，而且没有任何报错。
+
+    新代码一律用这个函数，不要再直接构造 MarketMemory()。
+    """
+    global _shared_memory
+    if _shared_memory is None:
+        with _shared_memory_lock:
+            if _shared_memory is None:
+                _shared_memory = MarketMemory()
+    return _shared_memory

@@ -30,13 +30,13 @@ from app.detector.anomaly import detect_anomalies
 from app.gateway.http_client import MarketGatewayHttpClient
 from app.gateway.mcp_client import MarketGatewayClient
 from app.gateway.tool_registry import ALL_TOOLS, BY_NAME, BY_KEY, resolve_tool_by_name
-from app.models.market import ToolResult
+from app.models.market import NormalizedDatum, ToolResult
 from app.models.research import MarketDomain, ToolCallPlan
 from app.models.response import ResearchResponse
 from app.research.evidence import build_evidence
 from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
 from app.research.reasoning import ReasoningEngine
-from app.memory.storage import MarketMemory
+from app.memory.storage import get_memory
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,8 @@ class MarketDetective:
         # 加载对话历史（供 Planner 感知上下文）
         conv_history = ""
         if conversation_id:
-            memory = MarketMemory()
+            # 必须用共享实例：新建的连接读不到别处刚写入的对话轮次
+            memory = get_memory()
             conv_history = memory.get_conversation_history(
                 conversation_id, self.settings.max_conversation_turns
             )
@@ -224,8 +225,14 @@ class MarketDetective:
                 "quote":            {"symbol": "sh000300"},
                 "search":           {"q": "沪深300"},
                 "abnormal_reasons": {"symbol": "sh000300"},
+                # A 股市场级核心工具（Planner 可能漏掉，兜底补上）
+                "sentiment":        {},
+                "limit_up_count":   {},
+                "limit_up_sectors": {},
+                "limit_up_pool":    {},
+                "overview":         {},
             }
-        else:  # crypto / default
+        elif target_domain == "crypto":
             # Crypto: Binance 原生合约名用 "BTCUSDT" 而非 "BTC/USDT"
             # derivatives_history 需要 symbol+start+end（Binance 原生格式）
             _cross_tool_defaults = {
@@ -236,13 +243,30 @@ class MarketDetective:
                 "derivatives_history": {"symbol": "BTCUSDT", "exchange": "binance", "start": _start, "end": _end},
                 # quote_tencent_quote_get 是腾讯 API，不适用于 Crypto，不添加默认参数
             }
+        else:
+            # us_stock / macro / cross / unknown —— 这些域**没有注册任何工具**
+            # （_US_STOCK_PLACEHOLDERS = []）。
+            # 以前这里是 `else: # crypto / default`，于是问美股会拿到
+            # BTC/USDT 的 K 线、"Bitcoin" 的搜索结果，然后 Reasoning prompt
+            # 还要求把报告标题写成「今日美股市场情报」。
+            # 没有数据就说没有数据，不能拿另一个市场的数据顶上去。
+            _cross_tool_defaults = {}
+            logger.warning(
+                "Domain %r has no registered tools and no fallback defaults; "
+                "the report will rely solely on the planner's steps (likely empty).",
+                target_domain,
+            )
 
         # 清理：删除 Planner 生成的空参数步骤（让兜底的正确版本来执行）
+        # ⚠️ 有默认参数可补全的工具（_cross_tool_defaults）不能删——
+        #    否则 existing_business_keys 仍含该 key，兜底循环会跳过补插，工具直接丢失。
+        #    这些步骤留给下面的 _merge_args_with_defaults 分支就地补全参数。
         plan.steps = [
             step for step in plan.steps
             if not (
-                _resolve_tool_ref(step.tool_key) and
-                not step.arguments
+                _resolve_tool_ref(step.tool_key)
+                and not step.arguments
+                and _resolve_tool_ref(step.tool_key)[0].key not in _cross_tool_defaults
             )
         ]
 
@@ -321,9 +345,15 @@ class MarketDetective:
             req = todo_queue.pop(0)
             signature = f"{req.tool_name}:{sorted(req.arguments.items())}"
 
-            # 去重 + 缓存命中
+            # 去重：同一 tool+args 已经执行过的直接跳过，不产生假错误结果。
+            # 以前 _execute_one 看到重复签名会伪造一条 status="error" 的 ToolResult
+            # 然后 append 进 results → 污染证据链、降低 confidence。
+            if signature in called_signatures:
+                continue
+
             cached_result = self._check_cache(req, called_signatures)
             if cached_result is not None:
+                self._truncate_normalized(cached_result)
                 results.append(cached_result)
                 logger.info("Cache hit for %s (%s)", req.tool_name, req.purpose)
                 continue
@@ -333,6 +363,7 @@ class MarketDetective:
 
             # 执行单工具调用
             result = await self._execute_one(req, called_signatures)
+            self._truncate_normalized(result)
             results.append(result)
             called_signatures.add(signature)
             total_calls += 1
@@ -371,11 +402,16 @@ class MarketDetective:
                 )
 
                 if decision.sufficient:
-                    # 证据已经充分，不再追加
-                    pass
-                elif decision.recommended_next_action == "stop":
-                    # 没有更多合理工具可调用
+                    # 证据已经充分 —— 不再追加新步骤，清空队列立即退出。
+                    # 审计发现这里原来是 pass：即使 Evaluator 说"够了"，
+                    # 后续 9 个兜底工具和 4 轮评估照样跑完，耗时翻倍且结论不变更可靠。
+                    logger.info("Evidence sufficient, stopping early")
+                    todo_queue.clear()
                     break
+                elif decision.recommended_next_action == "stop":
+                    # 没有更多合理工具可调用 —— 但计划队列里还有未执行步骤时优先执行完
+                    if not todo_queue:
+                        break
                 else:
                     # 将 Evaluator 推荐的下一步加入队列
                     for step in decision.next_steps:
@@ -401,11 +437,11 @@ class MarketDetective:
         if target_domain == "hk_stock":
             try:
                 hk_data = await fetch_hk_context_data()
-                normalized = [
-                    {"source": "eastmoney_kline_api", "key": k, "value": v}
-                    for k, v in hk_data.items()
+                filtered_data = {
+                    k: v for k, v in hk_data.items()
                     if not k.startswith("_") and k in ("northbound", "sh_connect", "sz_connect", "hs_index", "hs_tech_index")
-                ]
+                }
+                normalized = self._normalize_hk_entries(filtered_data)
                 results.append(ToolResult(
                     tool="hk_northbound_daily",
                     arguments={},
@@ -433,7 +469,7 @@ class MarketDetective:
         )
 
         # 注入历史上下文到 Reasoning Engine（对话历史 + 市场状态历史）
-        memory = MarketMemory()
+        memory = get_memory()
         market_state_history = memory.get_context_for_question(question, days_back=7)
 
         if conv_history:
@@ -447,6 +483,35 @@ class MarketDetective:
 
         # 服务端兜底：模型不能伪造"没调用的工具"。
         report.used_tools = [r.tool for r in results]
+
+        # ── 置信度门控 + 数据缺陷警告 ───────────────────────────────
+        #
+        # Evaluator 在调查中途做判断，而 final_report 的 confidence 是
+        # Reasoning LLM 自己定的。中间可能隔了多轮评估和证据生成，
+        # Evaluator 的结论没有被保留到最终报告里。这里用 final_gate
+        #（收集了整个调查周期的所有结果）来校正。
+        #
+        # 审计发现过一个严重 case：9 个工具全部失败 → has_evidence=False，
+        # 但 Report.confidence="high" → UI 显示 "HIGH · 数据高度一致"。
+        if not final_gate.has_evidence:
+            report.confidence = "low"
+            report.data_caveats.append(
+                f"无可用证据：{final_gate.reason or '所有工具均未返回有效数据'}"
+            )
+        else:
+            error_count = len(final_gate.error_tools)
+            partial_count = len(final_gate.partial_tools)
+            success_count = len(final_gate.successful_tools)
+
+            if error_count > 0 and error_count >= success_count:
+                # 报错的工具多于成功的 → 结论不可靠，封顶 medium
+                if report.confidence == "high":
+                    report.confidence = "medium"
+                report.data_caveats.append(
+                    f"{error_count} 个工具调用失败或返回错误，结论仅供参考"
+                )
+            elif partial_count > 0:
+                report.data_caveats.append(f"{partial_count} 个工具返回部分数据，结论可能不完整")
 
         # ── 异常检测（PRD §29-30: Anomaly Radar） ──
         try:
@@ -474,23 +539,55 @@ class MarketDetective:
             cache_stats=market_cache.stats,
         )
 
+
+    def _truncate_normalized(self, result: ToolResult) -> None:
+        """截断 result.normalized，防止下游 evaluator/reasoning prompt 失控。
+
+        K 线每条展开成 ~6 个字段（t/o/h/l/c/v），50 条 × 6 = 300+ items。
+        evaluator 每 2 次调用重发一次这些 dump → 149KB prompt。上限设为 200。
+        """
+        if len(result.normalized) <= 200:
+            return
+        overflow_count = len(result.normalized) - 200
+        result.normalized = result.normalized[:200]
+        from app.models.evidence import Evidence
+        from app.models.market import NormalizedDatum
+        result.normalized.append(NormalizedDatum(
+            source="truncation_note",
+            tool=result.tool,
+            metric="_truncated_count",
+            value=f"原始 {overflow_count + 200} 项，已截断至 200（保留最近 200）",
+            status="partial",
+            partial=True,
+        ))
+
+    def _normalize_hk_entries(self, hk_data: dict[str, Any]) -> list[NormalizedDatum]:
+        """将 eastmoney_kline_api 返回的 dict 转换为 NormalizedDatum。
+
+        以前这里是 ``{"source": ..., "key": k, "value": v}``，
+        但 NormalizedDatum.metric 和 .tool 是必填字段，缺少这两个字段会抛
+        pydantic ValidationError → 被 except Exception 吞掉 → hk 数据静默丢失。
+        """
+        entries: list[NormalizedDatum] = []
+        for k, v in hk_data.items():
+            if k.startswith("_"):
+                continue
+            entries.append(NormalizedDatum(
+                source="eastmoney_kline_api",
+                tool=k,       # 用 key 当 tool（方便下游归一化识别）
+                metric=k,     # key 既是 tool 也是 metric 名
+                value=v,
+                domain="hk_stock",
+            ))
+        return entries
+
+
     async def _execute_one(
         self,
         req: _ToolCallRequest,
         called_signatures: set[str],
     ) -> ToolResult:
-        """执行单次工具调用，自动处理重复和连接。"""
-
-        sig = f"{req.tool_name}:{sorted(req.arguments.items())}"
-        if sig in called_signatures:
-            return ToolResult(
-                tool=req.tool_name,
-                arguments=req.arguments,
-                status="error",
-                normalized=[],
-                error="Duplicate call blocked",
-            )
-
+        """执行单次工具调用。去重由调用方处理，这里假设请求是唯一的。"""
         # ── 内部工具直连（不走 Gateway） ──
         meta = resolve_tool_by_name(req.tool_name)
         if getattr(meta, 'http_method', None) == "INTERNAL":
@@ -517,10 +614,13 @@ class MarketDetective:
 
             result = await gateway.call(req.tool_name, req.arguments)
 
-            # 缓存成功结果（用于后续去重）
-            cache_key = _make_cache_key(result.tool, result.arguments)
-            ttl = _resolve_ttl(result.tool)
-            market_cache.set(cache_key, result, ttl=ttl)
+            # 只缓存成功/部分成功的结果。错误结果（429 超时、上游 502 等）
+            # 不应被缓存：它们可能在下次请求时自动恢复，而缓存会把失败状态
+            # 固化到 TTL 内，让所有后续用户都拿到同一条错误。
+            if result.status in ("success", "partial"):
+                cache_key = _make_cache_key(result.tool, result.arguments)
+                ttl = _resolve_ttl(result.tool)
+                market_cache.set(cache_key, result, ttl=ttl)
 
             return result
 
@@ -529,15 +629,7 @@ class MarketDetective:
         if req.tool_name == "internal_hk_northbound":
             try:
                 data = await fetch_hk_context_data()
-                normalized = [
-                    {
-                        "source": "eastmoney_kline_api",
-                        "key": k,
-                        "value": v,
-                    }
-                    for k, v in data.items()
-                    if not k.startswith("_")
-                ]
+                normalized = self._normalize_hk_entries(data)
                 logger.info("Internal tool hk_northbound: fetched %d entries", len(normalized))
                 return ToolResult(
                     tool="hk_northbound_daily",
@@ -562,10 +654,9 @@ class MarketDetective:
                     "hs_index": data.get("hs_index", {}),
                     "hs_tech_index": data.get("hs_tech_index", {}),
                 }
-                normalized = [
-                    {"source": "eastmoney_kline_api", "key": k, "value": v}
-                    for k, v in hs_data.items() if v
-                ]
+                normalized = self._normalize_hk_entries({
+                    k: v for k, v in hs_data.items() if v
+                })
                 logger.info("Internal tool hk_index: fetched %d entries", len(normalized))
                 return ToolResult(
                     tool="hk_index_snapshot",

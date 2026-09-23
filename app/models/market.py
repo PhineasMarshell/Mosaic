@@ -26,4 +26,8 @@ class ToolResult(BaseModel):
     status: Status
     partial: bool = False
     error: str | None = None
+    #: 数据不完整的原因（上游自己的 note，或本地截断说明）。
+    #: gateway 的契约是 partial=true 时"另有 note 说明"，以前这个字段被
+    #: _METADATA_KEYS 直接丢掉了，用户和 LLM 都看不到数据为什么不全。
+    note: str | None = None
     normalized: list[NormalizedDatum] = Field(default_factory=list)

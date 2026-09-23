@@ -5,6 +5,9 @@ Cover:
 - New LLM output format: {id, source_tool, metric, value, ...} -> EvidenceItem
 - what_changed as string vs list
 - Model validation of both formats
+
+Note on new-format tests: 审计第 7 项修复后，新格式条目必须有匹配的原始 Evidence
+才能通过验证层。没有 id 或 id 无法匹配真实数据的条目会被静默丢弃而非编造假证据。
 """
 
 import pytest
@@ -42,7 +45,7 @@ def sample_evidence():
             metric="openInterest",
             value=8.5,
             status="partial",
-            partial=True,  # Fix: explicitly set partial=True for partial data
+            partial=True,
         ),
     ]
 
@@ -57,7 +60,6 @@ class TestParseEvidenceOldFormat:
         result = _parse_evidence(raw, sample_evidence)
 
         assert len(result) >= 1
-        # Should map to actual Evidence data
         ids = {r.id for r in result}
         assert "e-001" in ids or "e-002" in ids
 
@@ -87,22 +89,25 @@ class TestParseEvidenceOldFormat:
         assert oi_items[0].partial is True
 
     def test_new_format_with_partial_flag(self):
-        """Ensure new format evidence correctly preserves partial boolean."""
+        """新格式必须提供匹配的原始 Evidence 才能通过验证层。"""
         from app.research.reasoning import _parse_evidence
 
         raw = [
             {"id": "e-100", "source_tool": "derivatives", "domain": "crypto",
              "metric": "open_interest", "value": 8.5,
-             "status": "success"}  # Use non-partial status for clean test
+             "status": "success"}
         ]
-        result = _parse_evidence(raw, [])
+        original = [Evidence(id="e-100", source_tool="derivatives", domain="crypto",
+                            metric="open_interest", value=8.5,
+                            status="success", partial=False)]
+        result = _parse_evidence(raw, original)
         assert len(result) == 1
         assert result[0].id == "e-100"
         assert result[0].status == "success"
 
 
 class TestParseEvidenceNewFormat:
-    """Test parsing of new EvidenceItem-compatible format."""
+    """新格式必须有匹配的原始 Evidence，否则条目被丢弃（审计第 7 项）。"""
 
     def test_new_format_preserves_all_fields(self):
         from app.research.reasoning import _parse_evidence
@@ -121,7 +126,12 @@ class TestParseEvidenceNewFormat:
                 "note": "High funding rate",
             }
         ]
-        result = _parse_evidence(raw, [])
+        original = [
+            Evidence(id="e-100", source_tool="test_tool", domain="crypto",
+                     metric="fundingRate", value=0.25, timestamp="2025-09-05T14:00:00Z",
+                     source="coinglass", status="success", partial=False)
+        ]
+        result = _parse_evidence(raw, original)
 
         assert len(result) == 1
         item = result[0]
@@ -132,28 +142,57 @@ class TestParseEvidenceNewFormat:
         assert item.value == 0.25
         assert item.partial is False
 
+    def test_unknown_id_is_dropped(self):
+        """无匹配原始证据 → 丢弃而非编造。"""
+        from app.research.reasoning import _parse_evidence
+
+        raw = [{"id": "e-nonexistent", "metric": "price", "value": 100}]
+        result = _parse_evidence(raw, [])
+        assert len(result) == 0
+
+    def test_llm_value_overridden_by_real_evidence(self):
+        """LLM 说的 value=999 被真实数据覆盖。"""
+        from app.research.reasoning import _parse_evidence
+
+        raw = [{"id": "e-100", "value": 999}]
+        original = [Evidence(id="e-100", source_tool="t", domain="crypto",
+                            metric="fundingRate", value=0.25, status="success")]
+        result = _parse_evidence(raw, original)
+        assert len(result) == 1
+        assert result[0].value == 0.25
+
+    def test_missing_id_is_dropped(self):
+        """没有 id 的新格式条目无法匹配 → 丢弃。"""
+        from app.research.reasoning import _parse_evidence
+
+        raw = [{"metric": "price", "value": 100}]
+        original = [Evidence(id="x", source_tool="t", domain="a_share",
+                            metric="p", value=1, status="success")]
+        result = _parse_evidence(raw, original)
+        assert len(result) == 0
+
     def test_unknown_keys_ignored(self):
         from app.research.reasoning import _parse_evidence
 
         raw = [
             {"id": "e-200", "extra_key": "should_be_ignored", "metric": "test"}
         ]
-        result = _parse_evidence(raw, [])
+        original = [Evidence(id="e-200", source_tool="t", metric="test")]
+        result = _parse_evidence(raw, original)
         assert len(result) == 1
-        # Extra key should not appear in model
         assert hasattr(result[0], "extra_key") is False
 
 
 class TestMarketIntelligenceValidation:
     """End-to-end validation of MarketIntelligence with both evidence formats."""
 
-    def _ensure_lists(self, payload):
+    def _ensure_lists(self, payload, original_evidence=None):
         """Apply the same transformations that ReasoningEngine.reason() does."""
         from app.research.reasoning import _parse_evidence, _ensure_list
         for key in ("why", "strong_areas", "what_changed", "what_matters", "risks", "data_caveats"):
             payload[key] = _ensure_list(payload.get(key))
         raw_ev = payload.get("evidence") or []
-        parsed = _parse_evidence(raw_ev, [])
+        parsed = _parse_evidence(raw_ev, original_evidence or [])
         payload["evidence"] = [ei.model_dump() for ei in parsed]
         conf = payload.get("confidence")
         if conf not in ("high", "medium", "low"):
@@ -191,20 +230,26 @@ class TestMarketIntelligenceValidation:
         assert model.evidence[0].value == "Price declining"
 
     def test_validate_with_new_evidence_format(self):
+        ev = [
+            Evidence(id="e-001", source_tool="quote", domain="a_share",
+                     metric="price", value=3800.0, status="success"),
+            Evidence(id="e-002", source_tool="sentiment", domain="a_share",
+                     metric="risk_on", value=0.3, status="partial", partial=True),
+        ]
         payload = self._base_payload(
             evidence=[
                 {"id": "e-001", "source_tool": "quote", "domain": "a_share",
-                 "metric": "price", "value": 3800.0, "status": "success"},
+                 "metric": "price", "value": 999.0, "status": "success"},
                 {"id": "e-002", "source_tool": "sentiment", "domain": "a_share",
-                 "metric": "risk_on", "value": 0.3, "status": "partial"},
+                 "metric": "risk_on", "value": 0.9, "status": "wrong_status"},
             ]
         )
-        payload = self._ensure_lists(payload)
+        payload = self._ensure_lists(payload, original_evidence=ev)
         model = MarketIntelligence.model_validate(payload)
         assert len(model.evidence) == 2
         assert model.evidence[0].id == "e-001"
-        # Status 'partial' implies partial data — note: Pydantic may normalize
-        # the boolean partial field depending on validation context
+        # LLM 说 value=999，但真实值是 3800
+        assert model.evidence[0].value == 3800.0
         assert model.evidence[1].status == "partial"
 
     def test_validate_with_list_what_changed(self):

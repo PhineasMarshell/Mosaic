@@ -102,6 +102,71 @@ _TIMESTAMP_KEYS = {"timestamp", "time", "date", "datetime", "ts"}
 _CONTAINER_KEYS = {"candles", "data", "items", "rows", "results", "trades"}
 _METADATA_KEYS = {"partial", "status", "note", "source", "source_used"}
 
+#: 单个列表最多逐条展开多少项。超出会被截断 —— 以前是静默截断，
+#: 现在会置 partial=True 并写 note（见 _find_truncations）。
+_LIST_CAP = 50
+
+#: 升序时间序列：截断时必须保留**末尾**（最新），否则会把几周前的数据
+#: 当成当前值。实测 90 天日线只保留前 50 根时，"最新收盘"比真实值低 21%。
+_SERIES_KEYS = {"candles", "candle", "hqdata", "klines", "kline", "series"}
+_SERIES_TOOL_HINTS = (
+    "klines", "window", "derivatives_history",
+    "user_count", "sentiment", "abnormal_reasons",
+)
+# 刻意**不含** timeline / trades（新→旧的信息流，头部才是最新）、
+# limit_up_pool / overview / top_position（排行榜或名单，头部最相关）。
+
+
+def _is_ordered_series(key: str | None, tool: str | None) -> bool:
+    """该列表是否按时间升序排列（→ 截断时保留末尾）。"""
+    if key and key.lower() in _SERIES_KEYS:
+        return True
+    t = (tool or "").lower()
+    return any(h in t for h in _SERIES_TOOL_HINTS)
+
+
+def _slice_list(key: str | None, value: list, tool: str | None) -> tuple[list, int]:
+    """按 _LIST_CAP 截断列表：时间序列留末尾，其余留开头。
+
+    返回 ``(保留的切片, 该切片在原始列表中的起始下标)``。带上起始下标是为了
+    让 metric 路径（``candles[89].c``）继续指向原始 payload 里的真实位置，
+    而不是把最新的 50 根重新编号成 0-49。
+    """
+    if len(value) <= _LIST_CAP:
+        return value, 0
+    if _is_ordered_series(key, tool):
+        return value[-_LIST_CAP:], len(value) - _LIST_CAP
+    return value[:_LIST_CAP], 0
+
+
+def _find_truncations(obj, tool, parent_path: str = "", depth: int = 0) -> list[str]:
+    """找出会被 _slice_list 截断的列表，返回人类可读的说明。
+
+    只统计提取器**真正会逐条展开**的列表（容器键下的列表、F10 的 name/value
+    列表、顶层列表）。被 _make_summary 压成字符串的列表不算截断 —— 那是另一个
+    问题（嵌套 payload 丢失），口径不同，混在一起会让 note 失真。
+    """
+    notes: list[str] = []
+    if depth > 6:
+        return notes
+
+    if isinstance(obj, list):
+        if len(obj) > _LIST_CAP:
+            kept = "newest" if _is_ordered_series(parent_path.rsplit(".", 1)[-1], tool) else "first"
+            notes.append(f"{parent_path or 'root'}: truncated {len(obj)}->{_LIST_CAP} items, kept {kept}")
+    elif isinstance(obj, dict):
+        f10 = _is_eastmoney_f10_tool(tool)
+        for k, v in obj.items():
+            path = f"{parent_path}.{k}" if parent_path else k
+            if isinstance(v, list) and (is_container_key(k) or f10):
+                if len(v) > _LIST_CAP:
+                    kept = "newest" if _is_ordered_series(k, tool) else "first"
+                    notes.append(f"{path}: truncated {len(v)}->{_LIST_CAP} items, kept {kept}")
+            elif isinstance(v, dict):
+                notes.extend(_find_truncations(v, tool, path, depth + 1))
+    return notes
+
+
 # Crypto 领域的时间键变体（K线常用）
 _CRYPTO_TIME_KEYS = {"open_time", "close_time", "t", "T", "period", "UnixTime"}
 
@@ -186,7 +251,10 @@ def _extract_f10_list_items(obj, parent_path, result, *, _tool, _domain, _status
     if not isinstance(obj, list):
         return
 
-    for i, item in enumerate(obj[:50]):
+    _items, _start = _slice_list(
+        parent_path.rsplit(".", 1)[-1] if parent_path else None, obj, _tool
+    )
+    for i, item in enumerate(_items, _start):
         if not isinstance(item, dict):
             continue
         path = f"{parent_path}[{i}]"
@@ -361,7 +429,8 @@ def _extract_metrics(
 
             if is_container_key(key):
                 if isinstance(value, list):
-                    for i, item in enumerate(value[:50]):
+                    _items, _start = _slice_list(key, value, _tool)
+                    for i, item in enumerate(_items, _start):
                         _extract_metrics(
                             item,
                             parent_path=f"{path}[{i}]",
@@ -421,23 +490,76 @@ def _extract_metrics(
                                     )
                                     found = True
                             if not found:
-                                result.append(_make_datum(path, _make_summary(value)))
+                                # 没有匹配到 metric 名的子键 → 递归展开容器内容
+                                _extract_metrics(
+                                    v, parent_path=f"{path}.{k}", result=result,
+                                    _tool=_tool, _domain=_domain, _status=_status,
+                                    _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                )
                     elif _is_eastmoney_f10_tool(_tool):
                         flattened = _deep_flatten_value(value)
                         if isinstance(flattened, (int, float)):
                             result.append(_make_datum(path, flattened))
                         else:
-                            result.append(_make_datum(path, _make_summary(value)))
+                            # F10 非数值且深度扁平失败 → 递归展开
+                            _extract_metrics(
+                                value, parent_path=path, result=result,
+                                _tool=_tool, _domain=_domain, _status=_status,
+                                _partial=_partial, _timestamp=_timestamp, _source=_source,
+                            )
                     else:
-                        result.append(_make_datum(path, _make_summary(value)))
+                        # 通用路径：遇到嵌套 dict/list → 递归展开，而不是压成字符串。
+                        # 审计发现的 CRITICAL 问题（snapshot 的 ticker.last 变成 "[object:base_volume,...]"）
+                        # 就是这里引起的：_make_summary 把整个嵌套对象丢掉了。
+                        if isinstance(value, dict):
+                            _extract_metrics(
+                                value, parent_path=path, result=result,
+                                _tool=_tool, _domain=_domain, _status=_status,
+                                _partial=_partial, _timestamp=_timestamp, _source=_source,
+                            )
+                        elif isinstance(value, list):
+                            for i, item in enumerate(value):
+                                item_path = f"{path}[{i}]"
+                                if isinstance(item, dict):
+                                    _extract_metrics(
+                                        item, parent_path=item_path, result=result,
+                                        _tool=_tool, _domain=_domain, _status=_status,
+                                        _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                    )
+                                else:
+                                    result.append(_make_datum(item_path, item))
+                        else:
+                            result.append(_make_datum(path, value))
                 else:
                     result.append(_make_datum(path, value))
 
     elif isinstance(obj, list):
-        for i, item in enumerate(obj[:50]):
+        _items, _start = _slice_list(
+            parent_path.rsplit(".", 1)[-1] if parent_path else None, obj, _tool
+        )
+        for i, item in enumerate(_items, _start):
             idx_path = f"{parent_path}[{i}]" if parent_path else f"item[{i}]"
-            val = item if not isinstance(item, (dict, list)) else _make_summary(item)
-            result.append(_make_datum(idx_path, val))
+            # 列表元素是 dict/list 时递归展开，不是总结
+            if isinstance(item, dict):
+                _extract_metrics(
+                    item, parent_path=idx_path, result=result,
+                    _tool=_tool, _domain=_domain, _status=_status,
+                    _partial=_partial, _timestamp=_timestamp, _source=_source,
+                )
+            elif isinstance(item, list):
+                # 嵌套列表也递归
+                for j, sub in enumerate(item):
+                    sub_path = f"{idx_path}[{j}]"
+                    if isinstance(sub, dict):
+                        _extract_metrics(
+                            sub, parent_path=sub_path, result=result,
+                            _tool=_tool, _domain=_domain, _status=_status,
+                            _partial=_partial, _timestamp=_timestamp, _source=_source,
+                        )
+                    else:
+                        result.append(_make_datum(sub_path, sub))
+            else:
+                result.append(_make_datum(idx_path, item))
     else:
         result.append(_make_datum(parent_path or "response", obj))
 
@@ -473,7 +595,36 @@ def normalize_tool_result(
             error=error,
         )
 
+    if raw is None:
+        # 上游既没给数据、也没给错误信息。历史上两条路径会走到这里：
+        #   - HTTP 401/403：http_client 在 last_error 还是 None 时就 return 了
+        #   - MCP 工具级失败：call() 从不检查 result.is_error
+        # 以前这种情况会被归一化成 metric="response", value="None", status="success"，
+        # 于是 evidence gate 报告 has_evidence=True，Reasoning LLM 拿着一堆 "None"
+        # 写出一份自信的市场报告。没有数据就必须是 error。
+        return ToolResult(
+            tool=tool,
+            arguments=arguments,
+            raw=None,
+            status="error",
+            partial=False,
+            normalized=[],
+            error="Gateway returned no data (empty response without an error message)",
+        )
+
     partial = find_partial(raw)
+
+    # 截断必须说出来：以前 [:50] 静默丢掉记录，status 还是 success，
+    # 于是"今天怎么样"会拿六周前的数据作答。
+    truncations = _find_truncations(raw, tool)
+    if truncations:
+        partial = True
+
+    # gateway 契约：partial=true 时另有 note 说明原因。_METADATA_KEYS 会把它
+    # 从数据点里滤掉，所以在这里捞出来挂到 ToolResult 上。
+    upstream_note = raw.get("note") if isinstance(raw, dict) else None
+    note = "; ".join(str(n) for n in ([upstream_note] if upstream_note else []) + truncations) or None
+
     status: Status = "partial" if partial else "success"
     timestamp = find_timestamp(raw) if isinstance(raw, dict) else None
     source = None
@@ -506,6 +657,7 @@ def normalize_tool_result(
         raw=raw,
         status=status,
         partial=partial,
+        note=note,
         normalized=normalized,
     )
 
