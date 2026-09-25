@@ -19,6 +19,13 @@ from app.models.market import ToolResult
 from app.models.response import EvidenceItem, MarketIntelligence
 
 
+def _get_evidence_key(item) -> str:
+    """提取 evidence item 的 source_tool，用于按工具分组截断。"""
+    if isinstance(item, dict):
+        return item.get("source_tool", "unknown")
+    return getattr(item, "source_tool", "unknown")
+
+
 def _ensure_list(val, default=None):
     """确保值是列表（LLM 可能返回字符串）。"""
     if val is None:

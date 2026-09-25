@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 90
     max_conversation_turns: int = 10
 
+    # ── LangGraph 图配置（P2+） ────────────────────
+    #: Critic 打回 Reasoning 重写的最大轮次
+    critic_max_revisions: int = 2
+    #: LangGraph recursion limit（防止无限循环）
+    graph_recursion_limit: int = 25
+
 
 @lru_cache
 def get_settings() -> Settings:

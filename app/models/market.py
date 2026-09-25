@@ -4,6 +4,11 @@ from pydantic import BaseModel, Field
 
 Status = Literal["success", "partial", "error"]
 
+# 字符串常量 — graph/tool_runtime 等模块用这些做 status 比较
+STATUS_SUCCESS = "success"
+STATUS_PARTIAL = "partial"
+STATUS_ERROR = "error"
+
 
 class NormalizedDatum(BaseModel):
     domain: str = "unknown"
