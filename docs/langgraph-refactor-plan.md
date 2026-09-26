@@ -1,6 +1,6 @@
 # LangGraph Multi-Agent 重构方案
 
-> 状态：P3 已完成，314 测试全绿
+> 状态：P3 已完成，328 测试全绿（2 skipped）
 
 > 前置条件：评论爬取 MCP（雪球 / 富途牛牛 / 同花顺评论区）即将接入
 
@@ -392,11 +392,11 @@ ToolMeta(
 
 | P0 骨架 ✅ | 装依赖；state.py + builder.py；单节点图整包调用现有 MarketDetective.investigate()（绞杀者）；orchestrator.run 切到图。Bug 修复：kernel 补写 results 字段供 gate/reasoning 消费；删除 dead code _critic_should_revise | 行为零变化，235+ 测试全绿 |
 
-| P1 执行层抽取  | tool_runtime.py 从 market_detective 抽出（含测试搬迁）；Supervisor 节点上线（复用 planner prompt + 解析）；图变成 supervisor → market_detective 内核 → reasoning | 路由决策有单测（test_graph_routing.py, 6 tests）；端到端对比 P0 输出一致 |
+| P1 执行层抽取 ✅ | tool_runtime.py 从 market_detective 抽出（含测试搬迁）；Supervisor 节点上线（复用 planner prompt + 解析）；图变成 supervisor → market_detective 内核 → reasoning | 路由决策有单测（test_graph_routing.py, 6 tests）；端到端对比 P0 输出一致 |
 
-| P2 Critic 闭环  | gate / reasoning / critic 节点化；Critic 条件边（revise ≤ critic_max_revisions；research_more 时带 missing_points 回 Supervisor，最多 1 次）；SSE 改 astream(stream_mode="updates") 按节点推事件 | 前端能看到逐节点进度；打回重写路径有测试 |
+| P2 Critic 闭环 ✅ | gate / reasoning / critic 节点化；Critic 条件边（revise ≤ critic_max_revisions；research_more 时带 missing_points 回 Supervisor，最多 1 次）；SSE 改 astream(stream_mode="updates") 按节点推事件 | 前端能看到逐节点进度；打回重写路径有测试 |
 
-| P3 Analyst 拆分  | 工具 registry 加 category 标注（39 个工具，by_category 索引）；base.py 骨架（预算守卫、失败降级、finding digest）；拆为 technical/fundamental/moneyflow 三节点，builder 中 add_edge 并行扇出；AnalystName 扩展为 Literal["kernel","technical","fundamental","moneyflow"] | 三节点并行有测试（test_graph_topology.py + test_graph_nodes.py, 14 tests）；单 analyst 超时/失败整图仍出报告 |
+| P3 Analyst 拆分 ✅ | 工具 registry 加 category 标注（39 个工具，by_category 索引）；base.py 骨架（预算守卫、失败降级、finding digest）；拆为 technical/fundamental/moneyflow 三节点，builder 中 add_edge 并行扇出；AnalystName 扩展为 Literal["kernel","technical","fundamental","moneyflow"] | 三节点并行有测试（test_graph_topology.py + test_graph_nodes.py, 14 tests）；单 analyst 超时/失败整图仍出报告 |
 
 | P4 舆情 + 新闻接入 | 评论 MCP 工具注册 + sentiment/pipeline.py 清洗统计 LLM 打分 + sentiment analyst 节点；news/search.py（DDGS）+ news analyst 节点 + tool_runtime 本地执行分支；两开关独立：sentiment_enabled / news_enabled，默认关 | 清洗层纯代码单测；两开关全关 = P3 行为 |
 

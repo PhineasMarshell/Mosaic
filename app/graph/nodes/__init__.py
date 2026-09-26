@@ -2,11 +2,14 @@
 
 所有节点统一在此 import，供 builder.py 和其他模块使用。
 P3：增加了三个 analyst 节点（technical / fundamental / moneyflow）。
-
-⚠️ P0：analyst 节点尚未就绪（by_category 依赖未实现），此处暂不导入。
-     builder.py 改为直接 import 具体文件，绕过 __init__.py 触发死锁。
 """
 
+from app.graph.nodes.analysts import (
+    FundamentalAnalystNode,
+    MarketAnalystNode,
+    MoneyflowAnalystNode,
+    TechnicalAnalystNode,
+)
 from app.graph.nodes.critic import CriticNode, Critique
 from app.graph.nodes.gate import GateNode
 from app.graph.nodes.kernel import KernelNode
@@ -16,8 +19,12 @@ from app.graph.nodes.supervisor import SupervisorNode
 __all__ = [
     "CriticNode",
     "Critique",
+    "FundamentalAnalystNode",
     "GateNode",
     "KernelNode",
+    "MarketAnalystNode",
+    "MoneyflowAnalystNode",
     "ReasoningNode",
     "SupervisorNode",
+    "TechnicalAnalystNode",
 ]

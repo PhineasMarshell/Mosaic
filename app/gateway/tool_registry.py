@@ -30,6 +30,7 @@ class ToolMeta:
         "priority",
         "http_method",
         "http_path",
+        "category",
     )
 
     def __init__(
@@ -41,6 +42,7 @@ class ToolMeta:
         priority: Literal["high", "medium", "low"] = "medium",
         http_method: str = "GET",
         http_path: str = "",
+        category: str = "shared",
     ):
         self.key = key
         self.tool_name = tool_name
@@ -49,6 +51,7 @@ class ToolMeta:
         self.priority = priority
         self.http_method = http_method
         self.http_path = http_path
+        self.category = category
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -59,6 +62,7 @@ class ToolMeta:
             "priority": self.priority,
             "http_method": self.http_method,
             "http_path": self.http_path,
+            "category": self.category,
         }
 
 
@@ -75,6 +79,7 @@ _ASHARE_MASTERTOOLS = [
         priority="high",
         http_method="GET",
         http_path="/ashare-master/sentiment",
+        category="technical",
     ),
     ToolMeta(
         "limit_up_count",
@@ -84,6 +89,7 @@ _ASHARE_MASTERTOOLS = [
         priority="high",
         http_method="GET",
         http_path="/ashare-master/limit-up/count",
+        category="technical",
     ),
     ToolMeta(
         "limit_up_sectors",
@@ -93,6 +99,7 @@ _ASHARE_MASTERTOOLS = [
         priority="high",
         http_method="GET",
         http_path="/ashare-master/limit-up/sectors",
+        category="technical",
     ),
     ToolMeta(
         "limit_up_pool",
@@ -102,6 +109,7 @@ _ASHARE_MASTERTOOLS = [
         priority="medium",
         http_method="GET",
         http_path="/ashare-master/limit-up/pool",
+        category="technical",
     ),
 ]
 
@@ -118,6 +126,7 @@ _ASHARE_FUNDAMENTALS = [
         priority="high",
         http_method="GET",
         http_path="/eastmoney/overview",
+        category="fundamental",
     ),
     ToolMeta(
         "detail",
@@ -127,6 +136,7 @@ _ASHARE_FUNDAMENTALS = [
         priority="medium",
         http_method="GET",
         http_path="/eastmoney/detail",
+        category="fundamental",
     ),
     ToolMeta(
         "business",
@@ -136,6 +146,7 @@ _ASHARE_FUNDAMENTALS = [
         priority="low",
         http_method="GET",
         http_path="/eastmoney/f10/business",
+        category="fundamental",
     ),
     ToolMeta(
         "concept",
@@ -145,6 +156,7 @@ _ASHARE_FUNDAMENTALS = [
         priority="low",
         http_method="GET",
         http_path="/eastmoney/f10/concept",
+        category="fundamental",
     ),
     ToolMeta(
         "finance",
@@ -154,6 +166,7 @@ _ASHARE_FUNDAMENTALS = [
         priority="low",
         http_method="GET",
         http_path="/eastmoney/f10/finance",
+        category="fundamental",
     ),
     ToolMeta(
         "shareholders",
@@ -163,6 +176,7 @@ _ASHARE_FUNDAMENTALS = [
         priority="low",
         http_method="GET",
         http_path="/eastmoney/f10/shareholders",
+        category="fundamental",
     ),
     ToolMeta(
         "survey",
@@ -172,6 +186,7 @@ _ASHARE_FUNDAMENTALS = [
         priority="low",
         http_method="GET",
         http_path="/eastmoney/f10/survey",
+        category="fundamental",
     ),
 ]
 
@@ -188,6 +203,7 @@ _ASHARE_MICRO = [
         priority="medium",
         http_method="GET",
         http_path="/tencent/quote",
+        category="technical",
     ),
     ToolMeta(
         "longhu",
@@ -197,6 +213,7 @@ _ASHARE_MICRO = [
         priority="medium",
         http_method="GET",
         http_path="/xueqiu/longhu",
+        category="moneyflow",
     ),
     ToolMeta(
         "abnormal_reasons",
@@ -206,6 +223,7 @@ _ASHARE_MICRO = [
         priority="medium",
         http_method="GET",
         http_path="/xueqiu/abnormal-reasons",
+        category="technical",
     ),
     ToolMeta(
         "orderbook",
@@ -215,6 +233,7 @@ _ASHARE_MICRO = [
         priority="low",
         http_method="GET",
         http_path="/xueqiu/orderbook",
+        category="technical",
     ),
     ToolMeta(
         "trades",
@@ -224,6 +243,7 @@ _ASHARE_MICRO = [
         priority="low",
         http_method="GET",
         http_path="/xueqiu/trades",
+        category="technical",
     ),
     ToolMeta(
         "timeline",
@@ -233,6 +253,7 @@ _ASHARE_MICRO = [
         priority="low",
         http_method="GET",
         http_path="/xueqiu/timeline",
+        category="technical",
     ),
     ToolMeta(
         "search",
@@ -242,6 +263,7 @@ _ASHARE_MICRO = [
         priority="low",
         http_method="GET",
         http_path="/xueqiu/search",
+        category="technical",
     ),
 ]
 
@@ -262,6 +284,7 @@ _HK_STOCK_PLACEHOLDERS = [
         priority="high",
         http_method="GET",
         http_path="/tencent/quote",
+        category="technical",
     ),
     ToolMeta(
         "hk_search",
@@ -271,6 +294,7 @@ _HK_STOCK_PLACEHOLDERS = [
         priority="medium",
         http_method="GET",
         http_path="/xueqiu/search",
+        category="moneyflow",
     ),
     # ── 北向资金流入（香港通） — 内部直连 Eastmoney KLineJSAPI ──
     # ⚠️ 这些工具不走 Market Gateway，由 app/research/hk_northbound.fetch_all_hk_context() 直接获取。
@@ -286,6 +310,7 @@ _HK_STOCK_PLACEHOLDERS = [
         priority="high",
         http_method="INTERNAL",
         http_path="",
+        category="moneyflow",
     ),
     ToolMeta(
         "hk_index_snapshot",
@@ -295,6 +320,7 @@ _HK_STOCK_PLACEHOLDERS = [
         priority="medium",
         http_method="INTERNAL",
         http_path="",
+        category="technical",
     ),
 ]
 
@@ -314,6 +340,7 @@ _COMMODITIES_PLACEHOLDERS = [
         priority="high",
         http_method="POST",
         http_path="/market/klines",
+        category="technical",
     ),
     ToolMeta(
         "commodity_silver",
@@ -323,6 +350,7 @@ _COMMODITIES_PLACEHOLDERS = [
         priority="medium",
         http_method="POST",
         http_path="/market/snapshot",
+        category="technical",
     ),
     ToolMeta(
         "commodity_platinum",
@@ -332,6 +360,7 @@ _COMMODITIES_PLACEHOLDERS = [
         priority="low",
         http_method="POST",
         http_path="/market/snapshot",
+        category="technical",
     ),
 ]
 
@@ -350,6 +379,7 @@ _CRYPTO_MARKET = [
         priority="high",
         http_method="POST",
         http_path="/market/klines",
+        category="technical",
     ),
     ToolMeta(
         "snapshot",
@@ -359,6 +389,7 @@ _CRYPTO_MARKET = [
         priority="high",
         http_method="POST",
         http_path="/market/snapshot",
+        category="technical",
     ),
     ToolMeta(
         "window",
@@ -368,6 +399,7 @@ _CRYPTO_MARKET = [
         priority="medium",
         http_method="POST",
         http_path="/market/window",
+        category="technical",
     ),
     ToolMeta(
         "exchanges",
@@ -377,6 +409,7 @@ _CRYPTO_MARKET = [
         priority="medium",
         http_method="GET",
         http_path="/market/exchanges",
+        category="technical",
     ),
 ]
 
@@ -393,6 +426,7 @@ _CRYPTO_DERIVATIVES = [
         priority="high",
         http_method="POST",
         http_path="/market/derivatives/history",
+        category="moneyflow",
     ),
 ]
 
@@ -409,6 +443,7 @@ _CRYPTO_COINGLASS = [
         priority="medium",
         http_method="GET",
         http_path="/coinglass/hyperliquid/symbols",
+        category="moneyflow",
     ),
     ToolMeta(
         "liqmap",
@@ -418,6 +453,7 @@ _CRYPTO_COINGLASS = [
         priority="high",
         http_method="GET",
         http_path="/coinglass/hyperliquid/liqmap",
+        category="moneyflow",
     ),
     ToolMeta(
         "top_position",
@@ -427,6 +463,7 @@ _CRYPTO_COINGLASS = [
         priority="high",
         http_method="GET",
         http_path="/coinglass/hyperliquid/top-position",
+        category="moneyflow",
     ),
     ToolMeta(
         "user_count",
@@ -436,6 +473,7 @@ _CRYPTO_COINGLASS = [
         priority="medium",
         http_method="GET",
         http_path="/coinglass/hyperliquid/user-count",
+        category="moneyflow",
     ),
     ToolMeta(
         "vaults",
@@ -445,6 +483,7 @@ _CRYPTO_COINGLASS = [
         priority="low",
         http_method="GET",
         http_path="/coinglass/hyperliquid/vaults",
+        category="moneyflow",
     ),
     ToolMeta(
         "liquidation_today",
@@ -454,6 +493,7 @@ _CRYPTO_COINGLASS = [
         priority="high",
         http_method="GET",
         http_path="/coinglass/liquidation/today",
+        category="moneyflow",
     ),
     ToolMeta(
         "funding_rate",
@@ -463,6 +503,7 @@ _CRYPTO_COINGLASS = [
         priority="high",
         http_method="GET",
         http_path="/coinglass/funding-rate",
+        category="moneyflow",
     ),
 ]
 
@@ -488,6 +529,7 @@ _NEWS_SEARCH = [
         priority="medium",
         http_method="INTERNAL",
         http_path="",
+        category="shared",
     ),
 ]
 
@@ -504,6 +546,7 @@ _HEALTH_TOOLS = [
         priority="low",
         http_method="GET",
         http_path="/health",
+        category="shared",
     ),
     ToolMeta(
         "market_health",
@@ -513,6 +556,7 @@ _HEALTH_TOOLS = [
         priority="low",
         http_method="GET",
         http_path="/market/health",
+        category="shared",
     ),
 ]
 
@@ -548,6 +592,16 @@ BY_NAME_CORE = BY_NAME
 #: 向后兼容 — 旧代码使用 CORE_TOOLS 变量名
 CORE_TOOLS = ALL_TOOLS
 
+# ── P3 category 索引 ──────────────────────────────────────────────
+#: category → list[ToolMeta] 索引（各 analyst 节点通过此索引发现工具）
+by_category: dict[str, list[ToolMeta]] = {}
+for _t in ALL_TOOLS:
+    by_category.setdefault(_t.category, []).append(_t)
+
+
+def tools_by_category(category: str) -> list[ToolMeta]:
+    """获取指定分析员类别的所有工具。"""
+    return by_category.get(category, [])
 
 # ------------------------------------------------------------------ #
 # 公开 API                                                              #
