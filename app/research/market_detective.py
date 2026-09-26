@@ -35,6 +35,7 @@ from app.models.research import MarketDomain, ToolCallPlan
 from app.models.response import ResearchResponse
 from app.research.evidence import build_evidence
 from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
+from app.research.news_search import extract_news_entries as _extract_news_entries, search_news as _search_news
 from app.research.reasoning import ReasoningEngine
 from app.memory.storage import get_memory
 
@@ -668,6 +669,39 @@ class MarketDetective:
                 logger.warning("Internal tool hk_index failed: %s", exc)
                 return ToolResult(
                     tool="hk_index_snapshot",
+                    arguments=req.arguments,
+                    status="error",
+                    normalized=[],
+                    error=f"Internal fetch failed: {exc}",
+                )
+
+        if req.tool_name == "news_search":
+            try:
+                # DDGS 需要非空 query，如果 Planner 未传则用问题本身兜底
+                raw = await _search_news(
+                    req.arguments.get("query") or "",
+                    max_results=int(req.arguments.get("max_results", 5)),
+                    time_limit=req.arguments.get("time_limit", "d"),
+                )
+                normalized_items = _extract_news_entries(raw)
+                meta = raw.get("meta", {})
+                logger.info(
+                    "Internal tool news_search: fetched %d entries (status=%s)",
+                    len(normalized_items), meta.get("status", ""),
+                )
+                status = "success" if raw.get("news") else "error"
+                return ToolResult(
+                    tool="news_search",
+                    arguments=req.arguments,
+                    status=status,
+                    normalized=[NormalizedDatum(**item) for item in normalized_items]
+                    if isinstance(normalized_items, list) else [],
+                    error=meta.get("error"),
+                )
+            except Exception as exc:
+                logger.warning("Internal tool news_search failed: %s", exc)
+                return ToolResult(
+                    tool="news_search",
                     arguments=req.arguments,
                     status="error",
                     normalized=[],

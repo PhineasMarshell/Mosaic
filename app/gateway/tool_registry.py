@@ -476,10 +476,20 @@ _US_STOCK_PLACEHOLDERS = [
 ]
 
 # ------------------------------------------------------------------ #
-# Macro 占位符                                                        #
+# 新闻舆情 — DDGS 内部直连（跨域通用）                                 #
 # ------------------------------------------------------------------ #
 
-_MACRO_PLACEHOLDERS = []
+_NEWS_SEARCH = [
+    ToolMeta(
+        "news_search",
+        "news_search",
+        "DDGS 新闻舆情搜索（必填: query=搜索词; 可选: max_results, time_limit=d/w/m，不限市场域）",
+        domain="cross",
+        priority="medium",
+        http_method="INTERNAL",
+        http_path="",
+    ),
+]
 
 # ------------------------------------------------------------------ #
 # 服务健康检查                                                        #
@@ -521,7 +531,7 @@ ALL_TOOLS: list[ToolMeta] = (
     + _CRYPTO_DERIVATIVES
     + _CRYPTO_COINGLASS
     + _US_STOCK_PLACEHOLDERS
-    + _MACRO_PLACEHOLDERS
+    + _NEWS_SEARCH
     + _HEALTH_TOOLS
 )
 
