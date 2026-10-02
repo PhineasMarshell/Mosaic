@@ -1,8 +1,8 @@
 # LangGraph Multi-Agent 重构方案
 
-> 状态：P3 已完成，328 测试全绿（2 skipped）
+> 状态：P2.5 补平已完成，P3 已完成，342 测试全绿（2 skipped）
 >
-> ⚠️ **2026-10-01 复盘修订**：P2 实际半完成（节点化 + Critic 边已做，但 SSE 切图未做，流式/非流式路径已分叉）；kernel 与三 analyst 无条件并行导致双倍 LLM 开销。新增 **P2.5 补平阶段**（见 §6），P4 依赖评论 MCP 就绪状态待确认。详见 §8 复盘记录。
+> ⚠️ **2026-10-01 复盘修订**：P2 实际半完成（节点化 + Critic 边已做，但 SSE 切图未做，流式/非流式路径已分叉）；kernel 与三 analyst 无条件并行导致双倍 LLM 开销。新增 **P2.5 补平阶段**（见 §6，已于 2026-10-02 全部落实完成 ✅）。P4 依赖评论 MCP 就绪状态待确认。详见 §8 复盘记录。
 
 > 前置条件：评论爬取 MCP（雪球 / 富途牛牛 / 同花顺评论区）即将接入
 
@@ -400,7 +400,7 @@ ToolMeta(
 
 | P2 Critic 闭环 ⚠️ | gate / reasoning / critic 节点化 ✅；Critic 条件边（revise ≤ critic_max_revisions；research_more 时带 missing_points 回 Supervisor，最多 1 次）✅；**SSE 改 astream(stream_mode="updates") 未做**（main.py `_stream_research` 仍直接调 `market_detective.investigate`） | 节点化 + 打回重写路径有测试；**前端逐节点进度 / 流式享 critic 闭环 未达成 → 移交 P2.5** |
 
-| P2.5 补平（复盘新增，共 7 个任务，详见 §9） | P2.5-0 Critic dict 属性 bug 修复 → P2.5-1 recursion_limit 接线 → P2.5-3 Supervisor 产出 route + analyst 消费 → P2.5-2 kernel 条件兜底 → P2.5-4 reasoning 消费 findings → P2.5-5 Evidence 对齐 → P2.5-6 SSE 切图 + 前端 analyst 卡片 | 每个任务有独立验收标准，见 §9 |
+| P2.5 补平（复盘新增，共 7 个任务，详见 §9） ✅ | P2.5-0 Critic dict 属性 bug 修复 → P2.5-1 recursion_limit 接线 → P2.5-3 Supervisor 产出 route + analyst 消费 → P2.5-2 kernel 条件兜底 → P2.5-4 reasoning 消费 findings → P2.5-5 Evidence 对齐 → P2.5-6 SSE 切图 + 前端 analyst 卡片 | 7 个任务全部落地，342 测试全绿（+14 新增单测） |
 
 | P3 Analyst 拆分 ✅ | 工具 registry 加 category 标注（39 个工具，by_category 索引）；base.py 骨架（预算守卫、失败降级、finding digest）；拆为 technical/fundamental/moneyflow 三节点，builder 中 add_edge 并行扇出；AnalystName 扩展为 Literal["kernel","technical","fundamental","moneyflow"] | 三节点并行有测试（test_graph_topology.py + test_graph_nodes.py, 14 tests）；单 analyst 超时/失败整图仍出报告 |
 
