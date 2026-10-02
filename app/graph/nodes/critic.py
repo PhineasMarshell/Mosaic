@@ -6,8 +6,6 @@
 - research_more: 有 missing points -> 带缺口感召 Supervisor 补充研究（最多 1 次）
 
 P2 验收：Critic 条件边路由正确；打回重写的完整路径有测试。
-
-对应现有代码：app/agent/evaluator.py 的 EvidenceEvaluator + ResearchDecision。
 """
 
 import json

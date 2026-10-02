@@ -4,7 +4,7 @@
 - 定义各指标的"正常范围"阈值
 - 对每个 ToolResult / NormalizedDatum 执行规则匹配
 - 产出结构化 AnomalyRecord，分级（Low / Medium / High / Critical）
-- 与 MarketDetective 主流程集成
+- 与研究主流程集成
 
 异常类型参考 PRD §29-30：
 - OI 异常：Open Interest 短时间快速增加

@@ -299,70 +299,6 @@ def _plan(domain, steps=None):
     })
 
 
-async def _run_investigate(domain):
-    """跑一次 investigate，返回实际发起的工具调用（不联网、不碰 LLM）。"""
-    import app.research.market_detective as md
-
-    detective = md.MarketDetective(_settings(market_gateway_mode="mcp"))
-    called = []
-
-    async def fake_plan(question, conversation_history=""):
-        return _plan(domain)
-
-    async def fake_execute_one(req, called_signatures):
-        called.append((req.tool_name, dict(req.arguments)))
-        return ToolResult(tool=req.tool_name, arguments=req.arguments,
-                          status="success", normalized=[])
-
-    async def fake_reason(question, results, evidence, history_context=""):
-        return MarketIntelligence(market_state="x", state_label="Risk-On",
-                                  what_happened="x", confidence="low", used_tools=[])
-
-    class FakeMemory:
-        def get_conversation_history(self, *a, **kw): return ""
-        def get_context_for_question(self, *a, **kw): return ""
-
-    detective.planner.plan = fake_plan
-    detective._execute_one = fake_execute_one
-    detective.reasoning.reason = fake_reason
-
-    fresh_cache = Cache()
-    orig = (md.market_cache, md.get_memory)
-    md.market_cache = fresh_cache
-    md.get_memory = lambda: FakeMemory()
-    try:
-        await detective.investigate("测试问题")
-    finally:
-        md.market_cache, md.get_memory = orig
-    return called
-
-
-@pytest.mark.asyncio
-async def test_us_stock_does_not_get_bitcoin_data():
-    """回归：us_stock 域零个注册工具，兜底 else 是 crypto 分支 →
-    问美股拿到 BTC/USDT 的 K 线和 "Bitcoin" 的搜索，标题还写「今日美股市场情报」。"""
-    called = await _run_investigate("us_stock")
-    blob = json.dumps(called, ensure_ascii=False)
-    assert "BTC" not in blob and "Bitcoin" not in blob, f"美股问题调用了加密工具: {called}"
-    assert called == [], "没有注册工具的域不该被塞进任何兜底调用"
-
-
-@pytest.mark.asyncio
-async def test_macro_does_not_get_bitcoin_data():
-    called = await _run_investigate("macro")
-    assert called == []
-
-
-@pytest.mark.asyncio
-async def test_crypto_still_gets_its_fallback_tools():
-    """对照组：crypto 的兜底必须照常工作，别被上一条修复误伤。"""
-    called = await _run_investigate("crypto")
-    tools = {name for name, _ in called}
-    blob = json.dumps(called, ensure_ascii=False)
-    assert "BTC" in blob, "crypto 域应该仍然注入 BTC 兜底参数"
-    assert len(tools) >= 4
-
-
 # ================================================================== #
 # B1.6  LLM 输出解析：三个调用点统一，且失败要归到 502                  #
 # ================================================================== #
@@ -394,14 +330,6 @@ def test_parse_json_object_rejects_top_level_array():
 def test_parse_json_object_rejects_unparseable():
     with pytest.raises(LLMOutputError):
         parse_json_object("抱歉，我无法回答这个问题。", source="Reasoning")
-
-
-def test_extract_json_text_is_the_promoted_evaluator_helper():
-    from app.agent.evaluator import _extract_json
-
-    assert _extract_json is extract_json_text
-    assert _extract_json("```json\n{\"x\": 1}\n```") == '{"x": 1}'
-    assert _extract_json("") is None
 
 
 def _stub_reasoning(content):

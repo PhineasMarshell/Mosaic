@@ -1,9 +1,9 @@
 """Logging — Mosaic 全局日志配置。
 
 所有关键路径都有结构化日志输出：
-- Agent: Planner → Tool Execution → Evidence Gate → Evaluator → Reasoning
+- Agent: Supervisor → Tool Execution → Evidence Gate → Critic → Reasoning
 - Gateway: MCP/HTTP call details, errors, retries
-- Research: MarketDetective loop iterations
+- Research: graph node iterations
 
 默认 JSON 格式，可切换为 human-readable。
 

@@ -1,6 +1,6 @@
 """Analyst 节点通用骨架 — 预算守卫、异常捕获、降级。
 
-P3 起四个 analyst（technical / fundamental / moneyflow / kernel）共用此基类，
+P3 起 analyst（technical / fundamental / moneyflow + 可选 news/sentiment）共用此基类，
 提供：
 - 工具发现（按 category 查询 registry）
 - 批量执行（ToolRuntime + called_signatures 去重）
@@ -40,7 +40,7 @@ class MarketAnalystNode:
     """
 
     #: 该分析员负责的工具类别
-    category: AnalystName | str = "kernel"
+    category: AnalystName | str = "technical"
 
     #: 无需 symbol 即可安全执行的 tool_name 白名单（GET / 聚合类端点）。
     #: 任何不在列表中的工具调用时必须提供 symbol，否则会因参数校验失败报错。

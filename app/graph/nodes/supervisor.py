@@ -1,15 +1,12 @@
 """Supervisor 节点 — LLM 路由：解析意图 + 选 analyst + 分配工具预算。
 
-P1：将 planner.py 的逻辑搬到这里，复用 PLANNER_PROMPT + llm_json.parse_json_object，
-输出 ResearchState.intent + route。当前 kernel 仍占位（整包调用 MarketDetective），
-supervisor 产出的 route 信息会在 P3+ 被各 analyst 节点消费。
-
-对应现有代码：planner.py 的 Planner.plan()。
+复用 PLANNER_PROMPT + llm_json.parse_json_object，
+输出 ResearchState.intent + route，被各 analyst 节点消费。
 """
 
 from openai import AsyncOpenAI
 
-from app.agent.prompts import PLANNER_PROMPT
+from app.agent.prompts_graph import PLANNER_PROMPT
 from app.config import Settings
 from app.errors import LLMOutputError
 from app.gateway.tool_registry import registry_text

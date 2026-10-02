@@ -8,23 +8,38 @@ Mosaic 是一个基于 **Market Gateway MCP** 的市场情报 Agent。它不负�
 
 ## Architecture
 
+Mosaic 基于 **LangGraph** 多节点架构，Supervisor 路由 + 多 Analyst 并行采集 + Critic 闭环审计：
+
 ```text
 User
   ↓
-Planner (LLM 自动判断目标市场域 + 生成研究计划)
+FastAPI (REST + SSE)
   ↓
-Tool Executor → Market Gateway MCP / HTTP API
+Orchestrator → LangGraph compiled graph
   ↓
-Normalizer → Cross-Domain Normalized Data
-  ↓
-Evidence Engine + Evidence Gate (代码级质量检查)
-  ↓
-Evaluator (Domain-Aware 评估证据充分性)
-  ↓
-Reasoning Engine → Structured Intelligence
-  ↓
-UI / CLI / API
+Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
+  ↓ Send() 扇出（并行）
+┌──────────┬──────────┬──────────┬──────────┬──────────┐
+│ 技术面    │ 基本面    │ 资金面    │ 新闻事件  │ 舆情情绪  │
+│ analyst  │ analyst  │ analyst  │ analyst  │ analyst  │
+│ (默认开) │ (默认开) │ (默认开) │ (开关)   │ (开关)   │
+└────┬─────┴────┬─────┴────┬─────┴────┬─────┴────┬─────┘
+     └──────────┴──────────┴────┬─────┴──────────┘
+                                ↓
+                        Evidence Gate (纯代码质量检查)
+                                ↓
+                        Reasoning (LLM 汇总证据 → MarketIntelligence)
+                                ↓
+                        Critic (LLM 结论-证据审计)
+                          pass │  revise / research_more（≤ critic_max_revisions 轮）
+                           ↓   └──────► 回 Reasoning 重写 / 回 Supervisor 补研究
+                         END
 ```
+
+关键设计：
+- **证据账本是唯一契约**：各 analyst 只往 `state.evidence` 追加 Evidence 条目，不写结论；结论由 Reasoning 统一产出
+- **Critic 闭环**：证据不足时打回 Reasoning 重写（revise）或回 Supervisor 补充研究（research_more），最多 N 轮
+- **可选节点**：news / sentiment analyst 由配置开关控制，关闭时行为与三 analyst 基线完全一致
 
 ## 支持的市场域
 
@@ -55,6 +70,42 @@ Researching...
 两种交互模式：
 - **`POST /api/ask/stream`** — SSE 流式返回（推荐 Web UI 使用）
 - **`POST /api/ask`** — 传统同步返回（CLI / API 客户端使用）
+
+#### SSE 事件协议
+
+`/api/ask/stream` 返回两种事件：
+
+**`progress` 事件** — 逐节点研究进度：
+
+```json
+{"step": "planning", "node": "supervisor", "message": "理解问题并生成研究计划"}
+```
+
+| 字段 | 取值 | 说明 |
+|------|------|------|
+| `step` | `planning` | Supervisor 路由决策中 |
+| | `tool_call` | Analyst 节点采集工具数据（technical / fundamental / moneyflow / news / sentiment） |
+| | `evaluating` | Evidence Gate 证据质量检查 |
+| | `reasoning` | Reasoning 生成结构化情报 |
+| | `critic` | Critic 结论-证据审计 |
+| | `working` | 心跳保活（长节点执行期间） |
+| | `done` | 调查完成 |
+| | `error` | 节点执行错误 |
+| `node` | `supervisor` / `technical` / `fundamental` / `moneyflow` / `news` / `sentiment` / `gate` / `reasoning` / `critic` / `null` | 当前执行的图节点名；心跳和完成事件为 `null` |
+| `message` | string | 人类可读的进度文案 |
+
+**`result` 事件** — 最终结果：
+
+```json
+{"code": "ok", "report": {...}, "question": "...", "tool_results": [...]}
+```
+
+| `code` | 说明 |
+|--------|------|
+| `ok` | 调查成功 |
+| `timeout` | 超出 `RESEARCH_BUDGET_SECONDS` |
+| `upstream` | 上游 LLM 输出无法解析 |
+| `internal` | 其它未预期异常 |
 
 ### Market Memory（PRD §38-39）
 
@@ -223,6 +274,12 @@ RESEARCH_TIMEOUT_SECONDS=30      # 单次工具调用 / MCP 握手超时
 RESEARCH_BUDGET_SECONDS=300      # 一次完整调查的总预算
 STREAM_HEARTBEAT_SECONDS=15      # SSE 静默期心跳间隔
 LLM_TIMEOUT_SECONDS=90           # 单次 LLM 调用超时
+CRITIC_MAX_REVISIONS=2           # Critic 打回重写最大轮次
+GRAPH_RECURSION_LIMIT=25         # LangGraph 递归上限（防无限回环）
+SENTIMENT_ENABLED=false          # 舆情分析员总开关（评论 MCP 就绪后启用）
+SENTIMENT_MAX_COMMENTS=500       # 单次拉取评论上限
+NEWS_ENABLED=false               # 新闻分析员总开关
+NEWS_SEARCH_TTL_SECONDS=21600    # DDGS 搜索结果缓存时长（秒）
 ```
 
 都是 `.env` 中的配置项，不是硬编码。
@@ -271,82 +328,107 @@ Mosaic/
 ├── allowed_openapi.json       # Market Gateway OpenAPI 规范快照
 │
 ├── app/
-│   ├── main.py                # FastAPI 入口 + REST API + SSE Stream + Briefs
-│   ├── cli.py                 # CLI 客户端（含 what_changed / risks 渲染）
+│   ├── main.py                # FastAPI 入口 + REST API + SSE Stream + Briefs 调度
+│   ├── cli.py                 # CLI 客户端
 │   ├── config.py              # Settings (Pydantic Settings)
 │   ├── cache.py               # TTL 内存缓存
-│   ├── logging_config.py      # 日志配置
+│   ├── errors.py              # 自定义异常
+│   ├── llm_json.py            # LLM JSON 解析工具
 │   ├── evaluation.py          # 评估工具函数
+│   ├── logging_config.py      # 日志配置
 │   │
 │   ├── agent/
-│   │   ├── orchestrator.py    # 总控调度
-│   │   ├── planner.py         # 研究计划生成 (LLM)
-│   │   ├── prompts.py         # System / Planner / Reasoning Prompt（含 Memory 上下文）
-│   │   ├── evaluator.py       # 证据充分性评估 (LLM, Domain-Aware)
+│   │   ├── orchestrator.py    # 总控调度（LangGraph 编译 + 运行）
+│   │   ├── prompts.py         # System / Reasoning Prompt
+│   │   ├── prompts_graph.py   # Supervisor Planner Prompt
 │   │   ├── evidence_gate.py   # 代码级证据门控
 │   │   └── state.py           # Agent 运行时状态
+│   │
+│   ├── graph/                 # LangGraph 多节点架构
+│   │   ├── state.py           # ResearchState (Pydantic) + AnalystName
+│   │   ├── builder.py         # 图构建（节点注册 + 条件边）
+│   │   ├── tool_runtime.py    # 通用工具运行时（MCP/HTTP/内部工具 + 缓存）
+│   │   └── nodes/
+│   │       ├── supervisor.py  # LLM 路由节点（意图解析 + analyst 分配 + 预算）
+│   │       ├── gate.py        # 证据门控节点
+│   │       ├── reasoning.py   # 推理节点
+│   │       ├── critic.py      # 审计节点（结论-证据一致性）
+│   │       └── analysts/
+│   │           ├── base.py          # Analyst 通用骨架（预算守卫/异常降级）
+│   │           ├── technical.py     # 技术面分析员
+│   │           ├── fundamental.py   # 基本面分析员
+│   │           ├── moneyflow.py     # 资金面分析员
+│   │           └── news.py          # 新闻事件分析员（配置开关）
 │   │
 │   ├── gateway/
 │   │   ├── mcp_client.py      # MCP 协议客户端
 │   │   ├── http_client.py     # HTTP REST 客户端
-│   │   ├── tool_registry.py   # 多域工具注册表 (35 tools)
+│   │   ├── tool_registry.py   # 多域工具注册表（by_category 索引）
 │   │   ├── normalizer.py      # 跨域数据规范化层
 │   │   └── stock_codes.py     # 股票代码映射表
 │   │
 │   ├── research/
-│   │   ├── market_detective.py # 主入口：规划→执行→评估→推理+异常检测
-│   │   ├── hk_northbound.py   # 港股通北向资金（东财直连，不走 Gateway）
+│   │   ├── reasoning.py       # 推理引擎（注入 Market Memory 上下文）
 │   │   ├── evidence.py        # 证据构建
-│   │   └── reasoning.py       # 推理引擎（注入 Market Memory 上下文）
+│   │   ├── news_search.py     # DDGS 新闻搜索
+│   │   └── hk_northbound.py   # 港股通北向资金（东财直连，不走 Gateway）
 │   │
 │   ├── models/
-│   │   ├── __init__.py        # 统一导出 (含 MarketDomain)
 │   │   ├── market.py          # ToolResult, NormalizedDatum, Status
 │   │   ├── evidence.py        # Evidence, Claim
-│   │   ├── research.py        # ResearchIntent, ResearchPlan (多域)
-│   │   └── response.py        # MarketIntelligence + EvidenceItem, ResearchResponse
+│   │   ├── research.py        # ResearchIntent, ResearchPlan, Critique 等
+│   │   └── response.py        # MarketIntelligence + ResearchResponse
 │   │
 │   ├── web/
-│   │   └── index.html         # 产品级 Web UI (PRD §14-15 设计)
+│   │   └── index.html         # 产品级 Web UI
 │   │
-│   ├── detector/              # Anomaly Detection (PRD §29-30)
-│   │   ├── __init__.py
+│   ├── detector/              # Anomaly Detection
 │   │   └── anomaly.py         # 规则引擎 + 阈值匹配
 │   │
-│   ├── memory/                # Market Memory (PRD §38-39)
-│   │   ├── __init__.py
-│   │   └── storage.py         # JSON 文件持久化存储
+│   ├── memory/                # Market Memory (SQLite)
+│   │   └── storage.py         # SQLite 持久化存储
 │   │
-│   └── scheduler/             # Daily Briefs (PRD §35-37)
-│       ├── __init__.py
+│   └── scheduler/             # Daily Briefs
 │       └── briefs.py          # asyncio 后台调度 + 简报生成
 │
-├── tests/                     # 188+ 个测试用例
-│   ├── test_planner.py
+├── tests/                     # 335+ 个测试用例
+│   ├── test_graph_e2e.py      # 图端到端
+│   ├── test_graph_routing.py  # Supervisor 路由
+│   ├── test_graph_nodes.py    # 节点单元
+│   ├── test_graph_topology.py # 图拓扑 + 开关
+│   ├── test_stream_endpoint.py # SSE 流式端点
+│   ├── test_ask_endpoint.py   # 同步端点 + 错误分类
+│   ├── test_briefs.py         # 定时简报
+│   ├── test_news_search.py    # 新闻搜索缓存
+│   ├── test_data_integrity.py # 域数据隔离
 │   ├── test_tool_registry.py
+│   ├── test_tool_registry_multi_domain.py
 │   ├── test_normalizer.py
 │   ├── test_normalizer_enhanced.py
+│   ├── test_normalizer_multi_domain.py
+│   ├── test_normalizer_f10.py
 │   ├── test_evidence.py
 │   ├── test_evidence_gate.py
 │   ├── test_http_client.py
-│   ├── test_market_detective.py
-│   ├── test_evaluator.py
-│   ├── test_models_multi_domain.py
-│   ├── test_tool_registry_multi_domain.py
-│   ├── test_normalizer_multi_domain.py
 │   ├── test_cache_multi_domain.py
-│   ├── test_anomaly_detector.py ← 新增（44 tests）
-│   ├── test_market_memory.py  ← 新增（12 tests）
-│   ├── test_conversation.py   ← 新增：对话历史管理
-│   ├── test_hk_northbound.py  ← 新增：港股通北向资金数据解析
-│   ├── test_normalizer_f10.py ← 新增：F10 数据解析
-│   └── test_reasoning_parsing.py ← 新增：推理引擎解析
+│   ├── test_models_multi_domain.py
+│   ├── test_anomaly_detector.py
+│   ├── test_hk_northbound.py
+│   ├── test_market_memory.py
+│   ├── test_conversation.py
+│   └── test_reasoning_parsing.py
+│
+├── memory/                    # 运行时数据（SQLite + 简报 JSON）
+│   ├── memory.db              # Market Memory 数据库
+│   ├── morning/               # 晨间简报（按日期命名 JSON）
+│   └── evening/               # 晚间简报（按日期命名 JSON）
 │
 ├── scripts/
 │   └── verify_commodities.py  # OKX/Binance/Bybit 商品合约可用性验证
 │
 └── docs/
-    ├── architecture.md
+    ├── architecture.md        # 架构设计文档
+    ├── langgraph-refactor-plan.md # LangGraph 重构方案 + 实施记录
     ├── tools.md
     └── evaluation.md
 ```
@@ -358,7 +440,7 @@ Mosaic/
 1. **models/research.py**: 在 `MarketDomain` Literal 中添加值，加入 `DEFAULT_DOMAINS`
 2. **tool_registry.py**: 添加新的 `ToolMeta` 条目（或占位符列表）
 3. **normalizer.py**: 可选 — 在 `_DOMAIN_HINTS` 补充域名推断关键词
-4. **evaluator.py** / **prompts.py**: 补充该域的评估规则和 prompt 描述
+4. **critic.py** / **prompts.py**: 补充该域的评估规则和 prompt 描述
 
 当前已有 `hk_stock`、`commodities`、`us_stock`、`macro` 四个域就绪，其中：
 - `hk_stock` 可通过 `quote`(腾讯HK代码) + `search`(雪球) 直接获得行情，**北向资金由 `app/research/hk_northbound.py` 直连东财 KLineJSAPI 自动注入**
@@ -407,6 +489,11 @@ Internal project — see [Mosaic产品设计文档](../Mosaic产品设计文档.
 
 ### Latest
 
+- **架构升级**：LangGraph 多节点架构全面落地（P2.5 + P3 + P4 + P5），Supervisor 路由 + 三 Analyst 并行采集 + Critic 闭环审计；旧路径（market_detective / planner / evaluator / kernel）已全部删除
+- **新闻分析员**：新增 NewsAnalystNode（配置开关 `NEWS_ENABLED`），DDGS 搜索结果走 6h 长 TTL 缓存
+- **定时简报走图**：Morning/Evening Brief 改为调用完整 LangGraph 调查（含 LLM），失败时回退 memory 模板；简报 JSON 存 `memory/morning/` 和 `memory/evening/`
+- **存储迁移**：Market Memory 从 `~/.mosaic/memory.db` 迁入项目目录 `memory/memory.db`
+- **SSE 协议**：progress 事件新增 `node` 字段，逐节点推送研究进度（supervisor/technical/fundamental/moneyflow/gate/reasoning/critic）
 - **Bug 修复**：SSE 流式路径补全 research/daily state 持久化（与同步 `/api/ask` 一致）
 - **Bug 修复**：CLI `render_report` 兼容新 `EvidenceItem` 格式（`id/source_tool/metric/value/note`）
 - **Bug 修复**：`daily_state` dict key 从值误用改为正确的 `"market_state": value`

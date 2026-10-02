@@ -1,7 +1,6 @@
 """P2.5-6 — SSE 切图：graph.astream 逐节点进度 + 超时预算。
 
-后端 _stream_research 从 market_detective.investigate 改为直接驱动
-graph.astream(stream_mode=["updates","values"])，本文件锁：
+后端 _stream_research 直接驱动 graph.astream(stream_mode=["updates","values"])，本文件锁：
 - updates 模式产出逐节点 progress（supervisor/technical/gate/reasoning/critic）
 - values 模式捕获终态，组装 ResearchResponse 后发 result 事件
 - 超时分支仍发 code:"timeout" 的 result 事件
@@ -145,14 +144,16 @@ def test_stream_emits_per_node_progress_then_result(monkeypatch):
     assert graph.calls[0][1] == ["updates", "values"]
 
 
-def test_stream_empty_route_falls_back_to_kernel_progress(monkeypatch):
-    """route 为空时 kernel 兜底，progress 里应出现 node:kernel。"""
+def test_stream_empty_route_falls_back_to_all_analysts_progress(monkeypatch):
+    """route 为空时三个 analyst 全上，progress 里应出现 technical/fundamental/moneyflow。"""
     report = _make_report()
     final_state = {"question": "q", "domain": "a_share", "report": report,
                    "results": [], "cache_stats": {}}
     script = [
         ("updates", {"supervisor": {"route": []}}),
-        ("updates", {"kernel": {"results": []}}),
+        ("updates", {"technical": {"results": []}}),
+        ("updates", {"fundamental": {"results": []}}),
+        ("updates", {"moneyflow": {"results": []}}),
         ("updates", {"gate": {"gate": "pass"}}),
         ("updates", {"reasoning": {"report": report}}),
         ("updates", {"critic": {"critique": {"verdict": "pass"}}}),
@@ -166,7 +167,9 @@ def test_stream_empty_route_falls_back_to_kernel_progress(monkeypatch):
         d.get("node") for n, d in events
         if n == "progress" and d.get("node")
     ]
-    assert "kernel" in progress_nodes
+    assert "technical" in progress_nodes
+    assert "fundamental" in progress_nodes
+    assert "moneyflow" in progress_nodes
 
 
 # ------------------------------------------------------------------ #

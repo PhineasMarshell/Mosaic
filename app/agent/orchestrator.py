@@ -1,8 +1,6 @@
 """Orchestrator — LangGraph 图入口。
 
-P0：build_graph() + ainvoke(state) 整包替换原有 MarketDetective.investigate()，
-公开签名（question/domain/conversation_id → ResearchResponse）完全不变 ——
-main.py 与现有测试零改动。
+公开签名：question/domain/conversation_id → ResearchResponse。
 """
 
 from openai import AsyncOpenAI
@@ -17,11 +15,8 @@ from app.models.response import ResearchResponse
 class Orchestrator:
     def __init__(self, settings: Settings):
         self.settings = settings
-        # ── P0：懒构建 LangGraph 图 ────────────────────────
+        # ── 懒构建 LangGraph 图 ────────────────────────
         self._graph = None  # CompiledGraph — 首次调用时构建
-        # 保留旧路径供 _stream_research 使用（SSE progress 事件）
-        from app.research.market_detective import MarketDetective
-        self.market_detective = MarketDetective(settings)
 
     def _ensure_graph(self):
         if self._graph is None:

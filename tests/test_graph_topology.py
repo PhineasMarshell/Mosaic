@@ -154,7 +154,7 @@ def test_tool_categories_cover_all_39_tools():
 
 
 # ------------------------------------------------------------------ #
-# P2.5-2：kernel 条件兜底拓扑                                           #
+# P2.5-2：fanout 路由与兜底拓扑                                        #
 # ------------------------------------------------------------------ #
 
 
@@ -236,9 +236,9 @@ def _patch_tool_runtime(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
-    """supervisor plan 含 technical 工具 → technical 执行，kernel 不执行。"""
+    """supervisor plan 含 technical 工具 → 只有 technical analyst 执行。"""
     from app.graph.builder import build_graph
-    from app.graph.nodes.kernel import KernelNode
+    from app.graph.nodes.analysts.base import MarketAnalystNode
 
     plan_json = (
         '{"intent":{"domain":"a_share","task":"market_summary",'
@@ -249,26 +249,26 @@ async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
     _patch_reasoning_and_critic(monkeypatch)
     _patch_tool_runtime(monkeypatch)
 
-    kernel_calls: list = []
-    orig_kernel_call = KernelNode.__call__
+    called_categories: list[str] = []
+    orig_call = MarketAnalystNode.__call__
 
-    async def tracked_kernel(self, state):
-        kernel_calls.append(True)
-        return await orig_kernel_call(self, state)
+    async def tracked_call(self, state):
+        called_categories.append(self.category)
+        return await orig_call(self, state)
 
-    monkeypatch.setattr(KernelNode, "__call__", tracked_kernel)
+    monkeypatch.setattr(MarketAnalystNode, "__call__", tracked_call)
 
     graph = build_graph(Settings())
     await graph.ainvoke({"question": "测试", "domain": "a_share"})
 
-    assert len(kernel_calls) == 0, "route 非空时 kernel 不应被调用"
+    assert called_categories == ["technical"], f"route 非空时应只执行 technical，实际: {called_categories}"
 
 
 @pytest.mark.asyncio
-async def test_fanout_falls_back_to_kernel_when_route_empty(monkeypatch):
-    """supervisor plan steps 为空 → 只有 kernel 执行。"""
+async def test_fanout_falls_back_to_all_analysts_when_route_empty(monkeypatch):
+    """supervisor plan steps 为空 → 三个默认 analyst 全上。"""
     from app.graph.builder import build_graph
-    from app.graph.nodes.kernel import KernelNode
+    from app.graph.nodes.analysts.base import MarketAnalystNode
 
     plan_json = (
         '{"intent":{"domain":"a_share","task":"market_summary",'
@@ -278,18 +278,20 @@ async def test_fanout_falls_back_to_kernel_when_route_empty(monkeypatch):
     _patch_reasoning_and_critic(monkeypatch)
     _patch_tool_runtime(monkeypatch)
 
-    kernel_calls: list = []
+    called_categories: list[str] = []
+    orig_call = MarketAnalystNode.__call__
 
-    async def tracked_kernel(self, state):
-        kernel_calls.append(True)
-        return {"report": None, "results": [], "tool_results": [], "cache_stats": {}}
+    async def tracked_call(self, state):
+        called_categories.append(self.category)
+        return await orig_call(self, state)
 
-    monkeypatch.setattr(KernelNode, "__call__", tracked_kernel)
+    monkeypatch.setattr(MarketAnalystNode, "__call__", tracked_call)
 
     graph = build_graph(Settings())
     await graph.ainvoke({"question": "测试", "domain": "a_share"})
 
-    assert len(kernel_calls) == 1, "route 为空时应兜底执行 kernel 恰好 1 次"
+    assert set(called_categories) == {"technical", "fundamental", "moneyflow"}, \
+        f"route 为空时应三个 analyst 全上，实际: {called_categories}"
 
 
 # ------------------------------------------------------------------ #
@@ -309,8 +311,7 @@ def test_news_node_absent_when_disabled():
 @pytest.mark.asyncio
 async def test_news_node_executed_when_enabled(monkeypatch):
     """news_enabled=True + plan 含 news_search step → news 节点执行，
-    fake runtime 收到 news_search 调用；kernel 不执行。"""
-    from app.graph.nodes.kernel import KernelNode
+    fake runtime 收到 news_search 调用。"""
     from app.models.market import Status, ToolResult
 
     settings = Settings(news_enabled=True)
@@ -336,15 +337,6 @@ async def test_news_node_executed_when_enabled(monkeypatch):
     monkeypatch.setattr("app.graph.tool_runtime.ToolRuntime.execute", fake_execute)
     monkeypatch.setattr("app.graph.tool_runtime.ToolRuntime.truncate", lambda self, r: None)
 
-    kernel_calls: list = []
-    orig_kernel = KernelNode.__call__
-
-    async def tracked_kernel(self, state):
-        kernel_calls.append(True)
-        return await orig_kernel(self, state)
-
-    monkeypatch.setattr(KernelNode, "__call__", tracked_kernel)
-
     graph = build_graph(settings)
     await graph.ainvoke({
         "question": "贵州茅台600519最近有什么新闻",
@@ -352,15 +344,12 @@ async def test_news_node_executed_when_enabled(monkeypatch):
     })
 
     assert "news_search" in executed_tools, f"news_search 应被执行，实际: {executed_tools}"
-    assert len(kernel_calls) == 0, "route 非空时 kernel 不应被调用"
 
 
 @pytest.mark.asyncio
 async def test_default_settings_e2e_matches_p25_baseline(monkeypatch):
     """两开关全关（默认 Settings）→ 图行为与 P2.5 基线一致：
-    plan steps 为空 → kernel 兜底 → 最终有 report，且图不含 news/sentiment。"""
-    import types
-
+    plan steps 为空 → 三个 analyst 全上 → 最终有 report，且图不含 news/sentiment。"""
     settings = Settings()
     assert settings.news_enabled is False
     assert settings.sentiment_enabled is False
@@ -372,22 +361,6 @@ async def test_default_settings_e2e_matches_p25_baseline(monkeypatch):
     _patch_supervisor_plan(monkeypatch, plan_json)
     _patch_reasoning_and_critic(monkeypatch)
     _patch_tool_runtime(monkeypatch)
-
-    from app.graph.nodes.kernel import KernelNode
-
-    async def fake_kernel(self, state):
-        return {
-            "report": types.SimpleNamespace(
-                what_happened="测试报告", confidence=0.8, state_label="neutral",
-                strong_areas=[], risks=[], why=[],
-            ),
-            "results": [],
-            "tool_results": [],
-            "cache_stats": {},
-            "evidence": [],
-        }
-
-    monkeypatch.setattr(KernelNode, "__call__", fake_kernel)
 
     graph = build_graph(settings)
     result = await graph.ainvoke({"question": "测试", "domain": "a_share"})

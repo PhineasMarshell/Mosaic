@@ -12,7 +12,6 @@ from app.graph.nodes.analysts import (
 )
 from app.graph.nodes.critic import CriticNode, Critique
 from app.graph.nodes.gate import GateNode
-from app.graph.nodes.kernel import KernelNode
 from app.graph.nodes.reasoning import ReasoningNode
 from app.graph.nodes.supervisor import SupervisorNode
 
@@ -21,7 +20,6 @@ __all__ = [
     "Critique",
     "FundamentalAnalystNode",
     "GateNode",
-    "KernelNode",
     "MarketAnalystNode",
     "MoneyflowAnalystNode",
     "ReasoningNode",

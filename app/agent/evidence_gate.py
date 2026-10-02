@@ -2,7 +2,7 @@
 
 不依赖 LLM，直接根据 ToolResult 的状态判断当前证据是否具备基本可用性。
 
-返回值传递给 EvidenceEvaluator，LLM 不能绕过此检查结果。
+返回值供下游 LLM 审计使用，LLM 不能绕过此检查结果。
 """
 
 from dataclasses import dataclass, field

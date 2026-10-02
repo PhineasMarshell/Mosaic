@@ -1,4 +1,4 @@
-"""工具执行层 — 从 market_detective 抽取的通用工具运行时。
+"""工具执行层 — 通用工具运行时。
 
 职责：
 - 打开 / 关闭 Gateway 连接（MCP / HTTP）
@@ -8,10 +8,7 @@
 - HK 北向内部工具执行
 - DDGS 新闻舆情内部工具执行
 
-不依赖 MarketDetective 业务逻辑（计划生成、Evaluator 循环、Reasoning）。
-
-P1 验证：行为与 P0 一致（相同的 MCP/HTTP 调用、相同缓存命中路径）。
-P3+：analyst 节点通过此层执行工具，不再经过完整的 MarketDetective。
+analyst 节点通过此层执行分配给自己的工具。
 """
 
 import logging
@@ -47,10 +44,9 @@ def _normalize_hk_entries(hk_data: dict) -> list[NormalizedDatum]:
 
 
 class ToolRuntime:
-    """通用工具运行时 —— 单节点图（kernel）和未来的各 analyst 共享此层。
+    """通用工具运行时 —— 各 analyst 节点共享此层。
 
-    P1：仅被 kernel 使用，封装 MarketDetective 的工具执行逻辑。
-    P3：各 analyst 节点通过此层执行分配给自己的工具，支持并发不覆盖。
+    各 analyst 节点通过此层执行分配给自己的工具，支持并发不覆盖。
     """
 
     def __init__(self, settings: Settings):
@@ -107,10 +103,7 @@ class ToolRuntime:
         ))
 
     async def inject_hk_context(self, results: list[ToolResult]) -> None:
-        """HK 域专属：注入北向资金 + 恒生指数行情（内部直连，不走 Gateway）。
-
-        P1：kernel 调用后追加；P3：由 moneyflow analyst 触发。
-        """
+        """HK 域专属：注入北向资金 + 恒生指数行情（内部直连，不走 Gateway）。"""
         try:
             hk_data = await fetch_hk_context_data()
             filtered = {

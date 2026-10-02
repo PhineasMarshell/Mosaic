@@ -181,8 +181,7 @@ def test_health_exposes_budget():
 class FakeGraphForErrors:
     """模拟 compiled graph 的 astream：可配置延迟或抛异常。
 
-    P2.5-6 后 _stream_research 不再走 market_detective.investigate，
-    而是直接驱动 graph.astream，因此错误注入点也移到这里。
+    _stream_research 直接驱动 graph.astream，错误注入点设在这里。
     """
 
     def __init__(self, exc=None, delay=0.0):

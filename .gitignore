@@ -17,6 +17,12 @@ build/
 # Mosaic memory storage (only applies if data directory is inside the project)
 .mosaic_memory/
 mosaic_memory/
+memory/*.db
+memory/*.db-shm
+# memory/*.db-wal — SQLite WAL 二进制文件
+
+# 单个忽略的文档（整个 docs/ 仍纳入 git）
+docs/langgraph-refactor-plan.md
 
 # IDE
 .vscode/

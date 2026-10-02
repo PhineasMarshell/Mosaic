@@ -22,12 +22,12 @@ from app.models.market import NormalizedDatum
 
 
 # ------------------------------------------------------------------ #
-# 分析员角色名 — P0/P1 kernel, P3+ technical/fundamental/moneyflow   #
+# 分析员角色名 — technical/fundamental/moneyflow + 可选 news/sentiment #
 # ------------------------------------------------------------------ #
 
-#: P0/P1：单节点图，整包调用 MarketDetective.investigate()
-#: P3+：扩展为 technical / fundamental / moneyflow 并行 Send
-AnalystName = Literal["kernel", "technical", "fundamental", "moneyflow", "news", "sentiment"]
+#: P5 后：kernel 已删除，analyst 为 technical / fundamental / moneyflow 并行 Send
+#: news / sentiment 为可选开关节点（P4）
+AnalystName = Literal["technical", "fundamental", "moneyflow", "news", "sentiment"]
 
 
 class ResearchState(BaseModel):
