@@ -50,8 +50,7 @@ class SupervisorNode:
             plan = await self._plan(s)
             return {
                 "intent": plan.intent,
-                # P1 暂不展开 route 给 analyst 用，但先产出结构供后续消费
-                "_route_raw": self._build_route(plan),
+                "route": self._build_route(plan),
             }
         except Exception as exc:
             # 路由失败写进 errors，kernel 仍可继续尝试（只是没有显式路由）
@@ -113,13 +112,19 @@ class SupervisorNode:
 
     @staticmethod
     def _build_route(plan: ResearchPlan) -> list:
-        """将 ResearchPlan 转为 route 结构（供 P3+ analyst 消费）。
-
-        P1 只返回原始 steps 列表，不拆分 analyst —— kernel 还占着位置。
-        """
+        """将 ResearchPlan.steps 按工具 category 分组为 AnalystAssignment 列表。"""
+        from app.gateway.tool_registry import resolve_tool
+        groups: dict[str, list] = {}
+        for step in plan.steps:
+            try:
+                meta = resolve_tool(step.tool_key)
+                cat = meta.category
+            except Exception:
+                cat = "technical"          # 无法解析的工具键兜底给技术面
+            if cat not in ("technical", "fundamental", "moneyflow"):
+                cat = "technical"          # shared/news 类暂归技术面（P4 后 news 独立）
+            groups.setdefault(cat, []).append(step)
         return [
-            {
-                "tool_calls": [s.model_dump() for s in plan.steps],
-                "budget": len(plan.steps),  # 全部分配给当前内核
-            }
+            {"analyst": cat, "tool_calls": [s.model_dump() for s in steps], "budget": len(steps)}
+            for cat, steps in groups.items()
         ]

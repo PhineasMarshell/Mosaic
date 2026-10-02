@@ -140,12 +140,12 @@ class MarketAnalystNode:
             if code not in candidates:
                 candidates.append(code)
 
-        # ② 查找 planner steps 中的 arguments.symbol（search/quote 返回的 code）
-        route_raw = state.get("_route_raw")
-        if isinstance(route_raw, list):
-            for step_group in route_raw:
-                if isinstance(step_group, dict) and "tool_calls" in step_group:
-                    for tc in step_group["tool_calls"]:
+        # ② 查找 supervisor route 中各 assignment 的 tool_calls.arguments.symbol
+        route = state.get("route")
+        if isinstance(route, list):
+            for assignment in route:
+                if isinstance(assignment, dict) and "tool_calls" in assignment:
+                    for tc in assignment["tool_calls"]:
                         sym = (tc.get("arguments") or {}).get("symbol")
                         if sym and isinstance(sym, str) and len(sym) >= 6 and sym[-6:].isdigit():
                             if sym[-6:] not in candidates:
@@ -158,44 +158,43 @@ class MarketAnalystNode:
         state: dict,
         called_signatures: set[str],
     ) -> list[ToolResult]:
-        """执行本分析员类别下的所有可用工具。
+        """只执行 supervisor route 中分配给本 analyst 的 tool_calls。
 
         子类可覆盖以注入特定的领域默认参数。
         """
-        meta_list = by_category.get(self.category, [])
-        domain = getattr(state.get("intent") or {}, "domain", None) or state.get("domain")
+        from app.gateway.tool_registry import resolve_tool
 
-        results: list[ToolResult] = []
-        budget = len(meta_list)
+        route = state.get("route") or []
+        mine = next((a for a in route if a.get("analyst") == self.category), None)
+        if mine is None or not mine.get("tool_calls"):
+            logger.info("%s: no assignment from supervisor, skip", self.category)
+            return []
 
         stocks = self._extract_stocks(state)
-        has_stock = len(stocks) > 0
+        results: list[ToolResult] = []
+        budget = int(mine.get("budget") or len(mine["tool_calls"]))
 
-        for meta in meta_list:
+        for tc in mine["tool_calls"]:
             if budget <= 0:
-                logger.info("%s ran out of budget at %s", self.category, meta.key)
                 break
-
-            tool_name = meta.tool_name
-            budget -= 1  # 预算消耗与具体执行无关 —— 是工具遍历配额
-
-            # 非白名单工具需要 symbol —— 若上下文中无标的，跳过而非报错。
-            if tool_name not in self.WHITELIST_NO_SYMBOL and not has_stock:
-                logger.debug(
-                    "%s skipping %s (needs 'symbol', none in context)",
-                    self.category, tool_name,
-                )
+            budget -= 1
+            tool_key = tc.get("tool_key", "")
+            try:
+                meta = resolve_tool(tool_key)
+            except Exception:
+                logger.warning("%s: unknown tool_key %s, skip", self.category, tool_key)
                 continue
 
-            arguments = self._build_arguments(meta, domain, stocks)
+            arguments = dict(tc.get("arguments") or {})
+            # symbol 守卫：非白名单工具且 planner 没给 symbol → 用问题里抽到的代码补，仍无则跳过
+            if meta.tool_name not in self.WHITELIST_NO_SYMBOL and not arguments.get("symbol"):
+                if stocks:
+                    arguments["symbol"] = ";".join(stocks)
+                else:
+                    logger.debug("%s skipping %s (no symbol)", self.category, tool_key)
+                    continue
 
-            result = await self._runtime.execute(
-                tool_name, arguments, called_signatures
-            )
-
-            if result.status == STATUS_ERROR:
-                logger.debug("%s tool %s failed: %s", self.category, meta.key, result.error)
-            results.append(result)
+            results.append(await self._runtime.execute(meta.tool_name, arguments, called_signatures))
 
         return results
 

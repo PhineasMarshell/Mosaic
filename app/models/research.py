@@ -61,3 +61,11 @@ class ResearchPlan(BaseModel):
     intent: ResearchIntent = Field(default_factory=ResearchIntent)
     steps: list[ToolCallPlan] = Field(default_factory=list)
     early_stop: bool = False
+
+
+class AnalystAssignment(BaseModel):
+    """Supervisor 给某个 analyst 的工具调用分配。"""
+
+    analyst: str                                                # technical / fundamental / moneyflow / news / sentiment
+    tool_calls: list[ToolCallPlan] = Field(default_factory=list)
+    budget: int = 0                                             # 本 analyst 本轮工具调用上限

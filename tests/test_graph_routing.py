@@ -83,7 +83,7 @@ async def test_supervisor_returns_intent_on_success():
     assert "intent" in result
     assert result["intent"].domain == "a_share"
     assert result["intent"].task == "market_diagnosis"
-    assert "_route_raw" in result
+    assert "route" in result
 
 
 @pytest.mark.asyncio
@@ -136,10 +136,10 @@ async def test_supervisor_step_limit():
     _patch_client(node, openai)
 
     result = await node(_make_state())
-    route = result.get("_route_raw", [])
-    # P1 route 只有一个 entry，其 tool_calls 即 steps
-    if route:
-        assert len(route[0]["tool_calls"]) <= 8
+    route = result.get("route", [])
+    # route 按 category 分组，每组 tool_calls 即该 category 的 steps
+    total_calls = sum(len(a["tool_calls"]) for a in route)
+    assert total_calls <= 8
 
 
 @pytest.mark.asyncio
@@ -170,3 +170,69 @@ def test_set_enabled_domains():
         assert "us_stock" not in current
     finally:
         set_enabled_domains(original)
+
+
+# ------------------------------------------------------------------ #
+# P2.5-3：结构化 route 分组                                             #
+# ------------------------------------------------------------------ #
+
+
+@pytest.mark.asyncio
+async def test_supervisor_route_groups_by_category():
+    """plan 含 technical / fundamental / moneyflow 三类 steps → route 分 3 组，
+    每组 analyst 正确、budget == len(tool_calls)。"""
+    openai = FakeOpenAI(return_text="""{
+        "intent": {
+            "domain": "a_share",
+            "task": "market_diagnosis",
+            "time_scope": "today",
+            "question": "今天A股发生了什么？"
+        },
+        "steps": [
+            {"tool_key": "sentiment", "arguments": {}, "purpose": "看情绪"},
+            {"tool_key": "overview", "arguments": {}, "purpose": "看概览"},
+            {"tool_key": "longhu", "arguments": {}, "purpose": "看资金"}
+        ]
+    }""")
+
+    settings = Settings()
+    node = SupervisorNode(settings)
+    _patch_client(node, openai)
+
+    result = await node(_make_state())
+    route = result["route"]
+
+    assert len(route) == 3
+    analysts = {a["analyst"] for a in route}
+    assert analysts == {"technical", "fundamental", "moneyflow"}
+
+    for assignment in route:
+        assert assignment["budget"] == len(assignment["tool_calls"])
+        assert assignment["budget"] >= 1
+
+    # 验证具体分组
+    by_analyst = {a["analyst"]: a for a in route}
+    assert by_analyst["technical"]["tool_calls"][0]["tool_key"] == "sentiment"
+    assert by_analyst["fundamental"]["tool_calls"][0]["tool_key"] == "overview"
+    assert by_analyst["moneyflow"]["tool_calls"][0]["tool_key"] == "longhu"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_route_empty_steps():
+    """plan steps 为空 → route == []。"""
+    openai = FakeOpenAI(return_text="""{
+        "intent": {
+            "domain": "a_share",
+            "task": "market_summary",
+            "time_scope": "today",
+            "question": "看看行情"
+        },
+        "steps": []
+    }""")
+
+    settings = Settings()
+    node = SupervisorNode(settings)
+    _patch_client(node, openai)
+
+    result = await node(_make_state())
+    assert result["route"] == []

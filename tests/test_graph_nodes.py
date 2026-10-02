@@ -213,7 +213,23 @@ async def test_execute_skips_non_whitelist_no_stock(mock_runtime, monkeypatch):
 
     node._runtime = FakeRuntime()
 
-    state = {"question": "今天A股发生了什么？", "domain": "a_share"}
+    # route 分配 technical 类工具：sentiment / limit_up_count（白名单）+ detail / quote（非白名单）
+    state = {
+        "question": "今天A股发生了什么？",
+        "domain": "a_share",
+        "route": [
+            {
+                "analyst": "technical",
+                "tool_calls": [
+                    {"tool_key": "sentiment", "arguments": {}, "purpose": "情绪"},
+                    {"tool_key": "limit_up_count", "arguments": {}, "purpose": "涨停数"},
+                    {"tool_key": "detail", "arguments": {}, "purpose": "详情"},
+                    {"tool_key": "quote", "arguments": {}, "purpose": "行情"},
+                ],
+                "budget": 4,
+            }
+        ],
+    }
     result = await node(state)
 
     assert isinstance(result["results"], list)

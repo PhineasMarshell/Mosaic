@@ -27,7 +27,7 @@ from app.models.market import NormalizedDatum
 
 #: P0/P1：单节点图，整包调用 MarketDetective.investigate()
 #: P3+：扩展为 technical / fundamental / moneyflow 并行 Send
-AnalystName = Literal["kernel", "technical", "fundamental", "moneyflow"]
+AnalystName = Literal["kernel", "technical", "fundamental", "moneyflow", "news", "sentiment"]
 
 
 class ResearchState(BaseModel):
@@ -45,6 +45,8 @@ class ResearchState(BaseModel):
 
     # ── Supervisor 产出 ──
     intent: Optional[object] = None
+    #: Supervisor 产出的按 analyst 分组的工具分配（P2.5-3）
+    route: list = []     # list[AnalystAssignment]，不加 reducer —— research_more 回环时整体覆盖
 
     # ── analyst 产出（P3：三节点 Send 并行）──
     report: Optional[object] = None
