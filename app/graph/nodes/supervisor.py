@@ -28,6 +28,21 @@ def set_enabled_domains(domains: list) -> None:
     _ENABLED_DOMAINS = domains
 
 
+def route_candidate_categories(settings) -> tuple[str, ...]:
+    """返回当前启用的 analyst category 元组。
+
+    supervisor._build_route 分组与 builder._supervisor_fanout 扇出共用此函数，
+    避免两处写死白名单。news/sentiment 开关关闭时，对应 category 的工具
+    会被 _build_route 归入 technical（维持 P2.5 行为）。
+    """
+    cats = ["technical", "fundamental", "moneyflow"]
+    if getattr(settings, "news_enabled", False):
+        cats.append("news")
+    if getattr(settings, "sentiment_enabled", False):
+        cats.append("sentiment")
+    return tuple(cats)
+
+
 class SupervisorNode:
     """LLM 路由节点：用户问题 → intent + route。"""
 
@@ -110,19 +125,19 @@ class SupervisorNode:
         plan.steps = plan.steps[: self.settings.max_research_steps]
         return plan
 
-    @staticmethod
-    def _build_route(plan: ResearchPlan) -> list:
+    def _build_route(self, plan: ResearchPlan) -> list:
         """将 ResearchPlan.steps 按工具 category 分组为 AnalystAssignment 列表。"""
         from app.gateway.tool_registry import resolve_tool
         groups: dict[str, list] = {}
+        allowed = route_candidate_categories(self.settings)
         for step in plan.steps:
             try:
                 meta = resolve_tool(step.tool_key)
                 cat = meta.category
             except Exception:
                 cat = "technical"          # 无法解析的工具键兜底给技术面
-            if cat not in ("technical", "fundamental", "moneyflow"):
-                cat = "technical"          # shared/news 类暂归技术面（P4 后 news 独立）
+            if cat not in allowed:
+                cat = "technical"          # 未启用的 category 暂归技术面
             groups.setdefault(cat, []).append(step)
         return [
             {"analyst": cat, "tool_calls": [s.model_dump() for s in steps], "budget": len(steps)}

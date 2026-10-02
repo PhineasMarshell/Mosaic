@@ -25,12 +25,13 @@ from langgraph.graph import END, StateGraph
 from app.config import Settings
 from app.graph.nodes.analysts.fundamental import FundamentalAnalystNode
 from app.graph.nodes.analysts.moneyflow import MoneyflowAnalystNode
+from app.graph.nodes.analysts.news import NewsAnalystNode
 from app.graph.nodes.analysts.technical import TechnicalAnalystNode
 from app.graph.nodes.critic import CriticNode
 from app.graph.nodes.gate import GateNode
 from app.graph.nodes.kernel import KernelNode
 from app.graph.nodes.reasoning import ReasoningNode
-from app.graph.nodes.supervisor import SupervisorNode
+from app.graph.nodes.supervisor import SupervisorNode, route_candidate_categories
 from app.graph.state import ResearchState
 
 
@@ -65,6 +66,9 @@ def build_graph(settings: Settings):
     builder.add_node("technical", technical_node)
     builder.add_node("fundamental", fundamental_node)
     builder.add_node("moneyflow", moneyflow_node)
+    if settings.news_enabled:
+        news_node = NewsAnalystNode(settings)
+        builder.add_node("news", news_node)
     builder.add_node("gate", gate_node)
     builder.add_node("reasoning", reasoning_node)
     builder.add_node("critic", critic_node)
@@ -78,20 +82,27 @@ def build_graph(settings: Settings):
             state = state.model_dump(exclude_none=False)
         route = state.get("route") or []
         assigned = {a.get("analyst") for a in route if isinstance(a, dict)}
-        names = [n for n in ("technical", "fundamental", "moneyflow") if n in assigned]
+        candidates = route_candidate_categories(settings)
+        names = [n for n in candidates if n in assigned]
         if not names:
             return ["kernel"]      # supervisor 没给出计划 → 整包兜底（旧行为）
         return names
 
+    _fanout_map = {
+        "kernel": "kernel",
+        "technical": "technical",
+        "fundamental": "fundamental",
+        "moneyflow": "moneyflow",
+    }
+    if settings.news_enabled:
+        _fanout_map["news"] = "news"
+    if settings.sentiment_enabled:
+        _fanout_map["sentiment"] = "sentiment"
+
     builder.add_conditional_edges(
         "supervisor",
         _supervisor_fanout,
-        {
-            "kernel": "kernel",
-            "technical": "technical",
-            "fundamental": "fundamental",
-            "moneyflow": "moneyflow",
-        },
+        _fanout_map,
     )
 
     # ── 四个执行节点 → gate ──────────────────────────────────
@@ -99,6 +110,8 @@ def build_graph(settings: Settings):
     builder.add_edge("technical", "gate")
     builder.add_edge("fundamental", "gate")
     builder.add_edge("moneyflow", "gate")
+    if settings.news_enabled:
+        builder.add_edge("news", "gate")
 
     # ── 线性路径：gate → reasoning → critic ─────────────────
     builder.add_edge("gate", "reasoning")
