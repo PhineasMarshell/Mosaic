@@ -140,19 +140,17 @@ class CriticNode:
 
             # Build domain-aware review prompt
             intent = state.get("intent")
-            domain = None
-            if intent:
-                domain = getattr(intent, "domain", None) or state.domain or "a_share"
-            elif state.domain:
-                domain = state.domain
-            else:
-                domain = "a_share"
+            domain = "a_share"
+            if intent is not None:
+                domain = getattr(intent, "domain", None) or state.get("domain") or "a_share"
+            elif state.get("domain"):
+                domain = state.get("domain")
 
             rules = _get_domain_rules(domain)
 
             # Assemble prompt pieces
             prompt_pieces = [
-                f"用户问题: {state.question}\n",
+                f"用户问题: {state.get('question', '')}\n",
                 f"目标域: {domain}\n\n",
                 "=== 待审查的报告 ===\n",
                 _format_report_for_review(report),

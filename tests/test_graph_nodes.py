@@ -257,3 +257,79 @@ def test_whitelist_is_frozenset():
     assert "detail_eastmoney_detail_get" not in MarketAnalystNode.WHITELIST_NO_SYMBOL
     # overview (全市场数据 ~749KB) 也不应在白名单 —— 会触发网关限流
     assert "overview_eastmoney_overview_get" not in MarketAnalystNode.WHITELIST_NO_SYMBOL
+
+
+# ------------------------------------------------------------------ #
+# Critic 节点 — dict state 兼容性                                       #
+# ------------------------------------------------------------------ #
+
+
+@pytest.mark.asyncio
+async def test_critic_dict_state_returns_pass(monkeypatch):
+    """Critic 接收 dict state 时不应因属性访问炸掉，应正常返回 LLM verdict。
+
+    修复前：state.model_dump() 后 state.domain / state.question 属性访问
+    抛 AttributeError → 恒走 except → 恒返回 research_more。
+    """
+    import json as _json
+    from app.graph.nodes.critic import CriticNode
+
+    # 最小 report，满足 _format_report_for_review 的 getattr 访问
+    fake_report = types.SimpleNamespace(
+        what_happened="测试报告内容",
+        confidence=0.8,
+        state_label="neutral",
+        strong_areas=[],
+        risks=[],
+        why=[],
+    )
+
+    # 用替换 __init__ 的方式注入 mock client
+    original_init = CriticNode.__init__
+
+    def mock_init(self, settings):
+        self.settings = settings
+
+        class _FakeMessage:
+            content = _json.dumps({"verdict": "pass", "reason": "ok"})
+
+        class _FakeChoice:
+            message = _FakeMessage()
+
+        class _FakeResponse:
+            choices = [_FakeChoice()]
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                return _FakeResponse()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        self.client = _FakeClient()
+
+    monkeypatch.setattr(CriticNode, "__init__", mock_init)
+
+    settings = Settings()
+    critic = CriticNode(settings)
+
+    # dict state —— 修复前会因 state.domain / state.question 抛 AttributeError
+    state = {
+        "report": fake_report,
+        "results": [],
+        "evidence": [],
+        "gate": None,
+        "question": "测试问题",
+        "domain": "a_share",
+    }
+
+    result = await critic(state)
+    critique = result["critique"]
+    assert critique.verdict == "pass"
+    assert critique.reason == "ok"
+
+    # 恢复 __init__（monkeypatch 会自动恢复，这里显式确认）
+    assert CriticNode.__init__ is mock_init
