@@ -78,7 +78,6 @@ class MarketAnalystNode:
             tools_used: list[str] = []
             results: list[ToolResult] = []
             cache_stats: dict[str, int] = {}
-            evidence_items: list = []
             called_signatures: set[str] = set()
 
             for result in await self._execute_tools(
@@ -86,8 +85,6 @@ class MarketAnalystNode:
             ):
                 results.append(result)
                 tools_used.append(result.tool)
-                if result.normalized:
-                    evidence_items.extend(result.normalized)
                 stats = getattr(result, "_cache_info", None)
                 if stats:
                     cache_stats.update(stats)
@@ -95,6 +92,10 @@ class MarketAnalystNode:
             # Truncate oversized results
             for r in results:
                 self._runtime.truncate(r)
+
+            # 统一构建 Evidence 列表（§1 约定：source_tool / timestamp 语义）
+            from app.research.evidence import build_evidence
+            evidence_items = build_evidence(results)
 
             return {
                 "results": results,

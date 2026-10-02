@@ -205,7 +205,7 @@ async def test_execute_skips_non_whitelist_no_stock(mock_runtime, monkeypatch):
             executed_tools.append(tool_name)
             return types.SimpleNamespace(
                 tool=tool_name, arguments=arguments, status="success",
-                normalized=[], error=None, _cache_info=None,
+                normalized=[], error=None, _cache_info=None, raw=None, partial=False,
             )
         @staticmethod
         def truncate(r):
@@ -349,3 +349,62 @@ async def test_critic_dict_state_returns_pass(monkeypatch):
 
     # 恢复 __init__（monkeypatch 会自动恢复，这里显式确认）
     assert CriticNode.__init__ is mock_init
+
+
+# ------------------------------------------------------------------ #
+# P2.5-5：Evidence 条目对齐 §1 约定                                      #
+# ------------------------------------------------------------------ #
+
+
+@pytest.mark.asyncio
+async def test_analyst_evidence_is_evidence_instances(monkeypatch):
+    """analyst 输出的 evidence 应为 Evidence 实例，含 source_tool 语义。"""
+    from app.graph.nodes.analysts.technical import TechnicalAnalystNode
+    from app.models.evidence import Evidence
+    from app.models.market import NormalizedDatum, ToolResult
+
+    settings = Settings()
+    node = TechnicalAnalystNode(settings)
+
+    async def fake_execute(self, tool_name, arguments, called_signatures):
+        return ToolResult(
+            tool=tool_name,
+            arguments=arguments,
+            status="success",
+            normalized=[
+                NormalizedDatum(
+                    tool=tool_name,
+                    metric="price",
+                    value=3800.5,
+                    domain="a_share",
+                    timestamp="2026-10-02T10:00:00Z",
+                    source="tencent",
+                ),
+            ],
+            error=None,
+        )
+
+    monkeypatch.setattr("app.graph.tool_runtime.ToolRuntime.execute", fake_execute)
+    monkeypatch.setattr("app.graph.tool_runtime.ToolRuntime.truncate", lambda self, r: None)
+
+    state = {
+        "question": "测试",
+        "domain": "a_share",
+        "route": [
+            {
+                "analyst": "technical",
+                "tool_calls": [
+                    {"tool_key": "sentiment", "arguments": {}, "purpose": "情绪"},
+                ],
+                "budget": 1,
+            }
+        ],
+    }
+
+    result = await node(state)
+    evidence = result.get("evidence", [])
+
+    assert len(evidence) > 0, "evidence 不应为空"
+    for e in evidence:
+        assert isinstance(e, Evidence), f"evidence 元素应为 Evidence 实例，实际 {type(e)}"
+        assert e.source_tool == "public_sentiment_ashare_master_sentiment_get"

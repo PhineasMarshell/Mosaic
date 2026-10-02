@@ -6,6 +6,7 @@ P0 阶段整图的唯一工作节点。逻辑完全不动，只是把原来的�
 
 from app.config import Settings
 from app.graph.state import ResearchState
+from app.research.evidence import build_evidence
 from app.research.market_detective import MarketDetective
 
 
@@ -36,6 +37,7 @@ class KernelNode:
                 "cache_stats": response.cache_stats,
                 # GateNode 和 ReasoningNode 读 results 字段 — kernel 必须写
                 "results": tool_results,
+                "evidence": build_evidence(tool_results),
             }
         except Exception as exc:
             # 节点异常不炸图，写进 errors 让上层处理
