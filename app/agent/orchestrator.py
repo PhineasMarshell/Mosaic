@@ -50,7 +50,10 @@ class Orchestrator:
             domain=str(domain) if domain else None,
             conversation_id=conversation_id,
         )
-        result_state = await graph.ainvoke(state)
+        result_state = await graph.ainvoke(
+            state,
+            config={"recursion_limit": self.settings.graph_recursion_limit},
+        )
 
         # ── 从 state 提取结果，转换为 ResearchResponse ────
         report = result_state.get("report")
