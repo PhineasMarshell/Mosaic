@@ -65,7 +65,11 @@ def _use_orchestrator(monkeypatch, orch):
 def _use_budget(monkeypatch, seconds):
     monkeypatch.setattr(
         main, "_settings",
-        SimpleNamespace(research_budget_seconds=seconds, stream_heartbeat_seconds=5),
+        SimpleNamespace(
+            research_budget_seconds=seconds,
+            stream_heartbeat_seconds=5,
+            graph_recursion_limit=25,
+        ),
     )
 
 
@@ -174,21 +178,30 @@ def test_health_exposes_budget():
 # SSE：心跳保活 + 用 result 事件表达失败                              #
 # ------------------------------------------------------------------ #
 
-class FakeDetective:
+class FakeGraphForErrors:
+    """模拟 compiled graph 的 astream：可配置延迟或抛异常。
+
+    P2.5-6 后 _stream_research 不再走 market_detective.investigate，
+    而是直接驱动 graph.astream，因此错误注入点也移到这里。
+    """
+
     def __init__(self, exc=None, delay=0.0):
         self.exc = exc
         self.delay = delay
 
-    async def investigate(self, question, domain=None, conversation_id=None):
+    async def astream(self, input_state, stream_mode=None, config=None):
         if self.delay:
             await asyncio.sleep(self.delay)
         if self.exc is not None:
             raise self.exc
-        raise AssertionError("FakeDetective 没有被配置成成功返回")
+        yield "values", {}
 
 
-def _use_detective(monkeypatch, detective):
-    monkeypatch.setattr(main, "_orchestrator", SimpleNamespace(market_detective=detective))
+def _use_graph(monkeypatch, graph):
+    """把 _orchestrator 替换成带 _ensure_graph 的 SimpleNamespace。"""
+    orch = SimpleNamespace(_ensure_graph=lambda: graph)
+    monkeypatch.setattr(main, "_orchestrator", orch)
+    return orch
 
 
 def _read_sse(payload):
@@ -210,10 +223,14 @@ def _read_sse(payload):
 
 def test_stream_emits_heartbeats_then_timeout(monkeypatch):
     """回归：以前整个调查期间连接上一个字节都没有，且 60s 必然超时。"""
-    _use_detective(monkeypatch, FakeDetective(delay=5.0))
+    _use_graph(monkeypatch, FakeGraphForErrors(delay=5.0))
     monkeypatch.setattr(
         main, "_settings",
-        SimpleNamespace(research_budget_seconds=0.25, stream_heartbeat_seconds=0.05),
+        SimpleNamespace(
+            research_budget_seconds=0.25,
+            stream_heartbeat_seconds=0.05,
+            graph_recursion_limit=25,
+        ),
     )
 
     events = _read_sse({"question": "今天A股发生了什么？"})
@@ -230,7 +247,7 @@ def test_stream_emits_heartbeats_then_timeout(monkeypatch):
 
 
 def test_stream_reports_llm_output_error_as_upstream(monkeypatch):
-    _use_detective(monkeypatch, FakeDetective(exc=LLMOutputError("Reasoning returned invalid JSON")))
+    _use_graph(monkeypatch, FakeGraphForErrors(exc=LLMOutputError("Reasoning returned invalid JSON")))
     _use_budget(monkeypatch, seconds=5)
 
     events = _read_sse({"question": "那茅台呢"})
@@ -240,7 +257,7 @@ def test_stream_reports_llm_output_error_as_upstream(monkeypatch):
 
 
 def test_stream_reports_generic_error_as_internal(monkeypatch):
-    _use_detective(monkeypatch, FakeDetective(exc=RuntimeError("gateway exploded")))
+    _use_graph(monkeypatch, FakeGraphForErrors(exc=RuntimeError("gateway exploded")))
     _use_budget(monkeypatch, seconds=5)
 
     events = _read_sse({"question": "那茅台呢"})

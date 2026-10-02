@@ -102,6 +102,18 @@
   .research-step{padding:2px 0;font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:5px}
   .research-step.done .icon{color:var(--text-dim)}
   .research-step.active .icon{color:var(--text)}
+  .analyst-row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+  .analyst-card{padding:4px 10px;border-radius:6px;font-size:11px;
+                border:1px solid var(--border);color:var(--text-muted);
+                background:var(--surface2);transition:all .2s}
+  .analyst-card.running{border-color:var(--accent);color:var(--text);
+                       background:var(--surface);animation:pulse 1.2s ease-in-out infinite}
+  .analyst-card.done{border-color:var(--text-dim);color:var(--text-dim)}
+  .analyst-card.done::before{content:'✓ '}
+  #summaryCard{margin-top:6px;font-size:11px;color:var(--text-muted);
+               padding:4px 10px;border-radius:6px;background:var(--surface2);
+               border:1px solid var(--border)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 
   /* ── Error ──────────────────────────── */
   .error-msg{background:var(--surface2);border:1px solid var(--border);
@@ -295,16 +307,23 @@ function addUserBubble(text) {
 
 function addAILoader(message) {
   hideWelcome();
-  const steps = [
-    "理解问题并生成研究计划",
-    "调用 Market Gateway Tools",
-    "整理证据链并交叉验证",
-    "生成结构化市场情报"
+  const analysts = [
+    {node: 'technical',   label: '📈 技术面'},
+    {node: 'fundamental', label: '🏛 基本面'},
+    {node: 'moneyflow',   label: '💰 资金面'},
+    {node: 'news',        label: '📰 新闻舆情'},
   ];
+  const cards = analysts.map(a =>
+    `<div class="analyst-card pending" data-node="${a.node}">${a.label}</div>`
+  ).join('');
   const row = document.createElement('div');
   row.className = 'msg-row ai loading-indicator-msg';
   row.id = 'ai-loading';
-  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble"><div class="loading-text">${esc(message)}</div><div class="research-steps" id="stepList">${steps.map((p,i) => `<div class="research-step" data-index="${i}"><span class="icon">○</span>${esc(p)}</div>`).join('')}</div></div>`;
+  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble">
+    <div class="loading-text">${esc(message)}</div>
+    <div class="analyst-row">${cards}</div>
+    <div id="summaryCard">等待规划…</div>
+  </div>`;
   getMessages().appendChild(row);
   scrollToBottom(false);
 }
@@ -323,6 +342,26 @@ function updateLoader(index, text) {
     else if (i === index) { el.classList.add('active'); el.querySelector('.icon').textContent = '◉'; }
     else { el.querySelector('.icon').textContent = '○'; }
   });
+  scrollToBottom(true);
+}
+
+function updateProgress(data) {
+  const row = document.getElementById('ai-loading');
+  if (!row) return;
+  const txt = row.querySelector('.loading-text');
+  if (txt && data.message) txt.textContent = data.message;
+  const node = data.node;
+  if (data.step === 'planning') {
+    row.querySelectorAll('.analyst-card').forEach(c => c.className = 'analyst-card running');
+  } else if (node && row.querySelector(`.analyst-card[data-node="${node}"]`)) {
+    const card = row.querySelector(`.analyst-card[data-node="${node}"]`);
+    card.classList.remove('running');
+    card.classList.add('done');
+  } else if (data.step === 'evaluating' || data.step === 'reasoning' || data.step === 'critic') {
+    const sc = document.getElementById('summaryCard');
+    if (sc) sc.textContent = data.message;
+    row.querySelectorAll('.analyst-card.running').forEach(c => { c.className = 'analyst-card done'; });
+  }
   scrollToBottom(true);
 }
 
@@ -534,7 +573,7 @@ async function ask() {
     let resultData = null;
     try {
       await new Promise((resolve, reject) => {
-        runSSE(q, (data) => updateLoader(0, data.message || '调查中…'),
+        runSSE(q, updateProgress,
                (data) => { resultData = data; resolve(data); }, reject, controller.signal);
       });
     } catch(e) {

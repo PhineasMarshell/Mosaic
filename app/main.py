@@ -239,74 +239,105 @@ async def ask(request: dict):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+#: 节点名 → (progress step, 默认文案)
+_NODE_PROGRESS = {
+    "supervisor":   ("planning",    "理解问题并生成研究计划"),
+    "kernel":       ("tool_call",   "整包调查执行中…"),
+    "technical":    ("tool_call",   "技术面分析员采集中"),
+    "fundamental":  ("tool_call",   "基本面分析员采集中"),
+    "moneyflow":    ("tool_call",   "资金面分析员采集中"),
+    "news":         ("tool_call",   "新闻事件分析员采集中"),
+    "sentiment":    ("tool_call",   "舆情分析员采集中"),
+    "gate":         ("evaluating",  "证据质量检查"),
+    "reasoning":    ("reasoning",   "正在生成结构化市场情报…"),
+    "critic":       ("critic",      "结论-证据审计"),
+}
+
+
 async def _stream_research(question: str, domain: str | None, conversation_id: str | None = None):
-    """SSE event generator — wraps MarketDetective.investigate() with progress events.
+    """SSE event generator — drives LangGraph astream with per-node progress events.
 
-    Emits progress events at each phase, then the final result.
-    If the investigation raises an exception, yields a result event with error info
-    so the frontend can surface it.
-
-    调查期间每 ``stream_heartbeat_seconds`` 推一条 ``working`` 事件：
-    以前只在开头连发两条 progress，然后整个调查过程（可能几分钟）连接上
-    一个字节都没有，浏览器/代理很容易把这种静默连接当死的掐掉。
+    Uses graph.astream(stream_mode=["updates","values"]) in a background pump task,
+    yielding per-node progress from "updates" and capturing the final state from "values".
+    Heartbeat events keep the connection alive during long-running nodes.
     """
-    import asyncio
-
     settings = _get_settings()
     budget = settings.research_budget_seconds
     heartbeat = max(1, settings.stream_heartbeat_seconds)
 
     def json_event(event: str, data: dict):
-        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
-    detective = _get_orchestrator().market_detective
-    task = asyncio.create_task(
-        detective.investigate(question, domain=domain, conversation_id=conversation_id)
-    )
+    orchestrator = _get_orchestrator()
+    graph = orchestrator._ensure_graph()
+    initial_state = {"question": question, "domain": domain, "conversation_id": conversation_id}
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump():
+        try:
+            async for mode, payload in graph.astream(
+                initial_state,
+                stream_mode=["updates", "values"],
+                config={"recursion_limit": settings.graph_recursion_limit},
+            ):
+                await queue.put((mode, payload))
+            await queue.put(("__done__", None))
+        except Exception as exc:
+            await queue.put(("__error__", exc))
+
+    task = asyncio.create_task(_pump())
+    final_state: dict = {}
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    deadline = started_at + budget
 
     try:
-        # Phase 1: Planning
-        yield json_event("progress", {"step": "planning", "message": _get_step_message("planning")})
-
-        # Phase 2: Tool execution（真正的耗时阶段，靠心跳保活）
-        yield json_event("progress", {"step": "tool_call", "message": _get_step_message("tool_call")})
-
-        loop = asyncio.get_running_loop()
-        started_at = loop.time()
-        deadline = started_at + budget
-
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
                 task.cancel()
                 raise UpstreamTimeoutError(f"Research exceeded the {budget}s budget")
             try:
-                # shield：心跳到点不能顺手把真正的调查任务取消掉
-                result = await asyncio.wait_for(
-                    asyncio.shield(task), timeout=min(heartbeat, remaining)
-                )
-                break
+                mode, payload = await asyncio.wait_for(queue.get(), timeout=min(heartbeat, remaining))
             except (asyncio.TimeoutError, TimeoutError):
                 elapsed = int(loop.time() - started_at)
-                yield json_event("progress", {
-                    "step": "working",
-                    "message": f"仍在调查中…（{elapsed}s / 预算 {budget}s）",
-                })
+                yield json_event("progress", {"step": "working", "node": None,
+                                               "message": f"仍在调查中…（{elapsed}s / 预算 {budget}s）"})
+                continue
 
-        # Emit evaluating + reasoning phase
-        yield json_event("progress", {"step": "evaluating", "message": _get_step_message("evaluating")})
-        yield json_event("progress", {"step": "reasoning", "message": _get_step_message("reasoning")})
+            if mode == "__done__":
+                break
+            if mode == "__error__":
+                raise payload
+            if mode == "values":
+                final_state = payload
+            elif mode == "updates":
+                for node_name in payload.keys():
+                    step, message = _NODE_PROGRESS.get(node_name, (node_name, node_name))
+                    yield json_event("progress", {"step": step, "node": node_name, "message": message})
 
-        # Emit completion
-        yield json_event("progress", {"step": "done", "message": "调查完成"})
+        # ── 组装结果（与 orchestrator.run 对齐）──
+        from app.models.response import ResearchResponse
+        raw_results = final_state.get("results", [])
+        # values 流模式保留 Pydantic 对象，ResearchResponse.tool_results 需要 dict
+        tool_results_dicts = [
+            r if isinstance(r, dict) else r.model_dump() for r in raw_results
+        ]
+        result = ResearchResponse(
+            question=question,
+            report=final_state.get("report"),
+            tool_results=tool_results_dicts,
+            cache_stats=dict(final_state.get("cache_stats", {})),
+            conversation_id=conversation_id,
+        )
+        yield json_event("progress", {"step": "done", "node": None, "message": "调查完成"})
 
-        # Save to memory (background, don't block response)
         save_result = result.model_dump()
         if conversation_id:
             asyncio.create_task(_save_turn(conversation_id, question, save_result))
         asyncio.create_task(_save_research_and_state(question, save_result))
 
-        # Send result
         yield json_event("result", save_result)
 
     except (UpstreamTimeoutError, asyncio.TimeoutError, TimeoutError) as exc:
@@ -338,8 +369,6 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             "question": question,
         })
     finally:
-        # 客户端断开（刷新页面）时生成器会被 aclose()，这里负责收尸，
-        # 否则调查任务会变成游离 task，MCP 子进程也可能跟着泄漏。
         if not task.done():
             task.cancel()
 

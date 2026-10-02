@@ -70,7 +70,9 @@ class ReasoningNode:
             results: list[ToolResult] = [
                 ToolResult(**r) if isinstance(r, dict) else r for r in results
             ]
-            evidence = state.get("evidence", [])
+            # 使用截断后的 evidence_items，并将 reducer 序列化产生的 dict 转回 Evidence
+            from app.models.evidence import Evidence
+            evidence = [Evidence(**e) if isinstance(e, dict) else e for e in evidence_items]
 
             # 调用推理引擎
             report: MarketIntelligence = await self._engine.reason(

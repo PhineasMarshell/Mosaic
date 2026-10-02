@@ -408,3 +408,73 @@ async def test_analyst_evidence_is_evidence_instances(monkeypatch):
     for e in evidence:
         assert isinstance(e, Evidence), f"evidence 元素应为 Evidence 实例，实际 {type(e)}"
         assert e.source_tool == "public_sentiment_ashare_master_sentiment_get"
+
+
+# ------------------------------------------------------------------ #
+# Reasoning 节点 — reducer 序列化后 evidence 为 dict 的兼容性           #
+# ------------------------------------------------------------------ #
+
+
+@pytest.mark.asyncio
+async def test_reasoning_node_accepts_dict_evidence(monkeypatch):
+    """多 analyst 并行后 evidence 经 reducer/model_dump 变成 dict，
+    ReasoningNode 应转回 Evidence 对象再调用 reason()，不应炸。
+
+    修复前：reasoning.py 对 evidence 逐条 .model_dump()，dict 没有该方法
+    → AttributeError → report=None → ResearchResponse 验证失败。
+    """
+    import json as _json
+    from app.graph.nodes.reasoning import ReasoningNode
+
+    report_json = _json.dumps({
+        "title": "t", "market_state": "neutral", "state_label": "窄幅震荡",
+        "what_happened": "测试", "why": [], "strong_areas": [],
+        "what_changed": [], "what_matters": [], "risks": [],
+        "data_caveats": [], "confidence": "low", "used_tools": [], "evidence": [],
+    })
+
+    # 用替换 __init__ 的方式注入 mock client（绕过真实 OpenAI 连接）
+    def mock_init(self, settings, **kwargs):
+        self.settings = settings
+        self.critic_max_revisions = 2
+        from app.research.reasoning import ReasoningEngine
+        self._engine = object.__new__(ReasoningEngine)
+        self._engine.settings = settings
+
+        class _FakeMessage:
+            content = report_json
+        class _FakeChoice:
+            message = _FakeMessage()
+        class _FakeResp:
+            choices = [_FakeChoice()]
+        class _FakeCompletions:
+            async def create(self, **kw):
+                return _FakeResp()
+        class _FakeChat:
+            completions = _FakeCompletions()
+        class _FakeClient:
+            chat = _FakeChat()
+        self._engine.client = _FakeClient()
+
+    monkeypatch.setattr(ReasoningNode, "__init__", mock_init)
+
+    node = ReasoningNode(Settings())
+
+    # dict state，evidence 是 list[dict]（模拟 reducer 序列化后的形态）
+    dict_evidence = [
+        {"id": "e1", "source_tool": "quote_tencent_quote_get", "domain": "a_share",
+         "metric": "price", "value": 3800, "status": "success"},
+        {"id": "e2", "source_tool": "public_sentiment_ashare_master_sentiment_get",
+         "domain": "a_share", "metric": "risk_on", "value": 0.3, "status": "success"},
+    ]
+    state = {
+        "question": "今天A股发生了什么？",
+        "domain": "a_share",
+        "results": [],
+        "evidence": dict_evidence,
+        "findings": [],
+    }
+
+    result = await node(state)
+    assert result.get("report") is not None, "dict evidence 不应导致 report=None"
+    assert not result.get("errors"), f"不应有错误: {result.get('errors')}"
