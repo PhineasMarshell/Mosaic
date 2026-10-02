@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, time as dt_time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,30 @@ def _next_run(target_time: dt_time) -> int:
     if diff <= 0:
         diff += 86400  # 明天
     return max(int(diff), 60)  # 至少 60 秒
+
+
+def _brief_file_dir(brief_type: str) -> Path:
+    """定时简报的文件目录：<项目根>/memory/<morning|evening>/。"""
+    project_root = Path(__file__).resolve().parents[2]
+    d = project_root / "memory" / brief_type
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _save_brief_to_file(brief: dict[str, Any], brief_type: str) -> Path:
+    """把定时简报按日期存为 JSON 文件（morning / evening 分开存放）。
+
+    Returns:
+        写入的文件路径
+    """
+    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    path = _brief_file_dir(brief_type) / f"{date_str}.json"
+    path.write_text(
+        json.dumps(brief, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    logger.info("Saved %s brief to %s", brief_type, path)
+    return path
 
 
 async def _run_scheduler(morning_fn, evening_fn):
@@ -48,14 +73,16 @@ async def _run_scheduler(morning_fn, evening_fn):
             if morning_trigger:
                 logger.info("Triggering morning brief")
                 try:
-                    await morning_fn()
+                    brief = await morning_fn()
+                    _save_brief_to_file(brief, "morning")
                 except Exception as exc:
                     logger.error("Morning brief failed: %s", exc)
 
             if evening_trigger:
                 logger.info("Triggering evening brief")
                 try:
-                    await evening_fn()
+                    brief = await evening_fn()
+                    _save_brief_to_file(brief, "evening")
                 except Exception as exc:
                     logger.error("Evening brief failed: %s", exc)
 
@@ -71,21 +98,17 @@ async def _run_scheduler(morning_fn, evening_fn):
 
 # ── Brief Generators ──────────────────────
 
-async def generate_morning_brief(settings=None, memory=None) -> dict[str, Any]:
-    """生成 Morning Brief。"""
-    from app.config import get_settings as _get_settings
-    from app.memory.storage import get_memory as _get_memory
+def _legacy_items_from_memory(memory, brief_type: str = "morning") -> list[str]:
+    """图失败时的 memory 模板兜底（P5 前的旧逻辑，按 brief_type 分支）。"""
+    if brief_type == "evening":
+        return _legacy_evening_items(memory)
+    return _legacy_morning_items(memory)
 
-    settings = settings or _get_settings()
-    memory = memory or _get_memory()
 
-    # 获取最近几天的状态
+def _legacy_morning_items(memory) -> list[str]:
+    """晨报的纯 memory 模板（旧逻辑）。"""
     recent_states = memory.get_recent_states(days=7)
-
-    # 构建"今天值得关注的 5 件事"
     items = []
-
-    # 1. 今日市场概览（基于最近的 state）
     latest = recent_states[0] if recent_states else None
     if latest:
         label = latest.get("state_label", "N/A")
@@ -93,15 +116,70 @@ async def generate_morning_brief(settings=None, memory=None) -> dict[str, Any]:
         items.append(f"市场当前状态: {label}")
         if strong:
             items.append(f"强势方向: {', '.join(strong)}")
-
-    # 2. 近期异常事件
     anomalies = memory.get_anomalies(since=None, limit=3)
     if anomalies:
         top = anomalies[0].get("description", anomalies[0].get("type", ""))
         items.append(f"近期注意的异常: {top}")
-
-    # 3. 需要持续观察的变量
     items.append("接下来关注: 涨停数量是否恢复、新主线是否形成、高位股是否重新获得承接")
+    return items[:5]
+
+
+def _legacy_evening_items(memory) -> list[str]:
+    """晚报的纯 memory 模板（旧逻辑）。"""
+    today_state = memory.get_daily_state()
+    recent_states = memory.get_recent_states(days=7)
+    items = []
+    if today_state:
+        label = today_state.get("state_label", "N/A")
+        items.append(f"今日市场状态: {label}")
+        for key in ("a-share", "crypto"):
+            domain_data = today_state.get(key, {})
+            if isinstance(domain_data, dict):
+                dl = domain_data.get("state_label", "")
+                if dl:
+                    items.append(f"{key}: {dl}")
+    items.append("盘中判断回顾: 观察题材轮动趋势与情绪变化")
+    if recent_states:
+        prev = recent_states[-1] if len(recent_states) > 1 else {}
+        curr = recent_states[0]
+        prev_themes = set(prev.get("strong_areas", [])[:5])
+        curr_themes = set(curr.get("strong_areas", [])[:5])
+        rotation = curr_themes - prev_themes
+        if rotation:
+            items.append(f"主题轮换: {' → '.join(list(rotation)[:3])}")
+    anomalies = memory.get_anomalies(limit=2)
+    if anomalies:
+        items.append(f"待跟踪异常: {anomalies[0].get('description', '')}")
+    return items[:5]
+
+
+async def generate_morning_brief(settings=None, memory=None) -> dict[str, Any]:
+    """生成 Morning Brief — 优先走图，失败时 memory 模板兜底。"""
+    from app.agent.orchestrator import Orchestrator
+    from app.config import get_settings as _get_settings
+    from app.memory.storage import get_memory as _get_memory
+
+    settings = settings or _get_settings()
+    memory = memory or _get_memory()
+
+    question = "请做一份今日开盘前的市场状态检查：当前市场状态、强势方向、今日需要重点跟踪的变量。"
+    try:
+        result = await asyncio.wait_for(
+            Orchestrator(settings).run(question),
+            timeout=settings.research_budget_seconds,
+        )
+        report = result.report
+        items = [
+            f"市场当前状态: {report.state_label}",
+            f"发生了什么: {report.what_happened[:120]}",
+        ]
+        if report.strong_areas:
+            items.append(f"强势方向: {', '.join(report.strong_areas[:3])}")
+        if report.risks:
+            items.append(f"风险: {report.risks[0][:80]}")
+    except Exception as exc:
+        logger.warning("Graph-based morning brief failed, fallback to memory template: %s", exc)
+        items = _legacy_items_from_memory(memory, "morning")
 
     return {
         "title": "Good Morning. Here's what matters today.",
@@ -112,48 +190,32 @@ async def generate_morning_brief(settings=None, memory=None) -> dict[str, Any]:
 
 
 async def generate_evening_brief(settings=None, memory=None) -> dict[str, Any]:
-    """生成 Evening Brief。"""
+    """生成 Evening Brief — 优先走图，失败时 memory 模板兜底。"""
+    from app.agent.orchestrator import Orchestrator
     from app.config import get_settings as _get_settings
     from app.memory.storage import get_memory as _get_memory
 
     settings = settings or _get_settings()
     memory = memory or _get_memory()
 
-    # 获取今天的 daily state
-    today_state = memory.get_daily_state()
-    recent_states = memory.get_recent_states(days=7)
-
-    items = []
-
-    # 1. 今日总结
-    if today_state:
-        label = today_state.get("state_label", "N/A")
-        items.append(f"今日市场状态: {label}")
-
-        for key in ("a-share", "crypto"):
-            domain_data = today_state.get(key, {})
-            if isinstance(domain_data, dict):
-                dl = domain_data.get("state_label", "")
-                if dl:
-                    items.append(f"{key}: {dl}")
-
-    # 2. 验证了哪些判断
-    items.append("盘中判断回顾: 观察题材轮动趋势与情绪变化")
-
-    # 3. 主题变化
-    if recent_states:
-        prev = recent_states[-1] if len(recent_states) > 1 else {}
-        curr = recent_states[0]
-        prev_themes = set(prev.get("strong_areas", [])[:5])
-        curr_themes = set(curr.get("strong_areas", [])[:5])
-        rotation = curr_themes - prev_themes
-        if rotation:
-            items.append(f"主题轮换: {' → '.join(list(rotation)[:3])}")
-
-    # 4. 需要继续观察的异常
-    anomalies = memory.get_anomalies(limit=2)
-    if anomalies:
-        items.append(f"待跟踪异常: {anomalies[0].get('description', '')}")
+    question = "今天实际发生了什么：状态变化、验证/证伪了什么、主题是否轮换"
+    try:
+        result = await asyncio.wait_for(
+            Orchestrator(settings).run(question),
+            timeout=settings.research_budget_seconds,
+        )
+        report = result.report
+        items = [
+            f"今日市场状态: {report.state_label}",
+            f"发生了什么: {report.what_happened[:120]}",
+        ]
+        if report.strong_areas:
+            items.append(f"强势方向: {', '.join(report.strong_areas[:3])}")
+        if report.risks:
+            items.append(f"风险: {report.risks[0][:80]}")
+    except Exception as exc:
+        logger.warning("Graph-based evening brief failed, fallback to memory template: %s", exc)
+        items = _legacy_items_from_memory(memory, "evening")
 
     return {
         "title": "What actually happened today?",

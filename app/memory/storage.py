@@ -4,7 +4,7 @@
 支持跨日历史比较（PRD §38-39）。
 
 存储方案：SQLite WAL 模式（ACID + 并发安全）
-存储路径：~/.mosaic/memory.db
+存储路径：<项目根>/memory/memory.db
 """
 
 from datetime import UTC, datetime
@@ -91,13 +91,15 @@ class MarketMemory:
     """市场记忆系统（SQLite 后端）。
 
     使用单个数据库文件组织所有数据：
-    ~/.mosaic/memory.db
+    <项目根>/memory/memory.db
 
     表结构：daily_states / anomalies / research_records / conversations
     """
 
     def __init__(self, db_path: Path | None = None):
-        self.db_path = db_path or (Path.home() / ".mosaic" / "memory.db")
+        # 默认存到项目根目录下 memory/memory.db（P5：从 ~/.mosaic 迁入项目目录）
+        _project_root = Path(__file__).resolve().parents[2]
+        self.db_path = db_path or (_project_root / "memory" / "memory.db")
         self._conn: SQLite3Connection | None = None
         # Ensure directory exists and initialize schema eagerly (before any caller uses conn)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
