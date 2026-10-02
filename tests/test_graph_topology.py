@@ -145,10 +145,10 @@ def test_moneyflow_has_longhu_and_hk():
 
 
 def test_tool_categories_cover_all_39_tools():
-    """所有注册工具的 category 应属于四个合法类别之一。"""
+    """所有注册工具的 category 应属于合法类别之一。"""
     from app.gateway.tool_registry import ALL_TOOLS
 
-    valid_categories = {"technical", "fundamental", "moneyflow", "shared"}
+    valid_categories = {"technical", "fundamental", "moneyflow", "shared", "news"}
     for t in ALL_TOOLS:
         assert t.category in valid_categories, f"{t.key} 未标注合法 category={t.category!r}"
 

@@ -529,9 +529,21 @@ _NEWS_SEARCH = [
         priority="medium",
         http_method="INTERNAL",
         http_path="",
-        category="shared",
+        category="news",
     ),
 ]
+
+# ------------------------------------------------------------------ #
+# 舆情评论 — P4-5：评论爬取 MCP 就绪后启用（工具名以实际 MCP 为准）     #
+# ------------------------------------------------------------------ #
+# _SENTIMENT_TOOLS = [
+#     ToolMeta("xq_comments", "comments_xueqiu_get", "雪球个股评论区抓取",
+#              category="sentiment", domain="a_share", ...),
+#     ToolMeta("futu_comments", "comments_futu_get", "富途牛牛个股评论区",
+#              category="sentiment", domain="hk_stock", ...),
+#     ToolMeta("ths_comments", "comments_ths_get", "同花顺个股/板块评论区",
+#              category="sentiment", domain="a_share", ...),
+# ]
 
 # ------------------------------------------------------------------ #
 # 服务健康检查                                                        #
@@ -576,6 +588,7 @@ ALL_TOOLS: list[ToolMeta] = (
     + _CRYPTO_COINGLASS
     + _US_STOCK_PLACEHOLDERS
     + _NEWS_SEARCH
+    # + _SENTIMENT_TOOLS  # P4-5：评论 MCP 就绪后取消注释
     + _HEALTH_TOOLS
 )
 

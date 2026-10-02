@@ -73,3 +73,46 @@ class TestAsyncWrapper:
         result = await search_news("async_test", max_results=1)
         assert isinstance(result, dict)
         assert "meta" in result
+
+
+class TestNewsSearchCache:
+    """news_search 结果缓存验证（P4-3）。"""
+
+    @pytest.mark.asyncio
+    async def test_same_args_hits_cache(self, monkeypatch):
+        """同一参数连续两次 execute，底层 _search_news 只被调 1 次。"""
+        from unittest.mock import AsyncMock
+        from app.graph.tool_runtime import ToolRuntime
+        from app.config import Settings
+
+        fake = AsyncMock(return_value={
+            "meta": {"count": 1, "status": "ok"},
+            "news": [{"title": "cache_hit_test", "body": "x"}],
+        })
+        monkeypatch.setattr("app.graph.tool_runtime._search_news", fake)
+
+        runtime = ToolRuntime(Settings())
+        args = {"query": "p43_cache_same_xyz", "max_results": 3}
+        r1 = await runtime.execute("news_search", args, set())
+        r2 = await runtime.execute("news_search", args, set())
+        assert fake.await_count == 1
+        assert r1.status == "success"
+        assert r2.status == "success"
+
+    @pytest.mark.asyncio
+    async def test_different_args_bypasses_cache(self, monkeypatch):
+        """不同参数不命中缓存，底层 _search_news 被调 2 次。"""
+        from unittest.mock import AsyncMock
+        from app.graph.tool_runtime import ToolRuntime
+        from app.config import Settings
+
+        fake = AsyncMock(return_value={
+            "meta": {"count": 1, "status": "ok"},
+            "news": [{"title": "cache_miss_test", "body": "y"}],
+        })
+        monkeypatch.setattr("app.graph.tool_runtime._search_news", fake)
+
+        runtime = ToolRuntime(Settings())
+        await runtime.execute("news_search", {"query": "p43_diff_a_xyz", "max_results": 2}, set())
+        await runtime.execute("news_search", {"query": "p43_diff_b_xyz", "max_results": 2}, set())
+        assert fake.await_count == 2

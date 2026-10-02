@@ -247,6 +247,11 @@ class ToolRuntime:
                 )
 
         if tool_name == "news_search":
+            cache_key = _make_cache_key(tool_name, arguments)
+            cached = market_cache.get(cache_key)
+            if cached is not None:
+                logger.info("Cache hit for news_search")
+                return cached
             try:
                 query = arguments.get("query", "")
                 max_results = int(arguments.get("max_results", 5))
@@ -260,13 +265,16 @@ class ToolRuntime:
                     len(normalized), meta.get("status", ""),
                 )
                 status = STATUS_SUCCESS if raw.get("news") else STATUS_ERROR
-                return ToolResult(
+                result = ToolResult(
                     tool="news_search",
                     arguments=arguments,
                     status=status,
                     normalized=normalized,
                     error=meta.get("error"),
                 )
+                if status == STATUS_SUCCESS:
+                    market_cache.set(cache_key, result, ttl=self.settings.news_search_ttl_seconds)
+                return result
             except Exception as exc:
                 logger.warning("Internal tool news_search failed: %s", exc)
                 return ToolResult(

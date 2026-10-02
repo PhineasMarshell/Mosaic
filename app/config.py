@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     #: LangGraph recursion limit（防止无限循环）
     graph_recursion_limit: int = 25
 
+    # ── P4：舆情 / 新闻 ────────────────────
+    #: 舆情分析员总开关（评论 MCP 就绪后置 true）
+    sentiment_enabled: bool = False
+    #: 单次拉取评论上限
+    sentiment_max_comments: int = 500
+    #: 新闻分析员总开关
+    news_enabled: bool = False
+    #: DDGS 搜索结果缓存时长（秒），缓解限流
+    news_search_ttl_seconds: int = 21600
+
 
 @lru_cache
 def get_settings() -> Settings:
