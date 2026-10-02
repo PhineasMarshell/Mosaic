@@ -72,13 +72,27 @@ def build_graph(settings: Settings):
     # ── 入口 ────────────────────────────────────────────────
     builder.set_entry_point("supervisor")
 
-    # ── P3 并行扇出：supervisor → 四个执行节点 ──────────────
-    # kernel（整包兜底）与三个 analyst 同时执行，
-    # 各自写 results / evidence / findings（reducer 合并）
-    builder.add_edge("supervisor", "kernel")
-    builder.add_edge("supervisor", "technical")
-    builder.add_edge("supervisor", "fundamental")
-    builder.add_edge("supervisor", "moneyflow")
+    # ── P2.5-2 条件扇出：supervisor → [route 分配的 analyst] 或 kernel 兜底 ──
+    def _supervisor_fanout(state):
+        if hasattr(state, "model_dump"):
+            state = state.model_dump(exclude_none=False)
+        route = state.get("route") or []
+        assigned = {a.get("analyst") for a in route if isinstance(a, dict)}
+        names = [n for n in ("technical", "fundamental", "moneyflow") if n in assigned]
+        if not names:
+            return ["kernel"]      # supervisor 没给出计划 → 整包兜底（旧行为）
+        return names
+
+    builder.add_conditional_edges(
+        "supervisor",
+        _supervisor_fanout,
+        {
+            "kernel": "kernel",
+            "technical": "technical",
+            "fundamental": "fundamental",
+            "moneyflow": "moneyflow",
+        },
+    )
 
     # ── 四个执行节点 → gate ──────────────────────────────────
     builder.add_edge("kernel", "gate")

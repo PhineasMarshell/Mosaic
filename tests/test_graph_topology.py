@@ -151,3 +151,142 @@ def test_tool_categories_cover_all_39_tools():
     valid_categories = {"technical", "fundamental", "moneyflow", "shared"}
     for t in ALL_TOOLS:
         assert t.category in valid_categories, f"{t.key} 未标注合法 category={t.category!r}"
+
+
+# ------------------------------------------------------------------ #
+# P2.5-2：kernel 条件兜底拓扑                                           #
+# ------------------------------------------------------------------ #
+
+
+def _make_fake_openai(text: str):
+    """构造返回固定 JSON 的 fake OpenAI client。"""
+    import types
+
+    class _FakeMessage:
+        content = text
+
+    class _FakeChoice:
+        message = _FakeMessage()
+
+    class _FakeResp:
+        choices = [_FakeChoice()]
+
+    class _FakeCompletions:
+        async def create(self, *args, **kwargs):
+            return _FakeResp()
+
+    class _FakeChat:
+        completions = _FakeCompletions()
+
+    class _FakeClient:
+        chat = _FakeChat()
+
+    return _FakeClient()
+
+
+def _patch_supervisor_plan(monkeypatch, plan_json: str):
+    """替换 SupervisorNode.__init__，注入返回指定 plan 的 fake client。"""
+    from app.graph.nodes import supervisor as sup_mod
+
+    orig_init = sup_mod.SupervisorNode.__init__
+
+    def patched_init(self, settings):
+        orig_init(self, settings)
+        self.client = _make_fake_openai(plan_json)
+
+    monkeypatch.setattr(sup_mod.SupervisorNode, "__init__", patched_init)
+
+
+def _patch_reasoning_and_critic(monkeypatch):
+    """mock ReasoningNode / CriticNode.__call__ 返回固定值，避免真实 LLM。"""
+    import types
+    from app.graph.nodes import reasoning as rea_mod
+    from app.graph.nodes import critic as crit_mod
+    from app.graph.nodes.critic import Critique
+
+    async def fake_reasoning(self, state):
+        return {
+            "report": types.SimpleNamespace(
+                what_happened="测试报告", confidence=0.8, state_label="neutral",
+                strong_areas=[], risks=[], why=[],
+            ),
+        }
+
+    async def fake_critic(self, state):
+        return {"critique": Critique(verdict="pass", reason="ok")}
+
+    monkeypatch.setattr(rea_mod.ReasoningNode, "__call__", fake_reasoning)
+    monkeypatch.setattr(crit_mod.CriticNode, "__call__", fake_critic)
+
+
+def _patch_tool_runtime(monkeypatch):
+    """mock ToolRuntime.execute，避免真实网络请求。"""
+    from app.graph.tool_runtime import ToolRuntime
+    from app.models.market import Status, ToolResult
+
+    async def fake_execute(self, tool_name, arguments, called_signatures):
+        return ToolResult(
+            tool=tool_name, arguments=arguments,
+            status=Status.SUCCESS.value, normalized=[], error=None,
+        )
+
+    monkeypatch.setattr(ToolRuntime, "execute", fake_execute)
+    monkeypatch.setattr(ToolRuntime, "truncate", lambda self, r: None)
+
+
+@pytest.mark.asyncio
+async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
+    """supervisor plan 含 technical 工具 → technical 执行，kernel 不执行。"""
+    from app.graph.builder import build_graph
+    from app.graph.nodes.kernel import KernelNode
+
+    plan_json = (
+        '{"intent":{"domain":"a_share","task":"market_summary",'
+        '"time_scope":"today","question":"测试"},'
+        '"steps":[{"tool_key":"sentiment","arguments":{},"purpose":"情绪"}]}'
+    )
+    _patch_supervisor_plan(monkeypatch, plan_json)
+    _patch_reasoning_and_critic(monkeypatch)
+    _patch_tool_runtime(monkeypatch)
+
+    kernel_calls: list = []
+    orig_kernel_call = KernelNode.__call__
+
+    async def tracked_kernel(self, state):
+        kernel_calls.append(True)
+        return await orig_kernel_call(self, state)
+
+    monkeypatch.setattr(KernelNode, "__call__", tracked_kernel)
+
+    graph = build_graph(Settings())
+    await graph.ainvoke({"question": "测试", "domain": "a_share"})
+
+    assert len(kernel_calls) == 0, "route 非空时 kernel 不应被调用"
+
+
+@pytest.mark.asyncio
+async def test_fanout_falls_back_to_kernel_when_route_empty(monkeypatch):
+    """supervisor plan steps 为空 → 只有 kernel 执行。"""
+    from app.graph.builder import build_graph
+    from app.graph.nodes.kernel import KernelNode
+
+    plan_json = (
+        '{"intent":{"domain":"a_share","task":"market_summary",'
+        '"time_scope":"today","question":"测试"},"steps":[]}'
+    )
+    _patch_supervisor_plan(monkeypatch, plan_json)
+    _patch_reasoning_and_critic(monkeypatch)
+    _patch_tool_runtime(monkeypatch)
+
+    kernel_calls: list = []
+
+    async def tracked_kernel(self, state):
+        kernel_calls.append(True)
+        return {"report": None, "results": [], "tool_results": [], "cache_stats": {}}
+
+    monkeypatch.setattr(KernelNode, "__call__", tracked_kernel)
+
+    graph = build_graph(Settings())
+    await graph.ainvoke({"question": "测试", "domain": "a_share"})
+
+    assert len(kernel_calls) == 1, "route 为空时应兜底执行 kernel 恰好 1 次"
