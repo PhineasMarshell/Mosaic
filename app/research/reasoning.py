@@ -145,12 +145,30 @@ class ReasoningEngine:
         results: list[ToolResult],
         evidence: list[Evidence],
         history_context: str = "",
+        findings: list | None = None,
     ) -> MarketIntelligence:
         normalized_data = [
             datum.model_dump()
             for result in results
             for datum in result.normalized
         ]
+
+        # 拼装 findings 段（放在 history_context 之前）
+        parts: list[str] = []
+        if findings:
+            lines = ["ANALYST SUMMARIES（各分析员中间结论，仅供交叉参考）:"]
+            for f in findings:
+                analyst = f.get("analyst") if isinstance(f, dict) else getattr(f, "analyst", "?")
+                digest = f.get("digest") if isinstance(f, dict) else getattr(f, "digest", "")
+                failed = f.get("failed") if isinstance(f, dict) else getattr(f, "failed", False)
+                if failed:
+                    lines.append(f"  - {analyst}: [失败] {digest}")
+                elif digest:
+                    lines.append(f"  - {analyst}: {digest}")
+            parts.append("\n".join(lines))
+        if history_context:
+            parts.append(history_context)
+        combined_context = "\n\n".join(parts)
 
         prompt = REASONING_PROMPT.format(
             question=question,
@@ -160,7 +178,7 @@ class ReasoningEngine:
                 ensure_ascii=False,
                 default=str,
             ),
-            history_context=history_context,
+            history_context=combined_context,
         )
 
         response = await self.client.chat.completions.create(

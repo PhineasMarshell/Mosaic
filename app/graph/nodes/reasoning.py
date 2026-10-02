@@ -78,6 +78,7 @@ class ReasoningNode:
                 results=results,
                 evidence=evidence,
                 history_context=self._build_revision_context(unsupported_claims),
+                findings=state.get("findings", []),
             )
 
             logger.info(

@@ -296,3 +296,172 @@ class TestEnsureList:
     def test_default_for_none(self):
         from app.research.reasoning import _ensure_list
         assert _ensure_list(None, default=["fallback"]) == ["fallback"]
+
+
+# ------------------------------------------------------------------ #
+# P2.5-4：Reasoning 消费 findings digest                                #
+# ------------------------------------------------------------------ #
+
+
+class TestReasoningFindingsInPrompt:
+    """findings 参数应被拼入 prompt 的 history_context 段。"""
+
+    @pytest.mark.asyncio
+    async def test_findings_appear_in_prompt(self, monkeypatch):
+        """传入 findings → mock 捕获的 prompt 包含 ANALYST SUMMARIES 和 digest 文本。"""
+        import types
+        from app.config import Settings
+        from app.research.reasoning import ReasoningEngine
+
+        captured_prompts: list[str] = []
+
+        class _FakeMessage:
+            content = (
+                '{"title":"t","market_state":"s","state_label":"sl",'
+                '"what_happened":"w","why":[],"strong_areas":[],"what_changed":"c",'
+                '"what_matters":[],"risks":[],"data_caveats":[],"confidence":"low",'
+                '"used_tools":[],"evidence":[]}'
+            )
+
+        class _FakeChoice:
+            message = _FakeMessage()
+
+        class _FakeResp:
+            choices = [_FakeChoice()]
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                for msg in kwargs.get("messages", []):
+                    if msg.get("role") == "user":
+                        captured_prompts.append(msg["content"])
+                return _FakeResp()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        settings = Settings()
+        engine = object.__new__(ReasoningEngine)
+        engine.settings = settings
+        engine.client = _FakeClient()
+
+        findings = [
+            {"analyst": "technical", "digest": "执行了 3 个工具, 3 成功", "failed": False},
+        ]
+
+        await engine.reason(
+            question="测试",
+            results=[],
+            evidence=[],
+            findings=findings,
+        )
+
+        assert len(captured_prompts) == 1
+        prompt = captured_prompts[0]
+        assert "ANALYST SUMMARIES" in prompt
+        assert "执行了 3 个工具, 3 成功" in prompt
+        assert "technical" in prompt
+
+    @pytest.mark.asyncio
+    async def test_no_findings_behavior_unchanged(self, monkeypatch):
+        """不传 findings → prompt 中不出现 ANALYST SUMMARIES，行为与旧版一致。"""
+        import types
+        from app.config import Settings
+        from app.research.reasoning import ReasoningEngine
+
+        captured_prompts: list[str] = []
+
+        class _FakeMessage:
+            content = (
+                '{"title":"t","market_state":"s","state_label":"sl",'
+                '"what_happened":"w","why":[],"strong_areas":[],"what_changed":"c",'
+                '"what_matters":[],"risks":[],"data_caveats":[],"confidence":"low",'
+                '"used_tools":[],"evidence":[]}'
+            )
+
+        class _FakeChoice:
+            message = _FakeMessage()
+
+        class _FakeResp:
+            choices = [_FakeChoice()]
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                for msg in kwargs.get("messages", []):
+                    if msg.get("role") == "user":
+                        captured_prompts.append(msg["content"])
+                return _FakeResp()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        settings = Settings()
+        engine = object.__new__(ReasoningEngine)
+        engine.settings = settings
+        engine.client = _FakeClient()
+
+        await engine.reason(question="测试", results=[], evidence=[])
+
+        assert len(captured_prompts) == 1
+        assert "ANALYST SUMMARIES" not in captured_prompts[0]
+
+    @pytest.mark.asyncio
+    async def test_failed_finding_marked_in_prompt(self, monkeypatch):
+        """failed=True 的 finding → prompt 中标记 [失败]。"""
+        import types
+        from app.config import Settings
+        from app.research.reasoning import ReasoningEngine
+
+        captured_prompts: list[str] = []
+
+        class _FakeMessage:
+            content = (
+                '{"title":"t","market_state":"s","state_label":"sl",'
+                '"what_happened":"w","why":[],"strong_areas":[],"what_changed":"c",'
+                '"what_matters":[],"risks":[],"data_caveats":[],"confidence":"low",'
+                '"used_tools":[],"evidence":[]}'
+            )
+
+        class _FakeChoice:
+            message = _FakeMessage()
+
+        class _FakeResp:
+            choices = [_FakeChoice()]
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                for msg in kwargs.get("messages", []):
+                    if msg.get("role") == "user":
+                        captured_prompts.append(msg["content"])
+                return _FakeResp()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        settings = Settings()
+        engine = object.__new__(ReasoningEngine)
+        engine.settings = settings
+        engine.client = _FakeClient()
+
+        findings = [
+            {"analyst": "fundamental", "digest": "分析失败: timeout", "failed": True},
+        ]
+
+        await engine.reason(
+            question="测试",
+            results=[],
+            evidence=[],
+            findings=findings,
+        )
+
+        prompt = captured_prompts[0]
+        assert "[失败]" in prompt
+        assert "分析失败: timeout" in prompt
