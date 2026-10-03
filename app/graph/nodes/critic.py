@@ -8,7 +8,6 @@
 P2 验收：Critic 条件边路由正确；打回重写的完整路径有测试。
 """
 
-import json
 import logging
 
 from openai import AsyncOpenAI
@@ -16,7 +15,6 @@ from pydantic import BaseModel
 
 from app.config import Settings
 from app.errors import LLMOutputError
-from app.graph.state import ResearchState
 from app.llm_json import parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -52,6 +50,13 @@ _DOMAIN_RULES = {
 }
 
 
+def _field(obj, key, default=None):
+    """从 dict 或对象读取字段 —— LangGraph 可能传入任一形式。"""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def _get_domain_rules(domain: str) -> str:
     return _DOMAIN_RULES.get(domain, "")
 
@@ -59,20 +64,19 @@ def _get_domain_rules(domain: str) -> str:
 def _format_report_for_review(report) -> str:
     """将报告格式化为人类可读的审查文本。"""
     parts = [
-        f"问题: {getattr(report, 'what_happened', 'N/A')[:200]}",
-        f"置信度: {getattr(report, 'confidence', 'N/A')}",
-        f"市场状态: {getattr(report, 'state_label', 'N/A')}",
+        f"问题: {str(_field(report, 'what_happened', 'N/A'))[:200]}",
+        f"置信度: {_field(report, 'confidence', 'N/A')}",
+        f"市场状态: {_field(report, 'state_label', 'N/A')}",
     ]
-    if hasattr(report, "strong_areas") and report.strong_areas:
-        parts.append(f"强势方向: {', '.join(report.strong_areas)}")
-    if hasattr(report, "risks") and report.risks:
-        parts.append(
-            "风险:\n" + "\n".join(f"  - {r}" for r in report.risks)
-        )
-    if hasattr(report, "why") and report.why:
-        parts.append(
-            "原因分析:\n" + "\n".join(f"  - {w}" for w in report.why)
-        )
+    strong_areas = _field(report, "strong_areas") or []
+    if strong_areas:
+        parts.append(f"强势方向: {', '.join(str(x) for x in strong_areas)}")
+    risks = _field(report, "risks") or []
+    if risks:
+        parts.append("风险:\n" + "\n".join(f"  - {r}" for r in risks))
+    why = _field(report, "why") or []
+    if why:
+        parts.append("原因分析:\n" + "\n".join(f"  - {w}" for w in why))
     return "\n".join(parts)
 
 
@@ -80,26 +84,22 @@ def _format_evidence_for_review(results, evidence, gate) -> str:
     """格式化证据用于审查。"""
     lines = ["=== 成功工具 ==="]
     if gate:
-        for t in gate.successful_tools:
+        for t in _field(gate, "successful_tools", []) or []:
             lines.append(f"  OK {t}")
-        for t in gate.partial_tools:
+        for t in _field(gate, "partial_tools", []) or []:
             lines.append(f"  ~ partial: {t}")
-        for err in gate.error_tools:
-            lines.append(f"  FAIL {err['tool']}: {err.get('error', '?')}")
+        for err in _field(gate, "error_tools", []) or []:
+            if isinstance(err, dict):
+                lines.append(f"  FAIL {err.get('tool')}: {err.get('error', '?')}")
+            else:
+                lines.append(f"  FAIL {getattr(err, 'tool', '?')}: {getattr(err, 'error', '?')}")
     lines.append("")
     # Add some normalize data summary (limited length to avoid prompt overflow)
-    for result in results[:20]:
-        if hasattr(result, "normalized"):
-            normalized = result.normalized[:10]
-        else:
-            normalized = result.get("normalized", [])[:10]
-        for datum in normalized:
-            if hasattr(datum, "metric"):
-                metric = datum.metric
-                value = str(datum.value)[:80]
-            else:
-                metric = datum.get("metric", "?")
-                value = str(datum.get("value", ""))[:80]
+    for result in (results or [])[:20]:
+        normalized = _field(result, "normalized", []) or []
+        for datum in normalized[:10]:
+            metric = _field(datum, "metric", "?")
+            value = str(_field(datum, "value", ""))[:80]
             lines.append(f"  - {metric}: {value}")
     return "\n".join(lines)
 
@@ -138,11 +138,7 @@ class CriticNode:
 
             # Build domain-aware review prompt
             intent = state.get("intent")
-            domain = "a_share"
-            if intent is not None:
-                domain = getattr(intent, "domain", None) or state.get("domain") or "a_share"
-            elif state.get("domain"):
-                domain = state.get("domain")
+            domain = _field(intent, "domain") or state.get("domain") or "a_share"
 
             rules = _get_domain_rules(domain)
 
@@ -159,20 +155,22 @@ class CriticNode:
             if rules:
                 prompt_pieces.extend(["\n=== 审查规则 ===\n", rules])
 
-            prompt_pieces.extend([
-                "\n\n请逐条审查报告中的核心论断是否有对应证据支撑。"
-                "注意：不要因为缺少理想数据就判 fail -- 看已有证据够不够回答用户问题。"
-                "\n\n必须只返回合法 JSON object。",
-                '{"verdict": "pass|revise|research_more", "reason": "...", '
-                '"missing_points": [...], "unsupported_claims": [...]}'
-            ])
+            prompt_pieces.extend(
+                [
+                    "\n\n请逐条审查报告中的核心论断是否有对应证据支撑。"
+                    "注意：不要因为缺少理想数据就判 fail -- 看已有证据够不够回答用户问题。"
+                    "\n\n必须只返回合法 JSON object。",
+                    '{"verdict": "pass|revise|research_more", "reason": "...", '
+                    '"missing_points": [...], "unsupported_claims": [...]}',
+                ]
+            )
 
             prompt = "\n".join(prompt_pieces)
 
             response = await self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 messages=[
-                    {"role": "system", "content": _CRITIC_SYSTEM_PROMPT},
+                    {"system": "你是 Mosaic 的 Critic，只返回合法 JSON。"},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},

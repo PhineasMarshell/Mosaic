@@ -14,15 +14,15 @@ build/
 .env
 .env.local
 
-# Mosaic memory storage (only applies if data directory is inside the project)
+# Mosaic runtime storage
+# SQLite database (and WAL/SHM sidecar files) is runtime state, not tracked.
+# Brief JSON files under memory/morning/ and memory/evening/ are kept under
+# version control as historical intelligence records.
 .mosaic_memory/
 mosaic_memory/
 memory/*.db
 memory/*.db-shm
-# memory/*.db-wal — SQLite WAL 二进制文件
-
-# 单个忽略的文档（整个 docs/ 仍纳入 git）
-docs/langgraph-refactor-plan.md
+memory/*.db-wal
 
 # IDE
 .vscode/

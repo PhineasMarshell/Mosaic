@@ -11,7 +11,6 @@ import logging
 
 from app.config import Settings
 from app.errors import LLMOutputError
-from app.graph.state import ResearchState
 from app.models.market import ToolResult
 from app.models.response import MarketIntelligence
 from app.research.reasoning import ReasoningEngine, _get_evidence_key
@@ -41,8 +40,12 @@ class ReasoningNode:
             # 准备 history context（Critic 打回时的缺口反馈）
             critique = state.get("critique")
             unsupported_claims = []
-            if critique and hasattr(critique, "unsupported_claims"):
-                unsupported_claims = list(critique.unsupported_claims) or []
+            if critique:
+                if isinstance(critique, dict):
+                    raw_claims = critique.get("unsupported_claims", [])
+                else:
+                    raw_claims = getattr(critique, "unsupported_claims", [])
+                unsupported_claims = list(raw_claims or [])
 
             question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
 
@@ -67,11 +70,10 @@ class ReasoningNode:
 
             results = state.get("results", [])
             # LangGraph reducer merge 将 ToolResult 序列化为 dict，需要转回
-            results: list[ToolResult] = [
-                ToolResult(**r) if isinstance(r, dict) else r for r in results
-            ]
+            results: list[ToolResult] = [ToolResult(**r) if isinstance(r, dict) else r for r in results]
             # 使用截断后的 evidence_items，并将 reducer 序列化产生的 dict 转回 Evidence
             from app.models.evidence import Evidence
+
             evidence = [Evidence(**e) if isinstance(e, dict) else e for e in evidence_items]
 
             # 调用推理引擎
@@ -89,9 +91,12 @@ class ReasoningNode:
                 state.get("revision_count", 0),
             )
 
+            # revision_count 只在"修订"（已存在上一轮 report）时递增，
+            # 使 critic_max_revisions 精确表示允许的修订次数，而非总执行次数。
+            is_revision = state.get("report") is not None
             return {
                 "report": report,
-                "revision_count": (state.get("revision_count") or 0) + 1,
+                "revision_count": (state.get("revision_count") or 0) + (1 if is_revision else 0),
             }
         except LLMOutputError as exc:
             logger.warning("Reasoning LLM output error: %s", exc)
