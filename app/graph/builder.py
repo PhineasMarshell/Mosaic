@@ -62,6 +62,10 @@ def critic_route_decision(state, settings: Settings) -> str:
         return "end"
 
     if verdict == "research_more":
+        # report 为 None 说明是 reasoning 引擎失败（非缺数据），
+        # 重新走 supervisor 无法解决，直接终止避免无限循环。
+        if not state.get("report"):
+            return "end"
         if revision_count < settings.critic_max_revisions:
             return "supervisor"
         return "end"

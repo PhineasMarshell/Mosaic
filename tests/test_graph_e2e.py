@@ -74,6 +74,28 @@ def mock_openai(monkeypatch):
 
     crit_mod.CriticNode.__init__ = patched_crit_init
 
+    # Patch Reasoning node — 返回固定 report，不调真实 LLM
+    from app.graph.nodes import reasoning as reason_mod
+    from app.models.response import MarketIntelligence
+
+    async def fake_reasoning_call(self, state):
+        if hasattr(state, "model_dump"):
+            state = state.model_dump(exclude_none=False)
+        report = MarketIntelligence(
+            market_state="neutral",
+            state_label="测试状态",
+            what_happened="测试：mock 报告",
+            confidence="medium",
+        )
+        is_revision = state.get("report") is not None
+        revision_count = state.get("revision_count") or 0
+        return {
+            "report": report,
+            "revision_count": revision_count + (1 if is_revision else 0),
+        }
+
+    monkeypatch.setattr(reason_mod.ReasoningNode, "__call__", fake_reasoning_call)
+
     yield
 
     sup_mod.SupervisorNode.__init__ = orig_sup_init

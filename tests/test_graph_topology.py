@@ -87,9 +87,25 @@ def test_critic_route_research_more_returns_to_supervisor():
     """research_more ≤ max_revisions → 回 supervisor；超限 → END。"""
     settings = Settings()
     critique = {"verdict": "research_more", "missing_points": ["m1"]}
+    # 正常 research_more 场景：report 已存在但缺数据
+    state_with_report = {"critique": critique, "revision_count": 0, "report": {"what_happened": "existing"}}
 
-    assert critic_route_decision({"critique": critique, "revision_count": 0}, settings) == "supervisor"
-    assert critic_route_decision({"critique": critique, "revision_count": 2}, settings) == "end"
+    assert critic_route_decision(state_with_report, settings) == "supervisor"
+    assert (
+        critic_route_decision(
+            {"critique": critique, "revision_count": 2, "report": {"what_happened": "x"}},
+            settings,
+        )
+        == "end"
+    )
+
+
+def test_critic_route_research_more_with_no_report_ends():
+    """report 为 None（reasoning 引擎失败）时 research_more 不应回 supervisor，直接终止防死循环。"""
+    settings = Settings()
+    critique = {"verdict": "research_more", "missing_points": ["m1"]}
+
+    assert critic_route_decision({"critique": critique, "revision_count": 0}, settings) == "end"
 
 
 # ------------------------------------------------------------------ #
