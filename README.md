@@ -428,7 +428,6 @@ Mosaic/
 │
 └── docs/
     ├── architecture.md        # 架构设计文档
-    ├── langgraph-refactor-plan.md # LangGraph 重构方案 + 实施记录
     ├── tools.md
     └── evaluation.md
 ```
