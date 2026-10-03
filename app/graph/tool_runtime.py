@@ -12,17 +12,16 @@ analyst 节点通过此层执行分配给自己的工具。
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from app.cache import _make_cache_key, _resolve_ttl, market_cache
 from app.config import Settings
 from app.gateway.http_client import MarketGatewayHttpClient
 from app.gateway.mcp_client import MarketGatewayClient
 from app.gateway.tool_registry import resolve_tool_by_name
-from app.models.market import NormalizedDatum, STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, Status, ToolResult
+from app.models.market import STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, NormalizedDatum, ToolResult
 from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
-from app.research.news_search import search_news as _search_news, extract_news_entries as _extract_news_entries
+from app.research.news_search import extract_news_entries as _extract_news_entries
+from app.research.news_search import search_news as _search_news
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +32,15 @@ def _normalize_hk_entries(hk_data: dict) -> list[NormalizedDatum]:
     for k, v in hk_data.items():
         if k.startswith("_"):
             continue
-        entries.append(NormalizedDatum(
-            source="eastmoney_kline_api",
-            tool=k,
-            metric=k,
-            value=v,
-            domain="hk_stock",
-        ))
+        entries.append(
+            NormalizedDatum(
+                source="eastmoney_kline_api",
+                tool=k,
+                metric=k,
+                value=v,
+                domain="hk_stock",
+            )
+        )
     return entries
 
 
@@ -56,8 +57,7 @@ class ToolRuntime:
     # 公共 API                                                            #
     # ------------------------------------------------------------------ #
 
-    async def execute(self, tool_name: str, arguments: dict,
-                      called_signatures: set[str]) -> ToolResult:
+    async def execute(self, tool_name: str, arguments: dict, called_signatures: set[str]) -> ToolResult:
         """执行单个工具调用。
 
         Args:
@@ -68,8 +68,6 @@ class ToolRuntime:
         Returns:
             ToolResult — 包含 normalized 数据、状态、错误信息
         """
-        signature = f"{tool_name}:{sorted(arguments.items())}"
-
         # 检查缓存命中
         cached = self._check_cache(tool_name, arguments, called_signatures)
         if cached is not None:
@@ -93,32 +91,37 @@ class ToolRuntime:
             return
         overflow_count = len(result.normalized) - 200
         result.normalized = result.normalized[:200]
-        result.normalized.append(NormalizedDatum(
-            source="truncation_note",
-            tool=result.tool,
-            metric="_truncated_count",
-            value=f"原始 {overflow_count + 200} 项，已截断至 200（保留最近 200）",
-            status=STATUS_PARTIAL,
-            partial=True,
-        ))
+        result.normalized.append(
+            NormalizedDatum(
+                source="truncation_note",
+                tool=result.tool,
+                metric="_truncated_count",
+                value=f"原始 {overflow_count + 200} 项，已截断至 200（保留最近 200）",
+                status=STATUS_PARTIAL,
+                partial=True,
+            )
+        )
 
     async def inject_hk_context(self, results: list[ToolResult]) -> None:
         """HK 域专属：注入北向资金 + 恒生指数行情（内部直连，不走 Gateway）。"""
         try:
             hk_data = await fetch_hk_context_data()
             filtered = {
-                k: v for k, v in hk_data.items()
+                k: v
+                for k, v in hk_data.items()
                 if not k.startswith("_")
                 and k in ("northbound", "sh_connect", "sz_connect", "hs_index", "hs_tech_index")
             }
             normalized = _normalize_hk_entries(filtered)
-            results.append(ToolResult(
-                tool="hk_northbound_daily",
-                arguments={},
-                status=STATUS_SUCCESS if normalized else STATUS_ERROR,
-                normalized=normalized,
-                error=None if normalized else "All HK context sources failed",
-            ))
+            results.append(
+                ToolResult(
+                    tool="hk_northbound_daily",
+                    arguments={},
+                    status=STATUS_SUCCESS if normalized else STATUS_ERROR,
+                    normalized=normalized,
+                    error=None if normalized else "All HK context sources failed",
+                )
+            )
             logger.info("HK context injected: %d entries from eastmoney", len(normalized))
         except Exception as exc:
             logger.warning("HK context injection failed (non-fatal): %s", exc)
@@ -131,7 +134,7 @@ class ToolRuntime:
         """单次工具调用的核心逻辑。"""
         # 内部工具直连（不走 Gateway）
         meta = resolve_tool_by_name(tool_name)
-        if getattr(meta, 'http_method', None) == "INTERNAL":
+        if getattr(meta, "http_method", None) == "INTERNAL":
             return await self._execute_internal(tool_name, arguments)
 
         gateway_cls = self._gateway_class()
@@ -179,17 +182,15 @@ class ToolRuntime:
         if mode == "http":
             return MarketGatewayHttpClient
         raise ValueError(
-            f"Unsupported MARKET_GATEWAY_MODE={self.settings.market_gateway_mode!r}; "
-            "expected 'mcp' or 'http'"
+            f"Unsupported MARKET_GATEWAY_MODE={self.settings.market_gateway_mode!r}; expected 'mcp' or 'http'"
         )
 
     def _http_allowed_tools(self):
         from app.gateway.tool_registry import ALL_TOOLS
+
         return ALL_TOOLS
 
-    async def _execute_internal(
-        self, tool_name: str, arguments: dict
-    ) -> ToolResult:
+    async def _execute_internal(self, tool_name: str, arguments: dict) -> ToolResult:
         """执行内部工具（不走 Gateway，直连外部 API）。"""
         if tool_name == "internal_hk_northbound":
             try:
@@ -219,9 +220,7 @@ class ToolRuntime:
                     "hs_index": data.get("hs_index", {}),
                     "hs_tech_index": data.get("hs_tech_index", {}),
                 }
-                normalized = _normalize_hk_entries({
-                    k: v for k, v in hs_data.items() if v
-                })
+                normalized = _normalize_hk_entries({k: v for k, v in hs_data.items() if v})
                 logger.info("Internal tool hk_index: fetched %d entries", len(normalized))
                 return ToolResult(
                     tool="hk_index_snapshot",
@@ -255,7 +254,8 @@ class ToolRuntime:
                 meta = raw.get("meta", {})
                 logger.info(
                     "Internal tool news_search: fetched %d entries (status=%s)",
-                    len(normalized), meta.get("status", ""),
+                    len(normalized),
+                    meta.get("status", ""),
                 )
                 status = STATUS_SUCCESS if raw.get("news") else STATUS_ERROR
                 result = ToolResult(

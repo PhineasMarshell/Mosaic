@@ -15,6 +15,6 @@ async def test_http_mode_requires_api_key():
 
     try:
         await client.__aenter__()
-        assert False, "Should have raised RuntimeError"
+        raise AssertionError("Should have raised RuntimeError")
     except RuntimeError as e:
         assert "MARKET_GATEWAY_API_KEY" in str(e)

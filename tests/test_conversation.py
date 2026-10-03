@@ -8,7 +8,6 @@ Coverage:
 - Prompt-injectable format is correct
 """
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -47,10 +46,12 @@ class TestSaveTurn:
         assert idx == 1
         row = memory.conn.execute(
             "SELECT conversation_id, question, answer_summary FROM conversations WHERE id = ?",
-            (memory.conn.execute(
-                "SELECT id FROM conversations WHERE conversation_id = ? AND turn_index = ?",
-                ("test-conv-1", 1),
-            ).fetchone()[0],),
+            (
+                memory.conn.execute(
+                    "SELECT id FROM conversations WHERE conversation_id = ? AND turn_index = ?",
+                    ("test-conv-1", 1),
+                ).fetchone()[0],
+            ),
         ).fetchone()
         assert row is not None
         assert row[1] == "今天A股发生了什么？"
@@ -59,10 +60,12 @@ class TestSaveTurn:
             question="第一问",
             answer_summary="回答一",
         )
-        rows = list(memory.conn.execute(
-            "SELECT turn_index, question, answer_summary, created_at FROM conversations WHERE conversation_id = ? ORDER BY turn_index",
-            ("test-conv-2",),
-        ).fetchall())
+        rows = list(
+            memory.conn.execute(
+                "SELECT turn_index, question, answer_summary, created_at FROM conversations WHERE conversation_id = ? ORDER BY turn_index",
+                ("test-conv-2",),
+            ).fetchall()
+        )
         assert len(rows) == 1
         assert rows[0][0] == 1
         assert rows[0][1] == "第一问"
@@ -74,10 +77,12 @@ class TestSaveTurn:
         memory.save_turn("test-conv-3", "Q2", "A2")
         memory.save_turn("test-conv-3", "Q3", "A3")
 
-        rows = list(memory.conn.execute(
-            "SELECT turn_index FROM conversations WHERE conversation_id = ? ORDER BY turn_index",
-            ("test-conv-3",),
-        ).fetchall())
+        rows = list(
+            memory.conn.execute(
+                "SELECT turn_index FROM conversations WHERE conversation_id = ? ORDER BY turn_index",
+                ("test-conv-3",),
+            ).fetchall()
+        )
         indices = [r[0] for r in rows]
         assert indices == [1, 2, 3]
 
@@ -85,14 +90,18 @@ class TestSaveTurn:
         memory.save_turn("conv-a", "A问", "A答")
         memory.save_turn("conv-b", "B问", "B答")
 
-        rows_a = list(memory.conn.execute(
-            "SELECT question FROM conversations WHERE conversation_id = ?",
-            ("conv-a",),
-        ).fetchall())
-        rows_b = list(memory.conn.execute(
-            "SELECT question FROM conversations WHERE conversation_id = ?",
-            ("conv-b",),
-        ).fetchall())
+        rows_a = list(
+            memory.conn.execute(
+                "SELECT question FROM conversations WHERE conversation_id = ?",
+                ("conv-a",),
+            ).fetchall()
+        )
+        rows_b = list(
+            memory.conn.execute(
+                "SELECT question FROM conversations WHERE conversation_id = ?",
+                ("conv-b",),
+            ).fetchall()
+        )
         assert len(rows_a) == 1 and rows_a[0][0] == "A问"
         assert len(rows_b) == 1 and rows_b[0][0] == "B问"
 
@@ -117,7 +126,7 @@ class TestGetConversationHistory:
     def test_last_n_truncation(self, memory):
         # Create 5 turns
         for i in range(5):
-            memory.save_turn("trunc-test", f"Question {i+1}", f"Answer {i+1}")
+            memory.save_turn("trunc-test", f"Question {i + 1}", f"Answer {i + 1}")
 
         full = memory.get_conversation_history("trunc-test")
         assert "Q5:" in full  # All 5 visible
@@ -172,6 +181,7 @@ class TestDatabaseSetup:
             mem.conn.close()
         finally:
             import shutil
+
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_tables_exist(self):
@@ -180,7 +190,8 @@ class TestDatabaseSetup:
             db_path = Path(tmp) / "memory.db"
             mem = MarketMemory(db_path=db_path)
             tables = [
-                row[0] for row in mem.conn.execute(
+                row[0]
+                for row in mem.conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                 ).fetchall()
             ]
@@ -192,4 +203,5 @@ class TestDatabaseSetup:
             mem.conn.close()
         finally:
             import shutil
+
             shutil.rmtree(tmp, ignore_errors=True)

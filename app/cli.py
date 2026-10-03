@@ -16,14 +16,14 @@ import sys
 
 from app.agent.orchestrator import Orchestrator
 from app.config import get_settings
-from app.logging_config import HumanFormatter, setup_logging
+from app.logging_config import setup_logging
 
 
 def _strip_evidence_tags(text: str) -> str:
     """清理文本中的 [evidence-xxx] 标签。"""
     if not isinstance(text, str):
         return text
-    return re.sub(r'\[evidence-\d+(?:~\d+)?\]', '', text).rstrip()
+    return re.sub(r"\[evidence-\d+(?:~\d+)?\]", "", text).rstrip()
 
 
 def _clean_text_fields(report: dict) -> dict:
@@ -86,7 +86,9 @@ def render_report(report: dict, question: str) -> str:
                 parts.append(note)
             else:
                 parts.append(f"via {source}")
-            lines.append(f"- {' '.join(parts)} — `{json.dumps(e.get('value', ''), ensure_ascii=False, default=str)[:120]}`")
+            lines.append(
+                f"- {' '.join(parts)} — `{json.dumps(e.get('value', ''), ensure_ascii=False, default=str)[:120]}`"
+            )
         lines.append("")
 
     # Strong Areas
@@ -176,7 +178,9 @@ async def main(question: str | None = None) -> None:
         # 显示缓存统计
         if result.cache_stats:
             stats = result.cache_stats
-            print(f"\n[Cache: {stats.get('hits', 0)} hits / {stats.get('misses', 0)} misses ({stats.get('hit_rate_pct', 0)}%)]")
+            print(
+                f"\n[Cache: {stats.get('hits', 0)} hits / {stats.get('misses', 0)} misses ({stats.get('hit_rate_pct', 0)}%)]"
+            )
             print()
 
         print(rendered)

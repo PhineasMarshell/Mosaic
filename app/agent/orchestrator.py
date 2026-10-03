@@ -3,8 +3,6 @@
 公开签名：question/domain/conversation_id → ResearchResponse。
 """
 
-from openai import AsyncOpenAI
-
 from app.config import Settings
 from app.graph.builder import build_graph
 from app.graph.state import ResearchState
@@ -24,7 +22,9 @@ class Orchestrator:
         return self._graph
 
     async def run(
-        self, question: str, domain: MarketDomain | None = None,
+        self,
+        question: str,
+        domain: MarketDomain | None = None,
         conversation_id: str | None = None,
     ) -> ResearchResponse:
         """运行研究调查。

@@ -15,16 +15,19 @@ class TestDDGSAvailability:
 
     def test_ddgs_available_returns_bool(self):
         from app.research.news_search import _ddgs_available
+
         result = _ddgs_available()
         assert isinstance(result, bool)
 
     def test_ddgs_import_succeeds(self):
         from app.research.news_search import DDGS
+
         assert DDGS is not None
 
     def test_ddgs_available_true(self):
         """ddgs 应在测试环境中可用（已 pip install）。"""
         from app.research.news_search import _ddgs_available
+
         assert _ddgs_available() is True
 
 
@@ -34,6 +37,7 @@ class TestSyncSearch:
     def test_empty_result_structure(self):
         """即使请求失败，也应返回标准结构。"""
         from app.research.news_search import _do_news_search
+
         # 故意使用可能触发错误的查询来测错误路径
         result = _do_news_search("nonexistent_query_xyz", max_results=2)
         assert isinstance(result, dict)
@@ -44,6 +48,7 @@ class TestSyncSearch:
 
     def test_meta_has_required_fields(self):
         from app.research.news_search import _do_news_search
+
         result = _do_news_search("test query", max_results=3, time_limit="w")
         meta = result["meta"]
         assert meta["query"] == "test query"
@@ -54,6 +59,7 @@ class TestSyncSearch:
     def test_error_path_no_crash(self):
         """网络不可用时不应抛异常，而是返回 error 字段。"""
         from app.research.news_search import _do_news_search
+
         result = _do_news_search("rapid_rapid_test", max_results=1)
         # 无论成功或失败，结构都合法
         assert "meta" in result
@@ -69,6 +75,7 @@ class TestAsyncWrapper:
     async def test_search_news_is_coroutine(self):
         """async search_news 应能被 await。"""
         from app.research.news_search import search_news
+
         # 即使失败也应该返回而不是抛异常
         result = await search_news("async_test", max_results=1)
         assert isinstance(result, dict)
@@ -82,13 +89,16 @@ class TestNewsSearchCache:
     async def test_same_args_hits_cache(self, monkeypatch):
         """同一参数连续两次 execute，底层 _search_news 只被调 1 次。"""
         from unittest.mock import AsyncMock
-        from app.graph.tool_runtime import ToolRuntime
-        from app.config import Settings
 
-        fake = AsyncMock(return_value={
-            "meta": {"count": 1, "status": "ok"},
-            "news": [{"title": "cache_hit_test", "body": "x"}],
-        })
+        from app.config import Settings
+        from app.graph.tool_runtime import ToolRuntime
+
+        fake = AsyncMock(
+            return_value={
+                "meta": {"count": 1, "status": "ok"},
+                "news": [{"title": "cache_hit_test", "body": "x"}],
+            }
+        )
         monkeypatch.setattr("app.graph.tool_runtime._search_news", fake)
 
         runtime = ToolRuntime(Settings())
@@ -103,13 +113,16 @@ class TestNewsSearchCache:
     async def test_different_args_bypasses_cache(self, monkeypatch):
         """不同参数不命中缓存，底层 _search_news 被调 2 次。"""
         from unittest.mock import AsyncMock
-        from app.graph.tool_runtime import ToolRuntime
-        from app.config import Settings
 
-        fake = AsyncMock(return_value={
-            "meta": {"count": 1, "status": "ok"},
-            "news": [{"title": "cache_miss_test", "body": "y"}],
-        })
+        from app.config import Settings
+        from app.graph.tool_runtime import ToolRuntime
+
+        fake = AsyncMock(
+            return_value={
+                "meta": {"count": 1, "status": "ok"},
+                "news": [{"title": "cache_miss_test", "body": "y"}],
+            }
+        )
         monkeypatch.setattr("app.graph.tool_runtime._search_news", fake)
 
         runtime = ToolRuntime(Settings())

@@ -8,14 +8,13 @@
 - set_enabled_domains 动态生效
 """
 
-import asyncio
 import types
 
 import pytest
 
 from app.config import Settings
 from app.errors import LLMOutputError
-from app.graph.nodes.supervisor import SupervisorNode, _ENABLED_DOMAINS, set_enabled_domains
+from app.graph.nodes.supervisor import SupervisorNode, set_enabled_domains
 from app.graph.state import ResearchState
 from app.models.research import DEFAULT_DOMAINS
 
@@ -62,7 +61,8 @@ def _patch_client(node: SupervisorNode, openai_mock: FakeOpenAI) -> None:
 @pytest.mark.asyncio
 async def test_supervisor_returns_intent_on_success():
     """LLM 正常返回 plan JSON → state 含 intent。"""
-    openai = FakeOpenAI(return_text="""{
+    openai = FakeOpenAI(
+        return_text="""{
         "intent": {
             "domain": "a_share",
             "task": "market_diagnosis",
@@ -73,7 +73,8 @@ async def test_supervisor_returns_intent_on_success():
             {"tool_key": "overview", "arguments": {}, "purpose": "看概览"},
             {"tool_key": "sentiment", "arguments": {}, "purpose": "看情绪"}
         ]
-    }""")
+    }"""
+    )
 
     settings = Settings()
     node = SupervisorNode(settings)
@@ -104,7 +105,8 @@ async def test_supervisor_handles_llm_error_gracefully():
 @pytest.mark.asyncio
 async def test_supervisor_domain_override():
     """显式 domain 应覆盖 planner 的判断。"""
-    openai = FakeOpenAI(return_text="""{
+    openai = FakeOpenAI(
+        return_text="""{
         "intent": {
             "domain": "crypto",
             "task": "market_summary",
@@ -112,7 +114,8 @@ async def test_supervisor_domain_override():
             "question": "看看行情"
         },
         "steps": []
-    }""")
+    }"""
+    )
 
     settings = Settings()
     node = SupervisorNode(settings)
@@ -125,11 +128,9 @@ async def test_supervisor_domain_override():
 @pytest.mark.asyncio
 async def test_supervisor_step_limit():
     """步骤数不应超过 max_research_steps。"""
-    steps_json = "[" + ",".join(
-        '{"tool_key":"t%s","arguments":{},"purpose":"p%s"}' % (i, i) for i in range(50)
-    ) + "]"
+    steps_json = "[" + ",".join(f'{{"tool_key":"t{i}","arguments":{{}},"purpose":"p{i}"}}' for i in range(50)) + "]"
     intent_json = '{"domain":"a_share","task":"market_diagnosis","time_scope":"today","question":"x"}'
-    openai = FakeOpenAI(return_text='{"intent":%s,"steps":%s}' % (intent_json, steps_json))
+    openai = FakeOpenAI(return_text=f'{{"intent":{intent_json},"steps":{steps_json}}}')
 
     settings = Settings(max_research_steps=8)
     node = SupervisorNode(settings)
@@ -166,6 +167,7 @@ def test_set_enabled_domains():
     set_enabled_domains(["a_share", "crypto"])
     try:
         from app.graph.nodes.supervisor import _ENABLED_DOMAINS as current
+
         assert "a_share" in current
         assert "us_stock" not in current
     finally:
@@ -181,7 +183,8 @@ def test_set_enabled_domains():
 async def test_supervisor_route_groups_by_category():
     """plan 含 technical / fundamental / moneyflow 三类 steps → route 分 3 组，
     每组 analyst 正确、budget == len(tool_calls)。"""
-    openai = FakeOpenAI(return_text="""{
+    openai = FakeOpenAI(
+        return_text="""{
         "intent": {
             "domain": "a_share",
             "task": "market_diagnosis",
@@ -193,7 +196,8 @@ async def test_supervisor_route_groups_by_category():
             {"tool_key": "overview", "arguments": {}, "purpose": "看概览"},
             {"tool_key": "longhu", "arguments": {}, "purpose": "看资金"}
         ]
-    }""")
+    }"""
+    )
 
     settings = Settings()
     node = SupervisorNode(settings)
@@ -220,7 +224,8 @@ async def test_supervisor_route_groups_by_category():
 @pytest.mark.asyncio
 async def test_supervisor_route_empty_steps():
     """plan steps 为空 → route == []。"""
-    openai = FakeOpenAI(return_text="""{
+    openai = FakeOpenAI(
+        return_text="""{
         "intent": {
             "domain": "a_share",
             "task": "market_summary",
@@ -228,7 +233,8 @@ async def test_supervisor_route_empty_steps():
             "question": "看看行情"
         },
         "steps": []
-    }""")
+    }"""
+    )
 
     settings = Settings()
     node = SupervisorNode(settings)

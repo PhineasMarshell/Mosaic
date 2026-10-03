@@ -7,9 +7,9 @@
 存储路径：<项目根>/memory/memory.db
 """
 
-from datetime import UTC, datetime
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection as SQLite3Connection
 from typing import Any, final
@@ -141,9 +141,7 @@ class MarketMemory:
         data.setdefault("_version", "0.1")
 
         # Read existing to merge (single round-trip)
-        existing = self.conn.execute(
-            "SELECT data FROM daily_states WHERE date = ?", (date,)
-        ).fetchone()
+        existing = self.conn.execute("SELECT data FROM daily_states WHERE date = ?", (date,)).fetchone()
 
         if existing and existing[0]:
             try:
@@ -169,9 +167,7 @@ class MarketMemory:
     def get_daily_state(self, date: str | None = None) -> dict[str, Any] | None:
         """读取指定日期的 Market State。"""
         date = date or self._today()
-        row = self.conn.execute(
-            "SELECT data FROM daily_states WHERE date = ?", (date,)
-        ).fetchone()
+        row = self.conn.execute("SELECT data FROM daily_states WHERE date = ?", (date,)).fetchone()
         if row is None:
             return None
         try:
@@ -248,10 +244,7 @@ class MarketMemory:
                 (limit,),
             ).fetchall()
 
-        return [
-            {"_source_date": date_str, **json.loads(data_json)}
-            for date_str, data_json in rows
-        ]
+        return [{"_source_date": date_str, **json.loads(data_json)} for date_str, data_json in rows]
 
     # ── Research History ──────────────────────
 
@@ -333,7 +326,7 @@ class MarketMemory:
         if not states:
             return ""
 
-        lines = ["--- 过去 {} 天 Market State 快照 ---".format(len(states))]
+        lines = [f"--- 过去 {len(states)} 天 Market State 快照 ---"]
         for s in states[:8]:
             date = s.get("_file_date", "?")
             a_state = s.get("a_share_state", s.get("a-share", s.get("aShare")))

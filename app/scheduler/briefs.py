@@ -13,7 +13,8 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime, time as dt_time
+from datetime import UTC, datetime
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 def _next_run(target_time: dt_time) -> int:
     """计算距离下次目标时间（秒）。"""
-    now = datetime.now(UTC).time()
     target = dt_time(target_time.hour, target_time.minute)
     diff = (datetime.combine(datetime.today(), target) - datetime.now().replace(tzinfo=UTC)).total_seconds()
     if diff <= 0:
@@ -97,6 +97,7 @@ async def _run_scheduler(morning_fn, evening_fn):
 
 
 # ── Brief Generators ──────────────────────
+
 
 def _legacy_items_from_memory(memory, brief_type: str = "morning") -> list[str]:
     """图失败时的 memory 模板兜底（P5 前的旧逻辑，按 brief_type 分支）。"""
@@ -276,4 +277,4 @@ def stop_brief_scheduler() -> bool:
 
 def is_running() -> bool:
     """检查调度器是否正在运行。"""
-    return (_scheduler_task is not None and not _scheduler_task.done())
+    return _scheduler_task is not None and not _scheduler_task.done()

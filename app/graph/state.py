@@ -4,10 +4,8 @@
 不依赖外部传入参数（除了通过 ainvoke 传入的初始 state）。
 """
 
-from typing import Annotated, Any, Literal, Optional
-
 from operator import add
-from typing import Callable
+from typing import Annotated, Any, Literal
 
 
 def _merge_dicts(a: dict, b: dict) -> dict:
@@ -15,11 +13,9 @@ def _merge_dicts(a: dict, b: dict) -> dict:
     merged = dict(a)
     merged.update(b)
     return merged
+
+
 from pydantic import BaseModel
-
-from app.models.evidence import Evidence
-from app.models.market import NormalizedDatum
-
 
 # ------------------------------------------------------------------ #
 # 分析员角色名 — technical/fundamental/moneyflow + 可选 news/sentiment #
@@ -40,29 +36,29 @@ class ResearchState(BaseModel):
 
     # ── 输入（由 orchestrator 初始化）──
     question: str
-    conversation_id: Optional[str] = None
-    domain: Optional[str] = None
+    conversation_id: str | None = None
+    domain: str | None = None
 
     # ── Supervisor 产出 ──
-    intent: Optional[object] = None
+    intent: object | None = None
     #: Supervisor 产出的按 analyst 分组的工具分配（P2.5-3）
-    route: list = []     # list[AnalystAssignment]，不加 reducer —— research_more 回环时整体覆盖
+    route: list = []  # list[AnalystAssignment]，不加 reducer —— research_more 回环时整体覆盖
 
     # ── analyst 产出（P3：三节点 Send 并行）──
-    report: Optional[object] = None
+    report: object | None = None
     #: ToolResult[] — gate / reasoning 读取的原始结果（reducer 合并三节点输出）
     results: Annotated[list[object], add] = []
     tool_results: Annotated[list[object], add] = []
     cache_stats: Annotated[dict[str, int], _merge_dicts] = {}
 
     # ── Evidence Gate ──
-    gate: Optional[object] = None     # EvidenceGateResult
+    gate: object | None = None  # EvidenceGateResult
 
     # ── Critic ──
-    critique: Optional[object] = None # Critique from critic.py
-    revision_count: int = 0           # 修订轮次计数器
+    critique: object | None = None  # Critique from critic.py
+    revision_count: int = 0  # 修订轮次计数器
 
     # ── 并行写入字段（必须 reducer）──
     evidence: Annotated[list[Any], add] = []  # NormalizedDatum or Evidence
-    findings: Annotated[list, add] = []     # AnalystFinding
+    findings: Annotated[list, add] = []  # AnalystFinding
     errors: Annotated[list[str], add] = []

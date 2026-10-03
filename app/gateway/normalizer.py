@@ -30,9 +30,8 @@
 
 from typing import Any
 
-from app.gateway.tool_registry import BY_NAME, resolve_tool_by_name
+from app.gateway.tool_registry import resolve_tool_by_name
 from app.models.market import NormalizedDatum, Status, ToolResult
-
 
 # ------------------------------------------------------------------ #
 # 域名推断规则                                                         #
@@ -41,32 +40,73 @@ from app.models.market import NormalizedDatum, Status, ToolResult
 #: 启发式域名判断 — 根据关键词匹配域名
 _DOMAIN_HINTS: dict[str, list[str]] = {
     "a_share": [
-        "ashare", "xueqiu", "tencent", "eastmoney",
-        "limit_up", "limit-up", "longhu",
-        "concept", "shareholders",
+        "ashare",
+        "xueqiu",
+        "tencent",
+        "eastmoney",
+        "limit_up",
+        "limit-up",
+        "longhu",
+        "concept",
+        "shareholders",
     ],
     "crypto": [
-        "market", "coinglass", "hyperliquid",
-        "klines", "snapshot", "derivatives",
-        "funding_rate", "liquidation", "liqmap",
-        "top_position", "user_count", "vaults",
+        "market",
+        "coinglass",
+        "hyperliquid",
+        "klines",
+        "snapshot",
+        "derivatives",
+        "funding_rate",
+        "liquidation",
+        "liqmap",
+        "top_position",
+        "user_count",
+        "vaults",
     ],
     "hk_stock": [
-        "hk_stock", "hkex", "hang_seng", "hs300",
-        "southbound", "northbound", "stock_connect",
+        "hk_stock",
+        "hkex",
+        "hang_seng",
+        "hs300",
+        "southbound",
+        "northbound",
+        "stock_connect",
     ],
     "us_stock": [
-        "yahoo", "finnhub", "alphavantage", "polygon",
-        "us_market", "nasdaq", "nyse", "wall_street",
+        "yahoo",
+        "finnhub",
+        "alphavantage",
+        "polygon",
+        "us_market",
+        "nasdaq",
+        "nyse",
+        "wall_street",
     ],
     "commodities": [
-        "gold", "silver", "copper", "crude", "oil",
-        "iron_ore", "soybean", "corn", "wheat",
-        "aluminum", "zinc", "nickel", "commodity",
+        "gold",
+        "silver",
+        "copper",
+        "crude",
+        "oil",
+        "iron_ore",
+        "soybean",
+        "corn",
+        "wheat",
+        "aluminum",
+        "zinc",
+        "nickel",
+        "commodity",
     ],
     "macro": [
-        "macro", "cpi", "fed", "gdp", "treasury",
-        "yield", "inflation", "unemployment",
+        "macro",
+        "cpi",
+        "fed",
+        "gdp",
+        "treasury",
+        "yield",
+        "inflation",
+        "unemployment",
     ],
 }
 
@@ -110,8 +150,12 @@ _LIST_CAP = 50
 #: 当成当前值。实测 90 天日线只保留前 50 根时，"最新收盘"比真实值低 21%。
 _SERIES_KEYS = {"candles", "candle", "hqdata", "klines", "kline", "series"}
 _SERIES_TOOL_HINTS = (
-    "klines", "window", "derivatives_history",
-    "user_count", "sentiment", "abnormal_reasons",
+    "klines",
+    "window",
+    "derivatives_history",
+    "user_count",
+    "sentiment",
+    "abnormal_reasons",
 )
 # 刻意**不含** timeline / trades（新→旧的信息流，头部才是最新）、
 # limit_up_pool / overview / top_position（排行榜或名单，头部最相关）。
@@ -251,9 +295,7 @@ def _extract_f10_list_items(obj, parent_path, result, *, _tool, _domain, _status
     if not isinstance(obj, list):
         return
 
-    _items, _start = _slice_list(
-        parent_path.rsplit(".", 1)[-1] if parent_path else None, obj, _tool
-    )
+    _items, _start = _slice_list(parent_path.rsplit(".", 1)[-1] if parent_path else None, obj, _tool)
     for i, item in enumerate(_items, _start):
         if not isinstance(item, dict):
             continue
@@ -262,26 +304,46 @@ def _extract_f10_list_items(obj, parent_path, result, *, _tool, _domain, _status
         for k, v in item.items():
             if k in ("name", "symbol", "code", "holder_name", "company_name", "industry", "sector"):
                 if v is not None:
-                    result.append(NormalizedDatum(
-                        domain=_domain, metric=f"{path}.{k}", value=v,
-                        tool=_tool, status=_status, partial=_partial,
-                        timestamp=_timestamp, source=_source,
-                    ))
+                    result.append(
+                        NormalizedDatum(
+                            domain=_domain,
+                            metric=f"{path}.{k}",
+                            value=v,
+                            tool=_tool,
+                            status=_status,
+                            partial=_partial,
+                            timestamp=_timestamp,
+                            source=_source,
+                        )
+                    )
             # 提取数值类字段
             elif k.lower() in ("value", "val", "amount", "count", "pct", "percentage", "shares", "holding_pct"):
                 flattened = _deep_flatten_value(v)
                 if isinstance(flattened, (int, float)):
-                    result.append(NormalizedDatum(
-                        domain=_domain, metric=f"{path}.{k}", value=flattened,
-                        tool=_tool, status=_status, partial=_partial,
-                        timestamp=_timestamp, source=_source,
-                    ))
+                    result.append(
+                        NormalizedDatum(
+                            domain=_domain,
+                            metric=f"{path}.{k}",
+                            value=flattened,
+                            tool=_tool,
+                            status=_status,
+                            partial=_partial,
+                            timestamp=_timestamp,
+                            source=_source,
+                        )
+                    )
             # 递归处理嵌套的 dict/list
             elif isinstance(v, (dict, list)):
                 _extract_metrics(
-                    v, parent_path=f"{path}.{k}", result=result,
-                    _tool=_tool, _domain=_domain, _status=_status,
-                    _partial=_partial, _timestamp=_timestamp, _source=_source,
+                    v,
+                    parent_path=f"{path}.{k}",
+                    result=result,
+                    _tool=_tool,
+                    _domain=_domain,
+                    _status=_status,
+                    _partial=_partial,
+                    _timestamp=_timestamp,
+                    _source=_source,
                 )
 
 
@@ -304,8 +366,7 @@ def find_timestamp(obj: dict[str, Any]) -> str | None:
     # 检查常见嵌套结构中的时间戳
     for container_key in ("meta", "info", "header"):
         if container_key in obj and isinstance(obj[container_key], dict):
-            ts = (obj[container_key].get("timestamp")
-                  or obj[container_key].get("time"))
+            ts = obj[container_key].get("timestamp") or obj[container_key].get("time")
             if ts is not None:
                 return str(ts)
 
@@ -335,35 +396,110 @@ def is_container_key(key: str) -> bool:
 
 #: Crypto 高价值指标特征词 — 用于生成有意义的指标名
 _CRYPTO_METRICS = {
-    "openInterest", "oi", "open_interest", "totalPositionValue",
-    "fundingRate", "funding_rate", "premium", "indexPrice",
-    "markPrice", "lastPrice", "price",
-    "longShortRatio", "long_short_ratio", "topTraderLongShortRatio",
-    "longAccountNum", "shortAccountNum",
-    "liquidation", "liq", "totalLiqValue",
+    "openInterest",
+    "oi",
+    "open_interest",
+    "totalPositionValue",
+    "fundingRate",
+    "funding_rate",
+    "premium",
+    "indexPrice",
+    "markPrice",
+    "lastPrice",
+    "price",
+    "longShortRatio",
+    "long_short_ratio",
+    "topTraderLongShortRatio",
+    "longAccountNum",
+    "shortAccountNum",
+    "liquidation",
+    "liq",
+    "totalLiqValue",
 }
 
 _ASHARE_METRICS = {
-    "涨停", "跌停", "涨停家数", "跌停家数", "上涨", "下跌",
-    "情绪", "sentiment", "两融余额", "融资余额", "融券余量",
-    "成交额", "成交量", "换手率", "市盈率", "市净率",
+    "涨停",
+    "跌停",
+    "涨停家数",
+    "跌停家数",
+    "上涨",
+    "下跌",
+    "情绪",
+    "sentiment",
+    "两融余额",
+    "融资余额",
+    "融券余量",
+    "成交额",
+    "成交量",
+    "换手率",
+    "市盈率",
+    "市净率",
     # F10 财务指标
-    "ROE", "ROA", "ROIC", "营收", "收入", "revenue", "收入总额",
-    "净利润", "net_profit", "净利润率", "毛利率", "净利率",
-    "资产负债率", "负债率", "debt_ratio", "权益乘数",
-    "现金流", "经营现金流", "自由现金流", "fcf",
-    "每股收益", "eps", "每股净资产", "bvps",
-    "股息率", "dividend_yield", "派息", "分红",
-    "净资产", "net_assets", "总资产", "total_assets", "所有者权益",
-    "增长率", "营收增长", "利润增长", "growth",
-    "PB", "PE", "PS", "EV/EBITDA", "EV", "FCF_yield",
-    "分红率", "派息率", "payout_ratio",
-    "扣非净利润", "营业总收入", "归母净利润",
-    "每股经营现金流", "每股经营现金", "经营活动现金流",
-    "股东权益", "总股本", "流通股本", "流通市值", "总市值", "marketcap",
-    "总股本", "shares_outstanding", "free_float",
-    "roe_yoy", "net_profit_yoy", "revenue_yoy",
-    "经营现金流", "经营性现金流", "经营性现金流净额",
+    "ROE",
+    "ROA",
+    "ROIC",
+    "营收",
+    "收入",
+    "revenue",
+    "收入总额",
+    "净利润",
+    "net_profit",
+    "净利润率",
+    "毛利率",
+    "净利率",
+    "资产负债率",
+    "负债率",
+    "debt_ratio",
+    "权益乘数",
+    "现金流",
+    "经营现金流",
+    "自由现金流",
+    "fcf",
+    "每股收益",
+    "eps",
+    "每股净资产",
+    "bvps",
+    "股息率",
+    "dividend_yield",
+    "派息",
+    "分红",
+    "净资产",
+    "net_assets",
+    "总资产",
+    "total_assets",
+    "所有者权益",
+    "增长率",
+    "营收增长",
+    "利润增长",
+    "growth",
+    "PB",
+    "PE",
+    "PS",
+    "EV/EBITDA",
+    "EV",
+    "FCF_yield",
+    "分红率",
+    "派息率",
+    "payout_ratio",
+    "扣非净利润",
+    "营业总收入",
+    "归母净利润",
+    "每股经营现金流",
+    "每股经营现金",
+    "经营活动现金流",
+    "股东权益",
+    "总股本",
+    "流通股本",
+    "流通市值",
+    "总市值",
+    "marketcap",
+    "shares_outstanding",
+    "free_float",
+    "roe_yoy",
+    "net_profit_yoy",
+    "revenue_yoy",
+    "经营性现金流",
+    "经营性现金流净额",
 }
 
 
@@ -411,13 +547,6 @@ def _extract_metrics(
         )
 
     if isinstance(obj, dict):
-        # Crypto: 尝试提取 instrument/symbol
-        instrument = None
-        for sym_key in ("symbol", "Symbol", "instrument", "coin", "pair"):
-            if sym_key in obj and isinstance(obj[sym_key], str):
-                instrument = obj[sym_key]
-                break
-
         for key, value in obj.items():
             path = f"{parent_path}.{key}" if parent_path else key
 
@@ -435,25 +564,39 @@ def _extract_metrics(
                             item,
                             parent_path=f"{path}[{i}]",
                             result=result,
-                            _tool=_tool, _domain=_domain,
-                            _status=_status, _partial=_partial,
-                            _timestamp=_timestamp, _source=_source,
+                            _tool=_tool,
+                            _domain=_domain,
+                            _status=_status,
+                            _partial=_partial,
+                            _timestamp=_timestamp,
+                            _source=_source,
                         )
                 elif isinstance(value, dict):
                     _extract_metrics(
-                        value, parent_path=path, result=result,
-                        _tool=_tool, _domain=_domain,
-                        _status=_status, _partial=_partial,
-                        _timestamp=_timestamp, _source=_source,
+                        value,
+                        parent_path=path,
+                        result=result,
+                        _tool=_tool,
+                        _domain=_domain,
+                        _status=_status,
+                        _partial=_partial,
+                        _timestamp=_timestamp,
+                        _source=_source,
                     )
             else:
                 if isinstance(value, (dict, list)):
                     # F10 专用：列表处理（name/value 对）
                     if _is_eastmoney_f10_tool(_tool) and isinstance(value, list):
                         _extract_f10_list_items(
-                            value, parent_path=path, result=result,
-                            _tool=_tool, _domain=_domain, _status=_status,
-                            _partial=_partial, _timestamp=_timestamp, _source=_source,
+                            value,
+                            parent_path=path,
+                            result=result,
+                            _tool=_tool,
+                            _domain=_domain,
+                            _status=_status,
+                            _partial=_partial,
+                            _timestamp=_timestamp,
+                            _source=_source,
                         )
                         continue
 
@@ -461,8 +604,7 @@ def _extract_metrics(
                     # (like {"PB": {"value": 2.5}} containing another dict with "value" key)
                     sub_containers = {}
                     if isinstance(value, dict):
-                        sub_containers = {k: v for k, v in value.items()
-                                          if isinstance(v, (dict, list))}
+                        sub_containers = {k: v for k, v in value.items() if isinstance(v, (dict, list))}
 
                     if _is_eastmoney_f10_tool(_tool) and sub_containers:
                         # Try deep flatten for F10 nested financial data
@@ -470,10 +612,6 @@ def _extract_metrics(
                         if isinstance(flattened, (int, float)):
                             result.append(_make_datum(path, flattened))
                         else:
-                            # Check if any sub-key is a metric name
-                            metric_names = set.union(
-                                set(_ASHARE_METRICS), set(_CRYPTO_METRICS)
-                            ) if _ASHARE_METRICS or _CRYPTO_METRICS else set()
                             found = False
                             for k, v in sub_containers.items():
                                 if k.lower() in ("value", "val"):
@@ -484,17 +622,29 @@ def _extract_metrics(
                                 else:
                                     # 递归子容器提取
                                     _extract_metrics(
-                                        v, parent_path=f"{path}.{k}", result=result,
-                                        _tool=_tool, _domain=_domain, _status=_status,
-                                        _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                        v,
+                                        parent_path=f"{path}.{k}",
+                                        result=result,
+                                        _tool=_tool,
+                                        _domain=_domain,
+                                        _status=_status,
+                                        _partial=_partial,
+                                        _timestamp=_timestamp,
+                                        _source=_source,
                                     )
                                     found = True
                             if not found:
                                 # 没有匹配到 metric 名的子键 → 递归展开容器内容
                                 _extract_metrics(
-                                    v, parent_path=f"{path}.{k}", result=result,
-                                    _tool=_tool, _domain=_domain, _status=_status,
-                                    _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                    v,
+                                    parent_path=f"{path}.{k}",
+                                    result=result,
+                                    _tool=_tool,
+                                    _domain=_domain,
+                                    _status=_status,
+                                    _partial=_partial,
+                                    _timestamp=_timestamp,
+                                    _source=_source,
                                 )
                     elif _is_eastmoney_f10_tool(_tool):
                         flattened = _deep_flatten_value(value)
@@ -503,9 +653,15 @@ def _extract_metrics(
                         else:
                             # F10 非数值且深度扁平失败 → 递归展开
                             _extract_metrics(
-                                value, parent_path=path, result=result,
-                                _tool=_tool, _domain=_domain, _status=_status,
-                                _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                value,
+                                parent_path=path,
+                                result=result,
+                                _tool=_tool,
+                                _domain=_domain,
+                                _status=_status,
+                                _partial=_partial,
+                                _timestamp=_timestamp,
+                                _source=_source,
                             )
                     else:
                         # 通用路径：遇到嵌套 dict/list → 递归展开，而不是压成字符串。
@@ -513,18 +669,30 @@ def _extract_metrics(
                         # 就是这里引起的：_make_summary 把整个嵌套对象丢掉了。
                         if isinstance(value, dict):
                             _extract_metrics(
-                                value, parent_path=path, result=result,
-                                _tool=_tool, _domain=_domain, _status=_status,
-                                _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                value,
+                                parent_path=path,
+                                result=result,
+                                _tool=_tool,
+                                _domain=_domain,
+                                _status=_status,
+                                _partial=_partial,
+                                _timestamp=_timestamp,
+                                _source=_source,
                             )
                         elif isinstance(value, list):
                             for i, item in enumerate(value):
                                 item_path = f"{path}[{i}]"
                                 if isinstance(item, dict):
                                     _extract_metrics(
-                                        item, parent_path=item_path, result=result,
-                                        _tool=_tool, _domain=_domain, _status=_status,
-                                        _partial=_partial, _timestamp=_timestamp, _source=_source,
+                                        item,
+                                        parent_path=item_path,
+                                        result=result,
+                                        _tool=_tool,
+                                        _domain=_domain,
+                                        _status=_status,
+                                        _partial=_partial,
+                                        _timestamp=_timestamp,
+                                        _source=_source,
                                     )
                                 else:
                                     result.append(_make_datum(item_path, item))
@@ -534,17 +702,21 @@ def _extract_metrics(
                     result.append(_make_datum(path, value))
 
     elif isinstance(obj, list):
-        _items, _start = _slice_list(
-            parent_path.rsplit(".", 1)[-1] if parent_path else None, obj, _tool
-        )
+        _items, _start = _slice_list(parent_path.rsplit(".", 1)[-1] if parent_path else None, obj, _tool)
         for i, item in enumerate(_items, _start):
             idx_path = f"{parent_path}[{i}]" if parent_path else f"item[{i}]"
             # 列表元素是 dict/list 时递归展开，不是总结
             if isinstance(item, dict):
                 _extract_metrics(
-                    item, parent_path=idx_path, result=result,
-                    _tool=_tool, _domain=_domain, _status=_status,
-                    _partial=_partial, _timestamp=_timestamp, _source=_source,
+                    item,
+                    parent_path=idx_path,
+                    result=result,
+                    _tool=_tool,
+                    _domain=_domain,
+                    _status=_status,
+                    _partial=_partial,
+                    _timestamp=_timestamp,
+                    _source=_source,
                 )
             elif isinstance(item, list):
                 # 嵌套列表也递归
@@ -552,9 +724,15 @@ def _extract_metrics(
                     sub_path = f"{idx_path}[{j}]"
                     if isinstance(sub, dict):
                         _extract_metrics(
-                            sub, parent_path=sub_path, result=result,
-                            _tool=_tool, _domain=_domain, _status=_status,
-                            _partial=_partial, _timestamp=_timestamp, _source=_source,
+                            sub,
+                            parent_path=sub_path,
+                            result=result,
+                            _tool=_tool,
+                            _domain=_domain,
+                            _status=_status,
+                            _partial=_partial,
+                            _timestamp=_timestamp,
+                            _source=_source,
                         )
                     else:
                         result.append(_make_datum(sub_path, sub))
@@ -569,6 +747,7 @@ def _extract_metrics(
 # ------------------------------------------------------------------ #
 # 主入口                                                                #
 # ------------------------------------------------------------------ #
+
 
 def normalize_tool_result(
     tool: str,
@@ -633,23 +812,30 @@ def normalize_tool_result(
     if isinstance(raw, dict):
         source = raw.get("source_used") or raw.get("source")
 
-    normalized = _extract_metrics(
-        raw,
-        _tool=tool, _domain=domain,
-        _status=status, _partial=partial,
-        _timestamp=timestamp, _source=source,
-    ) if isinstance(raw, (dict, list)) else [
-        NormalizedDatum(
-            tool=tool,
-            domain=domain,
-            metric="response",
-            value=str(raw),
-            status=status,
-            partial=partial,
-            timestamp=timestamp,
-            source=source,
+    normalized = (
+        _extract_metrics(
+            raw,
+            _tool=tool,
+            _domain=domain,
+            _status=status,
+            _partial=partial,
+            _timestamp=timestamp,
+            _source=source,
         )
-    ]
+        if isinstance(raw, (dict, list))
+        else [
+            NormalizedDatum(
+                tool=tool,
+                domain=domain,
+                metric="response",
+                value=str(raw),
+                status=status,
+                partial=partial,
+                timestamp=timestamp,
+                source=source,
+            )
+        ]
+    )
 
     return ToolResult(
         tool=tool,
@@ -667,4 +853,3 @@ def normalize_tool_result(
 # ------------------------------------------------------------------ #
 
 _infer_domain = infer_domain_from_tool
-

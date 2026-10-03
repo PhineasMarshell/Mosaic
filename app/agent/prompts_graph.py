@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Graph 专用 Prompt 模板。
 
 从 app/agent/prompts.py 迁入：Supervisor 节点使用的 PLANNER_PROMPT。

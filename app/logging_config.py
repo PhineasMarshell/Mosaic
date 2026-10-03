@@ -18,7 +18,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 class JSONFormatter(logging.Formatter):
@@ -26,7 +26,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_data = {
-            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),
@@ -42,7 +42,7 @@ class HumanFormatter(logging.Formatter):
     """人类可读的简洁日志格式。"""
 
     def format(self, record: logging.LogRecord) -> str:
-        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime("%H:%M:%S")
+        ts = datetime.fromtimestamp(record.created, tz=UTC).strftime("%H:%M:%S")
         level = record.levelname[:4]
         msg = record.getMessage()
 
@@ -118,15 +118,8 @@ class _timing_context:
 
     async def __aexit__(self, *args):
         elapsed_ms = (time.monotonic() - self._start) * 1000
-        extra = getattr(self.logger.makeRecord(
-            self.logger.name, logging.DEBUG, "", 0,
-            "Completed %s", [], None
-        ), "extra_log", None)
 
-        record = self.logger.makeRecord(
-            self.logger.name, logging.INFO, "", 0,
-            "Completed %s", [self.label], None
-        )
+        record = self.logger.makeRecord(self.logger.name, logging.INFO, "", 0, "Completed %s", [self.label], None)
         if not hasattr(record, "extra_log"):
             object.__setattr__(record, "extra_log", {})
         record.extra_log["elapsed_ms"] = round(elapsed_ms, 1)
@@ -136,6 +129,7 @@ class _timing_context:
 # ---------------------------------------------------------
 # 便捷函数
 # ---------------------------------------------------------
+
 
 def log_timing(logger: logging.Logger, label: str):
     """返回一个同步计时上下文管理器。"""
@@ -158,5 +152,6 @@ class _simple_timing_context:
         elapsed_ms = (time.monotonic() - self._start) * 1000
         self.logger.info(
             "%s completed in %.1fms",
-            self.label, elapsed_ms,
+            self.label,
+            elapsed_ms,
         )

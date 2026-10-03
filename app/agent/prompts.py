@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Mosaic Prompt 模板。
 
 保留：

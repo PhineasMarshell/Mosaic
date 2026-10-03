@@ -32,6 +32,7 @@ def _ddgs_available() -> bool:
 # 核心搜索逻辑（同步）                                                 #
 # ------------------------------------------------------------------ #
 
+
 def _do_news_search(
     query: str,
     *,
@@ -122,6 +123,7 @@ async def search_news(
 # 结果展开 — DDGS → NormalizedDatum                                  #
 # ------------------------------------------------------------------ #
 
+
 def extract_news_entries(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """将 DDGS news_search 返回结构展开为 NormalizedDatum 字典列表。
 
@@ -133,7 +135,8 @@ def extract_news_entries(raw: dict[str, Any]) -> list[dict[str, Any]]:
     - meta → 单个 metric（查询摘要 + 状态）
     - 每条新闻 item 展开为多个 datum（title/body/url/source/date/image）
     """
-    from app.models.market import NormalizedDatum, STATUS_SUCCESS
+    from app.models.market import STATUS_SUCCESS, NormalizedDatum
+
     entries: list[NormalizedDatum] = []
     if not isinstance(raw, dict):
         return [e.model_dump() for e in entries]
@@ -141,13 +144,15 @@ def extract_news_entries(raw: dict[str, Any]) -> list[dict[str, Any]]:
     meta = raw.get("meta", {})
     if meta:
         for k, v in meta.items():
-            entries.append(NormalizedDatum(
-                domain="media",
-                metric=f"meta.{k}",
-                value=v,
-                tool="news_search",
-                status=STATUS_SUCCESS,
-            ))
+            entries.append(
+                NormalizedDatum(
+                    domain="media",
+                    metric=f"meta.{k}",
+                    value=v,
+                    tool="news_search",
+                    status=STATUS_SUCCESS,
+                )
+            )
 
     news_items = raw.get("news")
     if not isinstance(news_items, list):
@@ -165,22 +170,26 @@ def extract_news_entries(raw: dict[str, Any]) -> list[dict[str, Any]]:
         ):
             val = item.get(field)
             if val:
-                entries.append(NormalizedDatum(
+                entries.append(
+                    NormalizedDatum(
+                        domain="media",
+                        metric=f"news[{i}].{datum_key}",
+                        value=val,
+                        timestamp=date_val,
+                        source=item.get("source"),
+                        tool="news_search",
+                        status=STATUS_SUCCESS,
+                    )
+                )
+        if item.get("image"):
+            entries.append(
+                NormalizedDatum(
                     domain="media",
-                    metric=f"news[{i}].{datum_key}",
-                    value=val,
-                    timestamp=date_val,
-                    source=item.get("source"),
+                    metric=f"news[{i}].image",
+                    value=item["image"],
                     tool="news_search",
                     status=STATUS_SUCCESS,
-                ))
-        if item.get("image"):
-            entries.append(NormalizedDatum(
-                domain="media",
-                metric=f"news[{i}].image",
-                value=item["image"],
-                tool="news_search",
-                status=STATUS_SUCCESS,
-            ))
+                )
+            )
 
     return [e.model_dump() for e in entries]

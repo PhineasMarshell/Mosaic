@@ -6,7 +6,6 @@ import pytest
 
 from app.config import Settings
 
-
 # ------------------------------------------------------------------ #
 # Fixtures                                                             #
 # ------------------------------------------------------------------ #
@@ -15,27 +14,28 @@ from app.config import Settings
 @pytest.fixture(autouse=True)
 def mock_tools(monkeypatch):
     """Mock ToolRuntime.execute → avoid real MCP calls."""
-    from unittest.mock import AsyncMock
     from app.models.market import Status, ToolResult
 
     async def fake_execute(self, tool_name, arguments, called_signatures):
         return ToolResult(
-            tool=tool_name, arguments=arguments,
-            status=Status.SUCCESS.value, normalized=[], error=None,
+            tool=tool_name,
+            arguments=arguments,
+            status=Status.SUCCESS.value,
+            normalized=[],
+            error=None,
         )
 
     from app.graph.tool_runtime import ToolRuntime
+
     monkeypatch.setattr(ToolRuntime, "execute", fake_execute)
 
 
 @pytest.fixture(autouse=True)
 def mock_openai(monkeypatch):
     """Mock OpenAI chat completions for Supervisor & Critic."""
-    plan_json = '{"intent":{"domain":"a_share","task":"market_summary",' \
-                '"time_scope":"today","question":"测试"},"steps":[]}'
-    reason_json = '{"title":"今日市场情报","market_state":"neutral",' \
-                  '"state_label":"窄幅震荡","what_happened":"A股今日窄幅震荡",' \
-                  '"confidence":"medium","strong_areas":[],"risks":[],"why":["数据有限"],"evidence":[]}'
+    plan_json = (
+        '{"intent":{"domain":"a_share","task":"market_summary","time_scope":"today","question":"测试"},"steps":[]}'
+    )
     critique_json = '{"verdict":"pass","reason":"证据充足"}'
 
     class FakeChoice:
@@ -49,22 +49,29 @@ def mock_openai(monkeypatch):
     def make_create(text):
         async def create(*args, **kwargs):
             return FakeResp(text)
+
         return create
 
     # Patch Supervisor client
     from app.graph.nodes import supervisor as sup_mod
+
     orig_sup_init = sup_mod.SupervisorNode.__init__
+
     def patched_sup_init(self, settings):
         orig_sup_init(self, settings)
         self.client.chat.completions.create = make_create(plan_json)
+
     sup_mod.SupervisorNode.__init__ = patched_sup_init
 
     # Patch Critic client
     from app.graph.nodes import critic as crit_mod
+
     orig_crit_init = crit_mod.CriticNode.__init__
+
     def patched_crit_init(self, settings):
         orig_crit_init(self, settings)
         self.client.chat.completions.create = make_create(critique_json)
+
     crit_mod.CriticNode.__init__ = patched_crit_init
 
     yield
@@ -77,6 +84,7 @@ def mock_openai(monkeypatch):
 def graph():
     """编译后的研究图（mock LLM + mock tools）。"""
     from app.graph.builder import build_graph
+
     return build_graph(Settings())
 
 
@@ -89,11 +97,13 @@ def graph():
 @pytest.mark.skip(reason="P3 特性 — 三 analyst Send 并行，P0 图为 supervisor→kernel")
 async def test_full_flow_produces_report(graph):
     """全链路：supervisor → [analysts] → gate → reasoning → critic → END。"""
-    result = await graph.ainvoke({
-        "question": "今天A股行情如何？",
-        "domain": "a_share",
-        "conversation_id": None,
-    })
+    result = await graph.ainvoke(
+        {
+            "question": "今天A股行情如何？",
+            "domain": "a_share",
+            "conversation_id": None,
+        }
+    )
 
     assert result.get("report") is not None, "最终状态不应缺少 report"
 

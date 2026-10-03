@@ -12,12 +12,12 @@
 
 from typing import Any, Literal
 
-from app.models.research import DEFAULT_DOMAINS, MarketDomain
-
+from app.models.research import MarketDomain
 
 # ------------------------------------------------------------------ #
 # 工具元数据                                                          #
 # ------------------------------------------------------------------ #
+
 
 class ToolMeta:
     """单个工具的逻辑描述。"""
@@ -616,9 +616,11 @@ def tools_by_category(category: str) -> list[ToolMeta]:
     """获取指定分析员类别的所有工具。"""
     return by_category.get(category, [])
 
+
 # ------------------------------------------------------------------ #
 # 公开 API                                                              #
 # ------------------------------------------------------------------ #
+
 
 def registry_text(domains: list[MarketDomain] | None = None) -> str:
     """返回格式化文本供 Prompt 使用。
@@ -634,10 +636,7 @@ def registry_text(domains: list[MarketDomain] | None = None) -> str:
         filtered = [t for t in filtered if t.domain != "unknown"] or ALL_TOOLS
         tools = filtered
 
-    return "\n".join(
-        f"- {x.key}: {x.tool_name} [{x.domain}] — {x.purpose} [{x.priority}]"
-        for x in tools
-    )
+    return "\n".join(f"- {x.key}: {x.tool_name} [{x.domain}] — {x.purpose} [{x.priority}]" for x in tools)
 
 
 def resolve_tool(key: str) -> ToolMeta:

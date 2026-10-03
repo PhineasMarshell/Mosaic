@@ -57,15 +57,12 @@ class MarketGatewayClient:
                 self.stack.enter_async_context(stdio_client(params)),
                 timeout=self.settings.research_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise MCPConnectionError(
-                f"MCP server startup timed out after "
-                f"{self.settings.research_timeout_seconds}s"
+                f"MCP server startup timed out after {self.settings.research_timeout_seconds}s"
             ) from None
 
-        self.session = await self.stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
-        )
+        self.session = await self.stack.enter_async_context(ClientSession(read_stream, write_stream))
 
         try:
             listed = await asyncio.wait_for(
@@ -74,10 +71,8 @@ class MarketGatewayClient:
             )
             self.tools = list(listed.tools)
             logger.info("MCP connected: %d tools available", len(self.tools))
-        except asyncio.TimeoutError:
-            raise MCPConnectionError(
-                "MCP list_tools timed out"
-            ) from None
+        except TimeoutError:
+            raise MCPConnectionError("MCP list_tools timed out") from None
 
     async def close(self) -> None:
         try:
@@ -115,19 +110,24 @@ class MarketGatewayClient:
                     text = _mcp_result_to_text(result)
                     logger.warning(
                         "MCP call %s returned a tool-level error: %s",
-                        tool_name, text[:200],
+                        tool_name,
+                        text[:200],
                     )
                     return normalize_tool_result(
-                        tool_name, arguments, None,
+                        tool_name,
+                        arguments,
+                        None,
                         error=text or f"MCP tool {tool_name} returned an error",
                     )
                 raw = _mcp_result_to_json(result)
                 return normalize_tool_result(tool_name, arguments, raw)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 last_error = f"Timeout after {self.settings.research_timeout_seconds}s"
                 logger.warning(
                     "MCP call %s attempt %d/%d timed out",
-                    tool_name, attempt + 1, max_attempts,
+                    tool_name,
+                    attempt + 1,
+                    max_attempts,
                 )
             except MCPConnectionError:
                 # 连接级别错误不应该重试
@@ -136,7 +136,10 @@ class MarketGatewayClient:
                 last_error = str(exc)
                 logger.warning(
                     "MCP call %s attempt %d/%d failed: %s",
-                    tool_name, attempt + 1, max_attempts, exc,
+                    tool_name,
+                    attempt + 1,
+                    max_attempts,
+                    exc,
                 )
 
             if attempt < max_attempts - 1:

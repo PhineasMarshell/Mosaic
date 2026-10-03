@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from app.config import Settings
-from app.gateway.tool_registry import by_category
 from app.graph.nodes.analysts.base import MarketAnalystNode
-
 
 logger = logging.getLogger(__name__)
 

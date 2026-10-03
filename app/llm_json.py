@@ -48,7 +48,7 @@ def extract_json_text(text: str | None) -> str | None:
     first_brace = text.find("{")
     last_brace = text.rfind("}")
     if first_brace != -1 and last_brace > first_brace:
-        candidate = text[first_brace:last_brace + 1]
+        candidate = text[first_brace : last_brace + 1]
         try:
             json.loads(candidate)
             return candidate
@@ -77,27 +77,21 @@ def parse_json_object(content: str | None, *, source: str) -> dict:
     """
     if content is None or not content.strip():
         raise LLMOutputError(
-            f"{source} returned an empty completion "
-            "(thinking models do this when truncated mid-reasoning)"
+            f"{source} returned an empty completion (thinking models do this when truncated mid-reasoning)"
         )
 
     cleaned = extract_json_text(content)
     if cleaned is None:
-        raise LLMOutputError(
-            f"{source} returned invalid JSON:\nraw={content!r}"
-        )
+        raise LLMOutputError(f"{source} returned invalid JSON:\nraw={content!r}")
 
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise LLMOutputError(
-            f"{source} returned invalid JSON:\nraw={content!r}\nerror={exc}"
-        ) from exc
+        raise LLMOutputError(f"{source} returned invalid JSON:\nraw={content!r}\nerror={exc}") from exc
 
     if not isinstance(data, dict):
         raise LLMOutputError(
-            f"{source} returned a JSON {type(data).__name__}, expected an object:\n"
-            f"raw={content[:500]!r}"
+            f"{source} returned a JSON {type(data).__name__}, expected an object:\nraw={content[:500]!r}"
         )
 
     return data

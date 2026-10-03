@@ -15,7 +15,6 @@ import pytest
 from app.models.evidence import Evidence
 from app.models.response import EvidenceItem, MarketIntelligence
 
-
 # ── _parse_evidence (imported from reasoning module) ────────
 
 
@@ -93,13 +92,26 @@ class TestParseEvidenceOldFormat:
         from app.research.reasoning import _parse_evidence
 
         raw = [
-            {"id": "e-100", "source_tool": "derivatives", "domain": "crypto",
-             "metric": "open_interest", "value": 8.5,
-             "status": "success"}
+            {
+                "id": "e-100",
+                "source_tool": "derivatives",
+                "domain": "crypto",
+                "metric": "open_interest",
+                "value": 8.5,
+                "status": "success",
+            }
         ]
-        original = [Evidence(id="e-100", source_tool="derivatives", domain="crypto",
-                            metric="open_interest", value=8.5,
-                            status="success", partial=False)]
+        original = [
+            Evidence(
+                id="e-100",
+                source_tool="derivatives",
+                domain="crypto",
+                metric="open_interest",
+                value=8.5,
+                status="success",
+                partial=False,
+            )
+        ]
         result = _parse_evidence(raw, original)
         assert len(result) == 1
         assert result[0].id == "e-100"
@@ -127,9 +139,17 @@ class TestParseEvidenceNewFormat:
             }
         ]
         original = [
-            Evidence(id="e-100", source_tool="test_tool", domain="crypto",
-                     metric="fundingRate", value=0.25, timestamp="2025-09-05T14:00:00Z",
-                     source="coinglass", status="success", partial=False)
+            Evidence(
+                id="e-100",
+                source_tool="test_tool",
+                domain="crypto",
+                metric="fundingRate",
+                value=0.25,
+                timestamp="2025-09-05T14:00:00Z",
+                source="coinglass",
+                status="success",
+                partial=False,
+            )
         ]
         result = _parse_evidence(raw, original)
 
@@ -155,8 +175,9 @@ class TestParseEvidenceNewFormat:
         from app.research.reasoning import _parse_evidence
 
         raw = [{"id": "e-100", "value": 999}]
-        original = [Evidence(id="e-100", source_tool="t", domain="crypto",
-                            metric="fundingRate", value=0.25, status="success")]
+        original = [
+            Evidence(id="e-100", source_tool="t", domain="crypto", metric="fundingRate", value=0.25, status="success")
+        ]
         result = _parse_evidence(raw, original)
         assert len(result) == 1
         assert result[0].value == 0.25
@@ -166,17 +187,14 @@ class TestParseEvidenceNewFormat:
         from app.research.reasoning import _parse_evidence
 
         raw = [{"metric": "price", "value": 100}]
-        original = [Evidence(id="x", source_tool="t", domain="a_share",
-                            metric="p", value=1, status="success")]
+        original = [Evidence(id="x", source_tool="t", domain="a_share", metric="p", value=1, status="success")]
         result = _parse_evidence(raw, original)
         assert len(result) == 0
 
     def test_unknown_keys_ignored(self):
         from app.research.reasoning import _parse_evidence
 
-        raw = [
-            {"id": "e-200", "extra_key": "should_be_ignored", "metric": "test"}
-        ]
+        raw = [{"id": "e-200", "extra_key": "should_be_ignored", "metric": "test"}]
         original = [Evidence(id="e-200", source_tool="t", metric="test")]
         result = _parse_evidence(raw, original)
         assert len(result) == 1
@@ -188,7 +206,8 @@ class TestMarketIntelligenceValidation:
 
     def _ensure_lists(self, payload, original_evidence=None):
         """Apply the same transformations that ReasoningEngine.reason() does."""
-        from app.research.reasoning import _parse_evidence, _ensure_list
+        from app.research.reasoning import _ensure_list, _parse_evidence
+
         for key in ("why", "strong_areas", "what_changed", "what_matters", "risks", "data_caveats"):
             payload[key] = _ensure_list(payload.get(key))
         raw_ev = payload.get("evidence") or []
@@ -231,17 +250,35 @@ class TestMarketIntelligenceValidation:
 
     def test_validate_with_new_evidence_format(self):
         ev = [
-            Evidence(id="e-001", source_tool="quote", domain="a_share",
-                     metric="price", value=3800.0, status="success"),
-            Evidence(id="e-002", source_tool="sentiment", domain="a_share",
-                     metric="risk_on", value=0.3, status="partial", partial=True),
+            Evidence(id="e-001", source_tool="quote", domain="a_share", metric="price", value=3800.0, status="success"),
+            Evidence(
+                id="e-002",
+                source_tool="sentiment",
+                domain="a_share",
+                metric="risk_on",
+                value=0.3,
+                status="partial",
+                partial=True,
+            ),
         ]
         payload = self._base_payload(
             evidence=[
-                {"id": "e-001", "source_tool": "quote", "domain": "a_share",
-                 "metric": "price", "value": 999.0, "status": "success"},
-                {"id": "e-002", "source_tool": "sentiment", "domain": "a_share",
-                 "metric": "risk_on", "value": 0.9, "status": "wrong_status"},
+                {
+                    "id": "e-001",
+                    "source_tool": "quote",
+                    "domain": "a_share",
+                    "metric": "price",
+                    "value": 999.0,
+                    "status": "success",
+                },
+                {
+                    "id": "e-002",
+                    "source_tool": "sentiment",
+                    "domain": "a_share",
+                    "metric": "risk_on",
+                    "value": 0.9,
+                    "status": "wrong_status",
+                },
             ]
         )
         payload = self._ensure_lists(payload, original_evidence=ev)
@@ -253,9 +290,7 @@ class TestMarketIntelligenceValidation:
         assert model.evidence[1].status == "partial"
 
     def test_validate_with_list_what_changed(self):
-        payload = self._base_payload(
-            what_changed=["Sentiment dropped", "Volume shrank", "New theme absent"]
-        )
+        payload = self._base_payload(what_changed=["Sentiment dropped", "Volume shrank", "New theme absent"])
         payload = self._ensure_lists(payload)
         model = MarketIntelligence.model_validate(payload)
         assert isinstance(model.what_changed, list)
@@ -283,18 +318,22 @@ class TestMarketIntelligenceValidation:
 class TestEnsureList:
     def test_none_becomes_empty_list(self):
         from app.research.reasoning import _ensure_list
+
         assert _ensure_list(None) == []
 
     def test_already_list(self):
         from app.research.reasoning import _ensure_list
+
         assert _ensure_list(["a", "b"]) == ["a", "b"]
 
     def test_string_becomes_single_item_list(self):
         from app.research.reasoning import _ensure_list
+
         assert _ensure_list("single") == ["single"]
 
     def test_default_for_none(self):
         from app.research.reasoning import _ensure_list
+
         assert _ensure_list(None, default=["fallback"]) == ["fallback"]
 
 
@@ -309,7 +348,6 @@ class TestReasoningFindingsInPrompt:
     @pytest.mark.asyncio
     async def test_findings_appear_in_prompt(self, monkeypatch):
         """传入 findings → mock 捕获的 prompt 包含 ANALYST SUMMARIES 和 digest 文本。"""
-        import types
         from app.config import Settings
         from app.research.reasoning import ReasoningEngine
 
@@ -367,7 +405,6 @@ class TestReasoningFindingsInPrompt:
     @pytest.mark.asyncio
     async def test_no_findings_behavior_unchanged(self, monkeypatch):
         """不传 findings → prompt 中不出现 ANALYST SUMMARIES，行为与旧版一致。"""
-        import types
         from app.config import Settings
         from app.research.reasoning import ReasoningEngine
 
@@ -413,7 +450,6 @@ class TestReasoningFindingsInPrompt:
     @pytest.mark.asyncio
     async def test_failed_finding_marked_in_prompt(self, monkeypatch):
         """failed=True 的 finding → prompt 中标记 [失败]。"""
-        import types
         from app.config import Settings
         from app.research.reasoning import ReasoningEngine
 

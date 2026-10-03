@@ -23,7 +23,6 @@
 import time
 from typing import Any, Generic, TypeVar
 
-
 T = TypeVar("T")
 
 
@@ -89,34 +88,34 @@ class Cache:
 # 预定义缓存策略 — A 股
 # ---------------------------------------------------------
 
-QUOTE_TTL = 10.0          # 实时行情 10 秒
-SENTIMENT_TTL = 60.0      # 市场情绪 60 秒
-LIMIT_UP_TTL = 60.0       # 涨停生态 60 秒
-OVERVIEW_TTL = 120.0      # 全市场概览 120 秒
-LONGHU_TTL = 300.0        # 龙虎榜 300 秒
+QUOTE_TTL = 10.0  # 实时行情 10 秒
+SENTIMENT_TTL = 60.0  # 市场情绪 60 秒
+LIMIT_UP_TTL = 60.0  # 涨停生态 60 秒
+OVERVIEW_TTL = 120.0  # 全市场概览 120 秒
+LONGHU_TTL = 300.0  # 龙虎榜 300 秒
 
 
 # ---------------------------------------------------------
 # 预定义缓存策略 — Crypto
 # ---------------------------------------------------------
 
-SNAPSHOT_TTL = 15.0            # Crypto 快照 15 秒（价格变化快）
-KLINE_TTL = 60.0               # K 线 60 秒（7x24 市场，较短）
-DERIVATIVES_TTL = 120.0        # 衍生品数据 120 秒（OI/Funding 更新较慢）
-FUNDING_RATE_TTL = 180.0       # 资金费率 180 秒
-LIQUIDATION_TTL = 30.0         # 今日爆仓 30 秒（事件驱动型）
-LIQMAP_TTL = 300.0             # 清算地图 300 秒（大户仓位变化慢）
-TOP_POSITION_TTL = 300.0       # 头部持仓 300 秒
-EXCHANGES_TTL = 3600.0         # 交易所列表小时级（几乎不变）
+SNAPSHOT_TTL = 15.0  # Crypto 快照 15 秒（价格变化快）
+KLINE_TTL = 60.0  # K 线 60 秒（7x24 市场，较短）
+DERIVATIVES_TTL = 120.0  # 衍生品数据 120 秒（OI/Funding 更新较慢）
+FUNDING_RATE_TTL = 180.0  # 资金费率 180 秒
+LIQUIDATION_TTL = 30.0  # 今日爆仓 30 秒（事件驱动型）
+LIQMAP_TTL = 300.0  # 清算地图 300 秒（大户仓位变化慢）
+TOP_POSITION_TTL = 300.0  # 头部持仓 300 秒
+EXCHANGES_TTL = 3600.0  # 交易所列表小时级（几乎不变）
 
 
 # ---------------------------------------------------------
 # 预定义缓存策略 — US Stock / Macro（占位）
 # ---------------------------------------------------------
 
-US_QUOTE_TTL = 10.0          # US Stock 实时行情 10 秒
-US_OVERVIEW_TTL = 60.0       # US Stock 概览 60 秒
-MACRO_TTL = 3600.0           # 宏观数据小时级（低频变化）
+US_QUOTE_TTL = 10.0  # US Stock 实时行情 10 秒
+US_OVERVIEW_TTL = 60.0  # US Stock 概览 60 秒
+MACRO_TTL = 3600.0  # 宏观数据小时级（低频变化）
 
 
 def _make_cache_key(tool: str, arguments: dict) -> str:

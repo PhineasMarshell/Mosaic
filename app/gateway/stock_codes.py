@@ -65,7 +65,6 @@ INDEX_CODE_MAP_A_SHARE: dict[str, str] = {
     "中证1000": "000852",
     "中证100": "000903",
     "中证200": "000904",
-    "中证红利": "000922",
 }
 
 # ------------------------------------------------------------------ #
@@ -93,7 +92,7 @@ CRYPTO_SYMBOL_MAP: dict[str, str] = {
 #: 商品名 → Market Gateway symbol 映射
 # ⚠️ 注意：crypto 交易所极少支持实物大宗商品。以下仅黄金(OKX永续)可用，其余需独立数据源
 COMMODITY_SYMBOL_MAP: dict[str, str] = {
-    "黄金": "XAU/USDT:USDT",   # OKX 黄金永续合约 — ccxt 统一写法
+    "黄金": "XAU/USDT:USDT",  # OKX 黄金永续合约 — ccxt 统一写法
     # 白银、铜、原油等暂无主流交易所现货交易对；待接入 Bloomberg/LME/API
     # "白银": "SILVERUSDT",       # TODO: OKX SILVER-USDT-SWAP → "XAG/USDT:USDT"
 }
@@ -101,6 +100,7 @@ COMMODITY_SYMBOL_MAP: dict[str, str] = {
 # ------------------------------------------------------------------ #
 # 查询工具                                                              #
 # ------------------------------------------------------------------ #
+
 
 def _infer_index_exchange(index_code: str) -> str:
     """根据指数代码范围推断所属交易所。

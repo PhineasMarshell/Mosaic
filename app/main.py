@@ -34,14 +34,14 @@ async def lifespan(_app: FastAPI):  # noqa: F841 — FastAPI passes app instance
     if missing:
         logger.warning("Missing configuration: %s", ", ".join(missing))
     else:
-        logger.info("Configuration OK: gateway=%s model=%s",
-                     _settings.market_gateway_mode, _settings.openai_model)
+        logger.info("Configuration OK: gateway=%s model=%s", _settings.market_gateway_mode, _settings.openai_model)
 
     # 懒初始化 orchestrator
     _orchestrator = Orchestrator(_settings)
 
     # Start brief scheduler
     from app.scheduler.briefs import start_brief_scheduler
+
     start_brief_scheduler()
     logger.info("Brief scheduler started")
 
@@ -49,6 +49,7 @@ async def lifespan(_app: FastAPI):  # noqa: F841 — FastAPI passes app instance
 
     # Shutdown: stop scheduler
     from app.scheduler.briefs import stop_brief_scheduler
+
     stop_brief_scheduler()
     logger.info("Brief scheduler stopped")
 
@@ -67,6 +68,7 @@ _settings_lock = __import__("threading").Lock()
 
 # 初始化 Market Memory（轻量，文件缓存，模块级安全）
 from app.memory.storage import get_memory
+
 memory = get_memory()
 
 
@@ -87,12 +89,14 @@ def _get_orchestrator():
                 _orchestrator = Orchestrator(_get_settings())
     return _orchestrator
 
+
 INDEX = Path(__file__).parent / "web" / "index.html"
 
 
 @app.get("/health")
 async def health():
     from app.scheduler.briefs import is_running as scheduler_running
+
     _s = _get_settings()
     return {
         "status": "ok",
@@ -110,6 +114,7 @@ async def morning_brief_endpoint():
     """触发晨间简报生成。"""
     try:
         from app.scheduler.briefs import generate_morning_brief
+
         brief = await generate_morning_brief(settings=_get_settings(), memory=memory)
         memory.save_daily_state(data={"type": "morning_brief", **brief})
         return JSONResponse(content=brief)
@@ -123,6 +128,7 @@ async def evening_brief_endpoint():
     """触发晚间简报生成。"""
     try:
         from app.scheduler.briefs import generate_evening_brief
+
         brief = await generate_evening_brief(settings=_get_settings(), memory=memory)
         memory.save_daily_state(data={"type": "evening_brief", **brief})
         return JSONResponse(content=brief)
@@ -145,8 +151,12 @@ def _parse_ask_payload(request: dict, endpoint: str) -> tuple[str, str | None, s
     # ``.strip()`` 抛 AttributeError → 500；这里统一归为 400。
     question = raw_question.strip() if isinstance(raw_question, str) else ""
     if not question:
-        logger.warning("%s rejected: empty or non-string question (got %r, keys=%s)",
-                       endpoint, raw_question, sorted(request.keys()))
+        logger.warning(
+            "%s rejected: empty or non-string question (got %r, keys=%s)",
+            endpoint,
+            raw_question,
+            sorted(request.keys()),
+        )
         raise HTTPException(status_code=400, detail="question cannot be empty")
 
     domain = request.get("domain") or None  # optional explicit domain override
@@ -157,8 +167,7 @@ def _parse_ask_payload(request: dict, endpoint: str) -> tuple[str, str | None, s
 
         supported_domains = get_enabled_domains()
         if domain not in supported_domains:
-            logger.warning("%s rejected: unsupported domain=%r (supported=%s)",
-                           endpoint, domain, supported_domains)
+            logger.warning("%s rejected: unsupported domain=%r (supported=%s)", endpoint, domain, supported_domains)
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported domain: {domain}. Supported: {supported_domains}",
@@ -174,8 +183,9 @@ async def ask(request: dict):
     settings = _get_settings()
 
     try:
-        logger.info("Received question: %s (len=%d) domain=%s conv_id=%s",
-                     question[:50], len(question), domain, conversation_id)
+        logger.info(
+            "Received question: %s (len=%d) domain=%s conv_id=%s", question[:50], len(question), domain, conversation_id
+        )
         # 同步端点以前没有任何总超时：调查可以一直跑到把每个工具的
         # 30s 超时逐个耗尽（max_tool_calls=12 → 最坏几分钟），浏览器只能干等。
         result = await asyncio.wait_for(
@@ -208,6 +218,7 @@ async def ask(request: dict):
                 "anomalies": result.report.anomalies[:5] if result.report.anomalies else [],
             }
             from app.gateway.tool_registry import get_enabled_domains
+
             for d in get_enabled_domains():
                 key = d.replace("_", "-")
                 domain_report = {"state_label": result.report.state_label}
@@ -217,9 +228,8 @@ async def ask(request: dict):
             logger.debug("Daily state save failed (non-fatal): %s", exc)
 
         return JSONResponse(content=data)
-    except (asyncio.TimeoutError, TimeoutError) as exc:
-        logger.warning("Research exceeded %ds budget: %s",
-                       settings.research_budget_seconds, question[:50])
+    except TimeoutError as exc:
+        logger.warning("Research exceeded %ds budget: %s", settings.research_budget_seconds, question[:50])
         raise HTTPException(
             status_code=504,
             detail=f"Research timed out after {settings.research_budget_seconds}s",
@@ -241,16 +251,16 @@ async def ask(request: dict):
 
 #: 节点名 → (progress step, 默认文案)
 _NODE_PROGRESS = {
-    "supervisor":   ("planning",    "理解问题并生成研究计划"),
-    "kernel":       ("tool_call",   "整包调查执行中…"),
-    "technical":    ("tool_call",   "技术面分析员采集中"),
-    "fundamental":  ("tool_call",   "基本面分析员采集中"),
-    "moneyflow":    ("tool_call",   "资金面分析员采集中"),
-    "news":         ("tool_call",   "新闻事件分析员采集中"),
-    "sentiment":    ("tool_call",   "舆情分析员采集中"),
-    "gate":         ("evaluating",  "证据质量检查"),
-    "reasoning":    ("reasoning",   "正在生成结构化市场情报…"),
-    "critic":       ("critic",      "结论-证据审计"),
+    "supervisor": ("planning", "理解问题并生成研究计划"),
+    "kernel": ("tool_call", "整包调查执行中…"),
+    "technical": ("tool_call", "技术面分析员采集中"),
+    "fundamental": ("tool_call", "基本面分析员采集中"),
+    "moneyflow": ("tool_call", "资金面分析员采集中"),
+    "news": ("tool_call", "新闻事件分析员采集中"),
+    "sentiment": ("tool_call", "舆情分析员采集中"),
+    "gate": ("evaluating", "证据质量检查"),
+    "reasoning": ("reasoning", "正在生成结构化市场情报…"),
+    "critic": ("critic", "结论-证据审计"),
 }
 
 
@@ -300,10 +310,12 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 raise UpstreamTimeoutError(f"Research exceeded the {budget}s budget")
             try:
                 mode, payload = await asyncio.wait_for(queue.get(), timeout=min(heartbeat, remaining))
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 elapsed = int(loop.time() - started_at)
-                yield json_event("progress", {"step": "working", "node": None,
-                                               "message": f"仍在调查中…（{elapsed}s / 预算 {budget}s）"})
+                yield json_event(
+                    "progress",
+                    {"step": "working", "node": None, "message": f"仍在调查中…（{elapsed}s / 预算 {budget}s）"},
+                )
                 continue
 
             if mode == "__done__":
@@ -319,11 +331,10 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
 
         # ── 组装结果（与 orchestrator.run 对齐）──
         from app.models.response import ResearchResponse
+
         raw_results = final_state.get("results", [])
         # values 流模式保留 Pydantic 对象，ResearchResponse.tool_results 需要 dict
-        tool_results_dicts = [
-            r if isinstance(r, dict) else r.model_dump() for r in raw_results
-        ]
+        tool_results_dicts = [r if isinstance(r, dict) else r.model_dump() for r in raw_results]
         result = ResearchResponse(
             question=question,
             report=final_state.get("report"),
@@ -340,34 +351,45 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
 
         yield json_event("result", save_result)
 
-    except (UpstreamTimeoutError, asyncio.TimeoutError, TimeoutError) as exc:
+    except (UpstreamTimeoutError, TimeoutError):
         logger.warning("Stream research exceeded %ds budget for: %s", budget, question[:50])
         yield json_event("progress", {"step": "error", "message": "研究超时，请重试"})
-        yield json_event("result", {
-            "error": f"Research timed out after {budget}s",
-            "code": "timeout",
-            "question": question,
-        })
+        yield json_event(
+            "result",
+            {
+                "error": f"Research timed out after {budget}s",
+                "code": "timeout",
+                "question": question,
+            },
+        )
     except LLMOutputError as exc:
-        logger.error("Stream research got unusable LLM output for: %s — %s",
-                     question[:50], str(exc)[:800])
+        logger.error("Stream research got unusable LLM output for: %s — %s", question[:50], str(exc)[:800])
         yield json_event("progress", {"step": "error", "message": "上游模型返回了无法解析的内容"})
-        yield json_event("result", {
-            "error": "上游模型返回了无法解析的内容，请重试或更换模型",
-            "code": "upstream",
-            "question": question,
-        })
+        yield json_event(
+            "result",
+            {
+                "error": "上游模型返回了无法解析的内容，请重试或更换模型",
+                "code": "upstream",
+                "question": question,
+            },
+        )
     except Exception as exc:
         logger.exception("Stream research failed for: %s", question[:50])
-        yield json_event("progress", {
-            "step": "error",
-            "message": f"研究失败: {str(exc)[:100]}",
-        })
-        yield json_event("result", {
-            "error": str(exc),
-            "code": "internal",
-            "question": question,
-        })
+        yield json_event(
+            "progress",
+            {
+                "step": "error",
+                "message": f"研究失败: {str(exc)[:100]}",
+            },
+        )
+        yield json_event(
+            "result",
+            {
+                "error": str(exc),
+                "code": "internal",
+                "question": question,
+            },
+        )
     finally:
         if not task.done():
             task.cancel()
@@ -414,6 +436,7 @@ async def _save_research_and_state(question: str, report_dict: dict) -> None:
             "anomalies": report_dict.get("anomalies", [])[:5] if report_dict.get("anomalies") else [],
         }
         from app.gateway.tool_registry import get_enabled_domains
+
         for d in get_enabled_domains():
             key = d.replace("_", "-")
             domain_report = {"state_label": report_dict.get("state_label", "")}

@@ -7,7 +7,7 @@
 
 from dataclasses import dataclass, field
 
-from app.models.market import Status, ToolResult
+from app.models.market import ToolResult
 
 
 @dataclass
@@ -59,10 +59,12 @@ def run_evidence_gate(results: list[ToolResult]) -> EvidenceGateResult:
         elif result.status == "partial":
             gate.partial_tools.append(result.tool)
         elif result.status == "error":
-            gate.error_tools.append({
-                "tool": result.tool,
-                "error": result.error or "unknown error",
-            })
+            gate.error_tools.append(
+                {
+                    "tool": result.tool,
+                    "error": result.error or "unknown error",
+                }
+            )
 
     # has_evidence = 至少有一个成功或部分成功的工具
     gate.has_evidence = bool(gate.successful_tools or gate.partial_tools)
@@ -71,30 +73,20 @@ def run_evidence_gate(results: list[ToolResult]) -> EvidenceGateResult:
     reasons: list[str] = []
     if not gate.has_evidence:
         if results:
-            errors = "; ".join(
-                f"{e['tool']}: {e['error']}" for e in gate.error_tools
-            )
+            errors = "; ".join(f"{e['tool']}: {e['error']}" for e in gate.error_tools)
             reasons.append(f"所有工具调用均失败: {errors}")
         else:
             reasons.append("未执行任何工具调用")
     else:
         if gate.partial_tools and not gate.successful_tools:
-            reasons.append(
-                "仅有 partial 数据返回，历史区间可能不完整"
-            )
+            reasons.append("仅有 partial 数据返回，历史区间可能不完整")
         elif gate.successful_tools and gate.partial_tools:
-            reasons.append(
-                "部分工具有完整数据，部分为 partial"
-            )
+            reasons.append("部分工具有完整数据，部分为 partial")
         else:
-            reasons.append(
-                f"已有 {len(gate.successful_tools)} 个工具返回有效数据"
-            )
+            reasons.append(f"已有 {len(gate.successful_tools)} 个工具返回有效数据")
 
     if gate.error_tools:
-        reasons.append(
-            f"{len(gate.error_tools)} 个工具调用失败"
-        )
+        reasons.append(f"{len(gate.error_tools)} 个工具调用失败")
 
     gate.reason = " | ".join(reasons)
     return gate

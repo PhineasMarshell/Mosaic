@@ -1,9 +1,6 @@
 """tests/test_normalizer_multi_domain.py — 跨域归一化测试。"""
 
-import pytest
-
 from app.gateway.normalizer import (
-    _extract_metrics,
     find_partial,
     find_timestamp,
     infer_domain_from_tool,
@@ -15,14 +12,10 @@ class TestDomainInference:
     """验证域名推断逻辑。"""
 
     def test_ashare_sentiment(self):
-        assert infer_domain_from_tool(
-            "public_sentiment_ashare_master_sentiment_get"
-        ) == "a_share"
+        assert infer_domain_from_tool("public_sentiment_ashare_master_sentiment_get") == "a_share"
 
     def test_ashare_limit_up(self):
-        assert infer_domain_from_tool(
-            "public_limit_up_count_ashare_master_limit_up_count_get"
-        ) == "a_share"
+        assert infer_domain_from_tool("public_limit_up_count_ashare_master_limit_up_count_get") == "a_share"
 
     def test_ashare_eastmoney(self):
         assert infer_domain_from_tool("overview_eastmoney_overview_get") == "a_share"
@@ -36,19 +29,13 @@ class TestDomainInference:
         assert infer_domain_from_tool("klines_market_klines_post") == "cross"
 
     def test_crypto_derivatives(self):
-        assert infer_domain_from_tool(
-            "derivatives_history_market_derivatives_history_post"
-        ) == "crypto"
+        assert infer_domain_from_tool("derivatives_history_market_derivatives_history_post") == "crypto"
 
     def test_crypto_coinglass(self):
-        assert infer_domain_from_tool(
-            "funding_rate_coinglass_funding_rate_get"
-        ) == "crypto"
+        assert infer_domain_from_tool("funding_rate_coinglass_funding_rate_get") == "crypto"
 
     def test_crypto_hyperliquid(self):
-        assert infer_domain_from_tool(
-            "hyperliquid_top_position_coinglass_hyperliquid_top_position_get"
-        ) == "crypto"
+        assert infer_domain_from_tool("hyperliquid_top_position_coinglass_hyperliquid_top_position_get") == "crypto"
 
     def test_unknown_tool_unknown_domain(self):
         # 不在注册表中的工具，启发式推断回退到 unknown
@@ -112,9 +99,7 @@ class TestCryptoNormalize:
             "change_pct": 2.3,
             "source_used": "binance",
         }
-        result = normalize_tool_result(
-            "snapshot_market_snapshot_post", {}, raw
-        )
+        result = normalize_tool_result("snapshot_market_snapshot_post", {}, raw)
         assert result.status == "success"
         # snapshot 现在是跨域通用 (domain="cross")
         assert result.normalized[0].domain == "cross"
@@ -147,9 +132,7 @@ class TestCryptoDerivativesNormalize:
             "openInterest": 500000000.0,
             "partial": False,
         }
-        result = normalize_tool_result(
-            "derivatives_history_market_derivatives_history_post", {}, raw
-        )
+        result = normalize_tool_result("derivatives_history_market_derivatives_history_post", {}, raw)
         assert result.status == "success"
         metrics = {d.metric: d.value for d in result.normalized}
         assert "fundingRate" in metrics or "funding_rate" in metrics
@@ -159,9 +142,7 @@ class TestErrorHandling:
     """验证错误处理。"""
 
     def test_error_returns_error_status(self):
-        result = normalize_tool_result(
-            "some_tool", {}, None, error="Connection refused"
-        )
+        result = normalize_tool_result("some_tool", {}, None, error="Connection refused")
         assert result.status == "error"
         assert result.error == "Connection refused"
         assert len(result.normalized) == 0

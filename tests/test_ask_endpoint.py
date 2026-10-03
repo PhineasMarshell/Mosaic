@@ -64,7 +64,8 @@ def _use_orchestrator(monkeypatch, orch):
 
 def _use_budget(monkeypatch, seconds):
     monkeypatch.setattr(
-        main, "_settings",
+        main,
+        "_settings",
         SimpleNamespace(
             research_budget_seconds=seconds,
             stream_heartbeat_seconds=5,
@@ -77,22 +78,25 @@ def _use_budget(monkeypatch, seconds):
 # 校验层：400 + 必须有日志                                            #
 # ------------------------------------------------------------------ #
 
-@pytest.mark.parametrize("payload", [
-    {},
-    {"question": ""},
-    {"question": "   "},
-    {"question": None},
-    {"question": 123},
-    {"question": {}},          # 前端误传 DOM 节点被 JSON 化成 {} 的情形
-    {"q": "今天A股发生了什么？"},  # 字段名写错
-])
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"question": ""},
+        {"question": "   "},
+        {"question": None},
+        {"question": 123},
+        {"question": {}},  # 前端误传 DOM 节点被 JSON 化成 {} 的情形
+        {"q": "今天A股发生了什么？"},  # 字段名写错
+    ],
+)
 def test_empty_or_non_string_question_is_400(payload, caplog_mosaic):
     resp = _client().post("/api/ask", json=payload)
     assert resp.status_code == 400
     assert resp.json()["detail"] == "question cannot be empty"
     # 关键回归点：拒绝必须可观测
-    assert any(r.levelno >= logging.WARNING for r in caplog_mosaic.records), \
-        "400 拒绝没有留下任何 WARNING 日志"
+    assert any(r.levelno >= logging.WARNING for r in caplog_mosaic.records), "400 拒绝没有留下任何 WARNING 日志"
 
 
 def test_unsupported_domain_is_400(caplog_mosaic):
@@ -121,10 +125,11 @@ def test_both_endpoints_share_validation(endpoint):
 # 研究层：错误分类                                                    #
 # ------------------------------------------------------------------ #
 
+
 def test_llm_output_error_is_502_not_400(monkeypatch, caplog_mosaic):
-    _use_orchestrator(monkeypatch, FakeOrchestrator(
-        exc=LLMOutputError("Planner returned invalid JSON: raw='抱歉，我无法…'")
-    ))
+    _use_orchestrator(
+        monkeypatch, FakeOrchestrator(exc=LLMOutputError("Planner returned invalid JSON: raw='抱歉，我无法…'"))
+    )
     resp = _client().post("/api/ask", json={"question": "今天A股发生了什么？"})
     assert resp.status_code == 502, "上游模型输出坏了不该报成客户端错误"
     assert not resp.json()["detail"].startswith("Planner returned")  # 不把原始 prompt 回吐给客户端
@@ -146,6 +151,7 @@ def test_unexpected_error_is_500(monkeypatch):
 # ------------------------------------------------------------------ #
 # 预算层：同步端点必须会超时                                          #
 # ------------------------------------------------------------------ #
+
 
 def test_sync_endpoint_times_out_with_504(monkeypatch, caplog_mosaic):
     """回归：以前 /api/ask 没有任何总超时，浏览器只能干等到用户刷新页面。"""
@@ -177,6 +183,7 @@ def test_health_exposes_budget():
 # ------------------------------------------------------------------ #
 # SSE：心跳保活 + 用 result 事件表达失败                              #
 # ------------------------------------------------------------------ #
+
 
 class FakeGraphForErrors:
     """模拟 compiled graph 的 astream：可配置延迟或抛异常。
@@ -224,7 +231,8 @@ def test_stream_emits_heartbeats_then_timeout(monkeypatch):
     """回归：以前整个调查期间连接上一个字节都没有，且 60s 必然超时。"""
     _use_graph(monkeypatch, FakeGraphForErrors(delay=5.0))
     monkeypatch.setattr(
-        main, "_settings",
+        main,
+        "_settings",
         SimpleNamespace(
             research_budget_seconds=0.25,
             stream_heartbeat_seconds=0.05,

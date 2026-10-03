@@ -3,7 +3,6 @@
 from app.gateway.normalizer import (
     _deep_flatten_value,
     _extract_f10_list_items,
-    _extract_metrics,
     _is_eastmoney_f10_tool,
     infer_domain_from_tool,
     normalize_tool_result,
@@ -34,21 +33,15 @@ class TestDomainFix:
 
     def test_infer_domain_f10_finance_is_ashare(self):
         """infer_domain_from_tool 对 F10 finance 工具应返回 a_share。"""
-        assert infer_domain_from_tool(
-            "finance_eastmoney_f10_finance_get"
-        ) == "a_share"
+        assert infer_domain_from_tool("finance_eastmoney_f10_finance_get") == "a_share"
 
     def test_infer_domain_f10_business_is_ashare(self):
         """infer_domain_from_tool 对 F10 business 工具应返回 a_share。"""
-        assert infer_domain_from_tool(
-            "business_eastmoney_f10_business_get"
-        ) == "a_share"
+        assert infer_domain_from_tool("business_eastmoney_f10_business_get") == "a_share"
 
     def test_infer_domain_f10_shareholders_is_ashare(self):
         """infer_domain_from_tool 对 F10 shareholders 工具应返回 a_share。"""
-        assert infer_domain_from_tool(
-            "shareholders_eastmoney_f10_shareholders_get"
-        ) == "a_share"
+        assert infer_domain_from_tool("shareholders_eastmoney_f10_shareholders_get") == "a_share"
 
     def test_infer_domain_detail_is_ashare(self):
         """infer_domain_from_tool 对 detail 工具应返回 a_share。"""
@@ -57,6 +50,7 @@ class TestDomainFix:
     def test_hk_quote_key_still_resolves(self):
         """hk_quote key 仍能正确解析到 quote_tencent_quote_get。"""
         from app.gateway.tool_registry import BY_KEY
+
         meta = BY_KEY["hk_quote"]
         assert meta.tool_name == "quote_tencent_quote_get"
 
@@ -128,10 +122,15 @@ class TestExtractF10ListItems:
         result = []
         obj = [{"name": "ROE", "value": 12.5}, {"name": "PE", "value": 15.2}]
         _extract_f10_list_items(
-            obj, "data", result,
+            obj,
+            "data",
+            result,
             _tool="finance_eastmoney_f10_finance_get",
-            _domain="a_share", _status="success",
-            _partial=False, _timestamp=None, _source=None,
+            _domain="a_share",
+            _status="success",
+            _partial=False,
+            _timestamp=None,
+            _source=None,
         )
         metrics = {d.metric: d.value for d in result}
         assert "data[0].name" in metrics
@@ -150,10 +149,15 @@ class TestExtractF10ListItems:
             {"holder_name": "李四", "holding_pct": 10.0, "shares": 98765432},
         ]
         _extract_f10_list_items(
-            obj, "data", result,
+            obj,
+            "data",
+            result,
             _tool="shareholders_eastmoney_f10_shareholders_get",
-            _domain="a_share", _status="success",
-            _partial=False, _timestamp=None, _source=None,
+            _domain="a_share",
+            _status="success",
+            _partial=False,
+            _timestamp=None,
+            _source=None,
         )
         metrics = {d.metric: d.value for d in result}
         # 字符串字段
@@ -169,9 +173,15 @@ class TestExtractF10ListItems:
         """非列表输入返回空结果。"""
         result = []
         _extract_f10_list_items(
-            "not a list", "data", result,
-            _tool="test", _domain="a_share", _status="success",
-            _partial=False, _timestamp=None, _source=None,
+            "not a list",
+            "data",
+            result,
+            _tool="test",
+            _domain="a_share",
+            _status="success",
+            _partial=False,
+            _timestamp=None,
+            _source=None,
         )
         assert result == []
 
@@ -184,9 +194,15 @@ class TestExtractF10ListItems:
             {"name": "PE", "value": 15.2},
         ]
         _extract_f10_list_items(
-            obj, "data", result,
-            _tool="test", _domain="a_share", _status="success",
-            _partial=False, _timestamp=None, _source=None,
+            obj,
+            "data",
+            result,
+            _tool="test",
+            _domain="a_share",
+            _status="success",
+            _partial=False,
+            _timestamp=None,
+            _source=None,
         )
         # 只提取 dict 项
         names = [d.value for d in result if d.metric.endswith(".name")]
@@ -241,9 +257,7 @@ class TestF10NormalizeResult:
                 }
             },
         }
-        result = normalize_tool_result(
-            "finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw
-        )
+        result = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
         assert result.status == "success"
         assert result.normalized  # 应该有提取出的指标
 
@@ -259,9 +273,7 @@ class TestF10NormalizeResult:
                 {"name": "revenue", "value": 523456.78},
             ],
         }
-        result = normalize_tool_result(
-            "business_eastmoney_f10_business_get", {"symbol": "601398"}, raw
-        )
+        result = normalize_tool_result("business_eastmoney_f10_business_get", {"symbol": "601398"}, raw)
         assert result.status == "success"
         metrics = {d.metric: d.value for d in result.normalized}
         # _extract_f10_list_items 提取 key name 为 metric 名
@@ -277,7 +289,5 @@ class TestF10NormalizeResult:
     def test_domain_is_ashare_for_f10(self):
         """F10 工具的 domain 应为 a_share。"""
         raw = {"data": {"test": 1}}
-        result = normalize_tool_result(
-            "finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw
-        )
+        result = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
         assert result.normalized[0].domain == "a_share"

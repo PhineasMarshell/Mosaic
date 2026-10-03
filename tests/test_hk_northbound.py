@@ -1,15 +1,10 @@
 """测试港股通北向资金数据获取模块。"""
 
-import json
-
-import pytest
-
 from app.research.hk_northbound import (
     _build_params,
     _parse_index,
     _parse_northbound,
 )
-
 
 # ------------------------------------------------------------------ #
 # _build_params                                                        #
@@ -31,7 +26,8 @@ class TestBuildParams:
 
     def test_all_secids_valid(self):
         from app.research.hk_northbound import _SECID_MAP
-        for key, secid in _SECID_MAP.items():
+
+        for _key, secid in _SECID_MAP.items():
             assert "." in secid  # Eastmoney secid format requires dot
             assert len(secid.split(".")) == 2  # market.code
 

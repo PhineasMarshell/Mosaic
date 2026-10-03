@@ -1,7 +1,5 @@
 """tests/test_models_multi_domain.py — 多域数据模型测试。"""
 
-import pytest
-
 from app.models.research import (
     DEFAULT_DOMAINS,
     MarketDomain,
@@ -40,33 +38,23 @@ class TestResearchIntentMultiDomain:
         assert intent.domain == "a_share"
 
     def test_can_set_crypto_domain(self):
-        intent = ResearchIntent(
-            question="BTC 现在情况如何？", domain="crypto"
-        )
+        intent = ResearchIntent(question="BTC 现在情况如何？", domain="crypto")
         assert intent.domain == "crypto"
 
     def test_can_set_us_stock_domain(self):
-        intent = ResearchIntent(
-            question="苹果股价走势怎样？", domain="us_stock"
-        )
+        intent = ResearchIntent(question="苹果股价走势怎样？", domain="us_stock")
         assert intent.domain == "us_stock"
 
     def test_can_set_macro_domain(self):
-        intent = ResearchIntent(
-            question="本周 CPI 数据发布了吗？", domain="macro"
-        )
+        intent = ResearchIntent(question="本周 CPI 数据发布了吗？", domain="macro")
         assert intent.domain == "macro"
 
     def test_task_types_extended(self):
         # 验证新增的 task 类型可以被接受
-        intent1 = ResearchIntent(
-            question="研究贵州茅台", domain="a_share", task="company_research"
-        )
+        intent1 = ResearchIntent(question="研究贵州茅台", domain="a_share", task="company_research")
         assert intent1.task == "company_research"
 
-        intent2 = ResearchIntent(
-            question="监控市场异常", domain="a_share", task="anomaly_detection"
-        )
+        intent2 = ResearchIntent(question="监控市场异常", domain="a_share", task="anomaly_detection")
         assert intent2.task == "anomaly_detection"
 
     def test_model_dump_and_validate_roundtrip(self):

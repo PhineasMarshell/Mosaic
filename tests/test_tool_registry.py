@@ -1,4 +1,4 @@
-from app.gateway.tool_registry import by_category, resolve_tool, registry_text
+from app.gateway.tool_registry import by_category, registry_text, resolve_tool
 
 
 def test_registry_resolves_core_tool():

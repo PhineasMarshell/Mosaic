@@ -12,13 +12,12 @@ Coverage:
 import pytest
 
 from app.detector.anomaly import (
-    AnomalyRecord,
     ALL_RULES,
+    AnomalyRecord,
     _extract_numeric,
     _matches_metric,
     detect_anomalies,
 )
-
 
 # ── _extract_numeric Tests ────────────────
 
@@ -143,10 +142,14 @@ class TestDetectCryptoAnomalies:
         assert len(liq_found) >= 1
 
     def test_no_false_positive_on_normal_values(self):
-        results = [MockResult([
-            MockDatum("openInterest", 2.0),   # below threshold
-            MockDatum("fundingRate", 0.02),    # below threshold
-        ])]
+        results = [
+            MockResult(
+                [
+                    MockDatum("openInterest", 2.0),  # below threshold
+                    MockDatum("fundingRate", 0.02),  # below threshold
+                ]
+            )
+        ]
         anomalies = detect_anomalies(results, domain="crypto")
         # Should have no HIGH or CRITICAL crypto anomalies
         high_sev = [a for a in anomalies if a.severity in ("high", "critical")]
@@ -187,10 +190,14 @@ class TestSeveritySorting:
     def test_sorted_by_severity(self):
         """Anomalies should be sorted: critical > high > medium > low."""
         # This implicitly tests sorting if any combination of thresholds triggers
-        results = [MockResult([
-            MockDatum("openInterest", 8.0),      # → high
-            MockDatum("fundingRate", 0.6),        # → critical
-        ])]
+        results = [
+            MockResult(
+                [
+                    MockDatum("openInterest", 8.0),  # → high
+                    MockDatum("fundingRate", 0.6),  # → critical
+                ]
+            )
+        ]
         anomalies = detect_anomalies(results, domain="crypto")
         # Critical should come before high
         if len(anomalies) >= 2:

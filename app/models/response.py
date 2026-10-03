@@ -1,4 +1,5 @@
 from typing import Any, Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -25,9 +26,9 @@ class MarketIntelligence(BaseModel):
     why: list[str] = Field(default_factory=list)
     evidence: list[EvidenceItem] = Field(default_factory=list)
     strong_areas: list[str] = Field(default_factory=list)  # What's Moving — PRD §26
-    what_changed: list[str] = Field(default_factory=list)   # 与之前相比的变化 — PRD §10
+    what_changed: list[str] = Field(default_factory=list)  # 与之前相比的变化 — PRD §10
     what_matters: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)          # 反证与风险 — PRD §23
+    risks: list[str] = Field(default_factory=list)  # 反证与风险 — PRD §23
     data_caveats: list[str] = Field(default_factory=list)
     anomalies: list[dict[str, Any]] = Field(default_factory=list)  # Anomaly Radar — PRD §29-30
     confidence: Literal["high", "medium", "low"] = "low"

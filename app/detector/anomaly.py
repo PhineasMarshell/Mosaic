@@ -16,7 +16,7 @@
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,14 +30,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AnomalyRecord:
     """单条异常记录。"""
+
     id: str
-    type: str              # oi_spike, liquidation_wave, limit_up_surge 等
-    domain: str            # a_share | crypto | ...
-    severity: str          # low | medium | high | critical
-    description: str       # 人类可读描述
-    metric: str            # 触发的指标名称
-    value: Any             # 当前值
-    normal_range: str      # 正常范围描述
+    type: str  # oi_spike, liquidation_wave, limit_up_surge 等
+    domain: str  # a_share | crypto | ...
+    severity: str  # low | medium | high | critical
+    description: str  # 人类可读描述
+    metric: str  # 触发的指标名称
+    value: Any  # 当前值
+    normal_range: str  # 正常范围描述
     possible_meaning: str  # 可能含义
     status: str = "investigating"  # investigating | confirmed | false_positive
     timestamp: str = ""
@@ -65,14 +66,15 @@ class AnomalyRecord:
 
 class _Rule:
     """单个检测规则。"""
+
     def __init__(
         self,
         rule_id: str,
         rule_type: str,
         domain: str,
-        metric_pattern: str,   # 用于匹配的指标名关键词
-        threshold: float,       # 触发阈值
-        direction: str,         # "gt" (大于) | "lt" (小于)
+        metric_pattern: str,  # 用于匹配的指标名关键词
+        threshold: float,  # 触发阈值
+        direction: str,  # "gt" (大于) | "lt" (小于)
         severity: str,
         description_template: str,
         possible_meaning: str,
@@ -283,7 +285,6 @@ def detect_anomalies(
         for datum in normalized:
             metric = getattr(datum, "metric", "") or ""
             value = getattr(datum, "value", None)
-            source_tool = getattr(result, "tool", "unknown")
 
             num_value = _extract_numeric(value)
             if num_value is None:
@@ -317,8 +318,12 @@ def detect_anomalies(
                     results.append(record)
                     logger.info(
                         "Anomaly detected: %s [%s] %s=%.2f threshold=%s %s",
-                        rule.rule_id, rule.severity, metric, num_value,
-                        rule.threshold, rule.possible_meaning,
+                        rule.rule_id,
+                        rule.severity,
+                        metric,
+                        num_value,
+                        rule.threshold,
+                        rule.possible_meaning,
                     )
 
     # Sort by severity: critical > high > medium > low
@@ -328,7 +333,8 @@ def detect_anomalies(
     if results:
         logger.info(
             "Detected %d anomalies out of %d tool results",
-            len(results), len(tool_results),
+            len(results),
+            len(tool_results),
         )
 
     return results

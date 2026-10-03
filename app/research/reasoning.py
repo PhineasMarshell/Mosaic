@@ -7,6 +7,7 @@
 """
 
 import json
+
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
@@ -54,7 +55,7 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
     # 建立 evidence_id → Evidence 的查找表
     id_to_evidence = {e.id: e for e in original_evidence}
 
-    for raw_item in (raw_evidence or []):
+    for raw_item in raw_evidence or []:
         if not isinstance(raw_item, dict):
             continue
 
@@ -68,34 +69,38 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
         if is_old_format:
             # 旧格式：{claim, evidence_ids}
             matched_count = 0
-            for eid in (ev_ids or []):
+            for eid in ev_ids or []:
                 ev = id_to_evidence.get(eid)
                 if ev:
                     matched_count += 1
-                    items.append(EvidenceItem(
-                        id=eid,
-                        source_tool=ev.source_tool,
-                        domain=ev.domain,
-                        metric=ev.metric,
-                        value=ev.value,
-                        timestamp=ev.timestamp,
-                        source=ev.source,
-                        status=ev.status,
-                        partial=ev.partial,
-                        note=f"{claim} | {ev.note}" if ev.note else claim,
-                    ))
+                    items.append(
+                        EvidenceItem(
+                            id=eid,
+                            source_tool=ev.source_tool,
+                            domain=ev.domain,
+                            metric=ev.metric,
+                            value=ev.value,
+                            timestamp=ev.timestamp,
+                            source=ev.source,
+                            status=ev.status,
+                            partial=ev.partial,
+                            note=f"{claim} | {ev.note}" if ev.note else claim,
+                        )
+                    )
             # 如果没有匹配的证据IDs，至少创建一条说明性证据
             # （注意：matched_count 按每个 claim 单独计数，不是全局累计 —— 避免漏掉后续 claim）
             if matched_count == 0 and claim:
-                items.append(EvidenceItem(
-                    id="evidence-interp",
-                    source_tool="reasoning_engine",
-                    metric="interpretation",
-                    value=claim,
-                    status="error",       # 没有证据支撑，标记为错误而非成功
-                    partial=True,
-                    note=claim,
-                ))
+                items.append(
+                    EvidenceItem(
+                        id="evidence-interp",
+                        source_tool="reasoning_engine",
+                        metric="interpretation",
+                        value=claim,
+                        status="error",  # 没有证据支撑，标记为错误而非成功
+                        partial=True,
+                        note=claim,
+                    )
+                )
         else:
             # 新格式：从真实 Evidence 取 value/status/partial/source_tool/domain/metric，
             # LLM 只负责提供 note / interpretation。未知 id → 丢弃（不凭空编造证据）。
@@ -112,20 +117,26 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
 
             llm_note = raw_item.get("note")
             interpretation = raw_item.get("interpretation") or ""
-            combined_note = f"{llm_note} — {interpretation}".strip() if llm_note and interpretation else (llm_note or interpretation)
+            combined_note = (
+                f"{llm_note} — {interpretation}".strip()
+                if llm_note and interpretation
+                else (llm_note or interpretation)
+            )
 
-            items.append(EvidenceItem(
-                id=item_id,
-                source_tool=original_ev.source_tool,
-                domain=original_ev.domain,
-                metric=original_ev.metric,
-                value=original_ev.value,
-                timestamp=original_ev.timestamp,
-                source=original_ev.source,
-                status=original_ev.status,
-                partial=original_ev.partial,
-                note=combined_note if combined_note else None,
-            ))
+            items.append(
+                EvidenceItem(
+                    id=item_id,
+                    source_tool=original_ev.source_tool,
+                    domain=original_ev.domain,
+                    metric=original_ev.metric,
+                    value=original_ev.value,
+                    timestamp=original_ev.timestamp,
+                    source=original_ev.source,
+                    status=original_ev.status,
+                    partial=original_ev.partial,
+                    note=combined_note if combined_note else None,
+                )
+            )
 
     return items
 
@@ -147,11 +158,7 @@ class ReasoningEngine:
         history_context: str = "",
         findings: list | None = None,
     ) -> MarketIntelligence:
-        normalized_data = [
-            datum.model_dump()
-            for result in results
-            for datum in result.normalized
-        ]
+        normalized_data = [datum.model_dump() for result in results for datum in result.normalized]
 
         # 拼装 findings 段（放在 history_context 之前）
         parts: list[str] = []
@@ -232,11 +239,8 @@ class ReasoningEngine:
             return MarketIntelligence.model_validate(payload)
         except ValidationError as exc:
             # 后处理已尽力兜底，仍不符合 schema → 上游模型的问题，不是客户端入参问题
-            raise LLMOutputError(
-                f"Reasoning returned JSON that violates the schema: {exc}"
-            ) from exc
+            raise LLMOutputError(f"Reasoning returned JSON that violates the schema: {exc}") from exc
         except (TypeError, AttributeError, KeyError) as exc:
             raise LLMOutputError(
-                f"Reasoning returned JSON that could not be post-processed: "
-                f"{type(exc).__name__}: {exc}"
+                f"Reasoning returned JSON that could not be post-processed: {type(exc).__name__}: {exc}"
             ) from exc

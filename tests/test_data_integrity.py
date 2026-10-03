@@ -4,7 +4,6 @@
 不报错、不打日志、测试全绿，但喂给 LLM 和展示给用户的东西是错的。
 """
 
-import asyncio
 import json
 import sqlite3
 import tempfile
@@ -13,17 +12,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.cache import Cache
 from app.config import Settings
 from app.errors import LLMOutputError
-from app.gateway import normalizer
 from app.gateway.normalizer import normalize_tool_result
 from app.gateway.tool_registry import get_enabled_domains
-from app.llm_json import extract_json_text, parse_json_object
+from app.llm_json import parse_json_object
 from app.memory.storage import MarketMemory
-from app.models.market import ToolResult
 from app.models.research import ResearchPlan
-from app.models.response import MarketIntelligence
 
 
 def _settings(**over):
@@ -33,6 +28,7 @@ def _settings(**over):
 # ================================================================== #
 # B1.1  没有数据就必须是 error                                        #
 # ================================================================== #
+
 
 def test_raw_none_without_error_is_not_success():
     """HTTP 401 / MCP 失败以前会走到这里，产出 value="None" 的"成功"证据。"""
@@ -58,15 +54,17 @@ def test_empty_dict_is_not_treated_as_no_data():
 # B1.4  截断必须留末尾（时间序列）并且说出来                            #
 # ================================================================== #
 
+
 def _candles(n):
     """升序日线，收盘价 = 100 + i，便于断言"保留的是哪一段"。"""
-    return [{"t": 1700000000000 + i * 86400000, "o": 100 + i, "h": 105 + i,
-             "l": 95 + i, "c": 100 + i, "v": 1000} for i in range(n)]
+    return [
+        {"t": 1700000000000 + i * 86400000, "o": 100 + i, "h": 105 + i, "l": 95 + i, "c": 100 + i, "v": 1000}
+        for i in range(n)
+    ]
 
 
 def _closes(result):
-    return {int(d.metric.split("[")[1].split("]")[0]): d.value
-            for d in result.normalized if d.metric.endswith(".c")}
+    return {int(d.metric.split("[")[1].split("]")[0]): d.value for d in result.normalized if d.metric.endswith(".c")}
 
 
 def test_time_series_truncation_keeps_the_newest():
@@ -84,7 +82,9 @@ def test_time_series_truncation_keeps_the_newest():
 
 def test_time_series_truncation_is_reported():
     r = normalize_tool_result(
-        "klines_market_klines_post", {}, {"candles": _candles(90), "count": 90},
+        "klines_market_klines_post",
+        {},
+        {"candles": _candles(90), "count": 90},
     )
     assert r.status == "partial"
     assert r.partial is True
@@ -96,10 +96,11 @@ def test_ranked_list_truncation_keeps_the_head():
     """排行榜/名单类不是时间序列，头部才是重点。"""
     rows = [{"rank": i, "name": f"stock{i}", "value": i} for i in range(90)]
     r = normalize_tool_result(
-        "public_limit_up_pool_ashare_master_limit_up_pool_get", {}, {"data": rows},
+        "public_limit_up_pool_ashare_master_limit_up_pool_get",
+        {},
+        {"data": rows},
     )
-    idx = sorted({int(d.metric.split("[")[1].split("]")[0])
-                  for d in r.normalized if "data[" in d.metric})
+    idx = sorted({int(d.metric.split("[")[1].split("]")[0]) for d in r.normalized if "data[" in d.metric})
     assert idx[0] == 0 and idx[-1] == 49
     assert r.partial is True and "first" in (r.note or "")
 
@@ -114,7 +115,8 @@ def test_no_truncation_no_partial_no_note():
 def test_upstream_note_is_preserved():
     """gateway 契约：partial=true 时另有 note 说明原因。以前被 _METADATA_KEYS 丢掉。"""
     r = normalize_tool_result(
-        "klines_market_klines_post", {},
+        "klines_market_klines_post",
+        {},
         {"candles": _candles(3), "partial": True, "note": "hyperliquid 超出保留期"},
     )
     assert r.partial is True
@@ -130,6 +132,7 @@ def test_count_reaches_evidence_so_truncation_is_cross_checkable():
 # ================================================================== #
 # B1.2  上游失败必须变成 error                                        #
 # ================================================================== #
+
 
 @pytest.mark.asyncio
 async def test_mcp_is_error_becomes_error_result():
@@ -190,9 +193,12 @@ async def test_http_401_is_an_error_not_a_none_success():
     """回归：last_error 在首次尝试时还是 None，于是 401 变成 value="None" 的成功证据。"""
     from app.gateway.http_client import MarketGatewayHttpClient
 
-    client = MarketGatewayHttpClient(_settings(
-        market_gateway_mode="http", market_gateway_api_key="k",
-    ))
+    client = MarketGatewayHttpClient(
+        _settings(
+            market_gateway_mode="http",
+            market_gateway_api_key="k",
+        )
+    )
 
     class FakeResponse:
         status_code = 401
@@ -218,6 +224,7 @@ async def test_http_401_is_an_error_not_a_none_success():
 # ================================================================== #
 # B1.3  写入必须真的落盘、且对别的连接可见                              #
 # ================================================================== #
+
 
 def _memory():
     return MarketMemory(db_path=Path(tempfile.mkdtemp()) / "t.db")
@@ -245,7 +252,7 @@ def test_writes_survive_a_restart():
     path = m.db_path
     m.save_turn("conv-1", "今天A股发生了什么？", "…")
     m.save_daily_state(data={"state_label": "RISK_OFF"})
-    m.conn.close()                      # 模拟进程退出
+    m.conn.close()  # 模拟进程退出
 
     reopened = MarketMemory(db_path=path)
     assert "今天A股发生了什么？" in reopened.get_conversation_history("conv-1", 10)
@@ -256,7 +263,7 @@ def test_conversation_history_round_trips_across_instances():
     """investigate() 以前自己 new MarketMemory()，读不到 main.py 单例写的轮次。"""
     m = _memory()
     m.save_turn("conv-9", "第一问", "第一答")
-    reader = MarketMemory(db_path=m.db_path)     # 不同实例、不同连接
+    reader = MarketMemory(db_path=m.db_path)  # 不同实例、不同连接
     history = reader.get_conversation_history("conv-9", 10)
     assert "第一问" in history and "第一答" in history
 
@@ -271,6 +278,7 @@ def test_get_memory_is_a_singleton():
 # B1.5  cross 不是一个可以研究的市场                                   #
 # ================================================================== #
 
+
 def test_enabled_domains_exclude_cross_and_unknown():
     domains = get_enabled_domains()
     assert "cross" not in domains, "cross 是工具可用性标记，不是研究目标"
@@ -284,31 +292,41 @@ def test_api_rejects_domain_cross():
 
     import app.main as main
 
-    resp = TestClient(main.app).post(
-        "/api/ask", json={"question": "贵州茅台怎么样", "domain": "cross"}
-    )
+    resp = TestClient(main.app).post("/api/ask", json={"question": "贵州茅台怎么样", "domain": "cross"})
     assert resp.status_code == 400
     assert "Unsupported domain" in resp.json()["detail"]
 
 
 def _plan(domain, steps=None):
-    return ResearchPlan.model_validate({
-        "intent": {"domain": domain, "task": "market_diagnosis", "time_scope": "today",
-                   "question": "q", "needs_comparison": False, "needs_evidence": True},
-        "steps": steps or [],
-    })
+    return ResearchPlan.model_validate(
+        {
+            "intent": {
+                "domain": domain,
+                "task": "market_diagnosis",
+                "time_scope": "today",
+                "question": "q",
+                "needs_comparison": False,
+                "needs_evidence": True,
+            },
+            "steps": steps or [],
+        }
+    )
 
 
 # ================================================================== #
 # B1.6  LLM 输出解析：三个调用点统一，且失败要归到 502                  #
 # ================================================================== #
 
-@pytest.mark.parametrize("content", [
-    '{"a": 1}',
-    '```json\n{"a": 1}\n```',
-    '```\n{"a": 1}\n```',
-    'Sure! Here you go: {"a": 1} — hope that helps.',
-])
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"a": 1}',
+        '```json\n{"a": 1}\n```',
+        '```\n{"a": 1}\n```',
+        'Sure! Here you go: {"a": 1} — hope that helps.',
+    ],
+)
 def test_parse_json_object_accepts_common_shapes(content):
     assert parse_json_object(content, source="Test") == {"a": 1}
 
@@ -338,12 +356,11 @@ def _stub_reasoning(content):
     engine = ReasoningEngine(_settings())
 
     async def create(**kwargs):
-        return SimpleNamespace(choices=[SimpleNamespace(
-            message=SimpleNamespace(content=content), finish_reason="stop")])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content), finish_reason="stop")]
+        )
 
-    engine.client = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-    )
+    engine.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     return engine
 
 
@@ -363,14 +380,24 @@ async def test_reasoning_evidence_without_id_graceful_degradation():
     """新行为：没有 id / id 不匹配的新格式证据被静默丢弃。"""
     # reason() 内部调用 _parse_evidence(raw_ev, []) — evidence=[] 时所有项都被丢弃
     # 但模型不应该崩溃或返回 400，而是生成一个空证据的报告
-    engine = _stub_reasoning(json.dumps({
-        "market_state": "走强", "what_happened": "x",
-        "evidence": [
-            {"id": "e-real", "source_tool": "sentiment", "metric": "risk_on",
-             "value": 0.5, "status": "success"},
-            {"source_tool": "klines", "metric": "price", "value": 100},  # 无 id
-        ],
-    }))
+    engine = _stub_reasoning(
+        json.dumps(
+            {
+                "market_state": "走强",
+                "what_happened": "x",
+                "evidence": [
+                    {
+                        "id": "e-real",
+                        "source_tool": "sentiment",
+                        "metric": "risk_on",
+                        "value": 0.5,
+                        "status": "success",
+                    },
+                    {"source_tool": "klines", "metric": "price", "value": 100},  # 无 id
+                ],
+            }
+        )
+    )
     report = await engine.reason("q", [], [])
     assert report.what_happened == "x"  # 报告仍然生成，只是没有证据
 

@@ -24,10 +24,7 @@ class GateNode:
                 state = state.model_dump(exclude_none=False)
             results = state.get("results", [])
             # Convert plain dicts back to ToolResult if needed
-            tool_results: list[ToolResult] = [
-                ToolResult(**r) if isinstance(r, dict) else r
-                for r in results
-            ]
+            tool_results: list[ToolResult] = [ToolResult(**r) if isinstance(r, dict) else r for r in results]
             gate: EvidenceGateResult = run_evidence_gate(tool_results)
             return {
                 "gate": gate,

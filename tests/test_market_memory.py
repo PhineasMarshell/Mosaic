@@ -41,10 +41,13 @@ def memory():
 
 class TestDailyState:
     def test_save_and_retrieve(self, memory):
-        memory.save_daily_state(date="2025-09-01", data={
-            "state_label": "Risk-On",
-            "strong_areas": ["Robotics"],
-        })
+        memory.save_daily_state(
+            date="2025-09-01",
+            data={
+                "state_label": "Risk-On",
+                "strong_areas": ["Robotics"],
+            },
+        )
         state = memory.get_daily_state("2025-09-01")
         assert state is not None
         assert state["state_label"] == "Risk-On"
@@ -77,8 +80,8 @@ class TestRecentStates:
     def test_get_recent_states(self, memory):
         dates = ["2025-09-03", "2025-09-04", "2025-09-05"]
         labels = ["Risk-On", "Mixed", "Risk-Off"]
-        for d, l in zip(dates, labels):
-            memory.save_daily_state(date=d, data={"state_label": l})
+        for d, label in zip(dates, labels, strict=True):
+            memory.save_daily_state(date=d, data={"state_label": label})
 
         recent = memory.get_recent_states(days=7)
         assert len(recent) >= 3
@@ -87,20 +90,26 @@ class TestRecentStates:
 
     def test_limited_by_days(self, memory):
         for i in range(10):
-            day = f"2025-08-{i+1:02d}"
+            day = f"2025-08-{i + 1:02d}"
             memory.save_daily_state(date=day, data={"state_label": f"Day{i}"})
 
         recent = memory.get_recent_states(days=3)
         assert len(recent) <= 3
 
     def test_domain_filter(self, memory):
-        memory.save_daily_state(date="2025-09-01", data={
-            "a-share": {"state_label": "Cooling"},
-            "state_label": "Mixed",
-        })
-        memory.save_daily_state(date="2025-09-02", data={
-            "state_label": "Risk-On",
-        })
+        memory.save_daily_state(
+            date="2025-09-01",
+            data={
+                "a-share": {"state_label": "Cooling"},
+                "state_label": "Mixed",
+            },
+        )
+        memory.save_daily_state(
+            date="2025-09-02",
+            data={
+                "state_label": "Risk-On",
+            },
+        )
 
         filtered = memory.get_recent_states(days=7, domain="a_share")
         assert all("_file_date" in r and "a-share" in r for r in filtered)
@@ -122,7 +131,7 @@ class TestAnomalyRecording:
             "description": "OI +8.2%",
             "domain": "crypto",
         }
-        record_id = memory.record_anomaly(anomaly, date="2025-09-05")
+        memory.record_anomaly(anomaly, date="2025-09-05")
         anomalies = memory.get_anomalies()
         assert len(anomalies) >= 1
         assert anomalies[0]["type"] == "oi_spike"
@@ -180,23 +189,17 @@ class TestResearchRecords:
             question="Test question content",
             response={"data": "test"},
         )
-        rows = list(memory.conn.execute(
-            "SELECT question FROM research_records ORDER BY created_at DESC"
-        ).fetchall())
+        rows = list(memory.conn.execute("SELECT question FROM research_records ORDER BY created_at DESC").fetchall())
         assert any(r[0] == "Test question content" for r in rows)
 
     def test_default_user_id(self, memory):
         memory.save_research(question="Q", response={})
-        row = memory.conn.execute(
-            "SELECT user_id FROM research_records LIMIT 1"
-        ).fetchone()
+        row = memory.conn.execute("SELECT user_id FROM research_records LIMIT 1").fetchone()
         assert row[0] == "anonymous"
 
     def test_custom_user_id(self, memory):
         memory.save_research(question="Q", response={}, user_id="alice")
-        row = memory.conn.execute(
-            "SELECT user_id FROM research_records"
-        ).fetchone()
+        row = memory.conn.execute("SELECT user_id FROM research_records").fetchone()
         assert row[0] == "alice"
 
 
@@ -232,7 +235,7 @@ class TestConversationHistory:
     def test_last_n_limit(self, memory):
         conv_id = str(uuid4())
         for i in range(20):
-            memory.save_turn(conv_id, f"Q{i+1}", f"A{i+1}")
+            memory.save_turn(conv_id, f"Q{i + 1}", f"A{i + 1}")
 
         history = memory.get_conversation_history(conv_id, last_n=3)
         assert "Q18: Q18" in history
@@ -261,21 +264,27 @@ class TestContextGeneration:
 
     def test_includes_recent_states(self, memory):
         for d in ["2025-09-03", "2025-09-04", "2025-09-05"]:
-            memory.save_daily_state(date=d, data={
-                "state_label": "Risk-On",
-                "strong_areas": ["AI"],
-            })
+            memory.save_daily_state(
+                date=d,
+                data={
+                    "state_label": "Risk-On",
+                    "strong_areas": ["AI"],
+                },
+            )
 
         ctx = memory.get_context_for_question("今天和昨天有什么不同？")
         assert "Market State" in ctx
         assert "2025-09-05" in ctx
 
     def test_context_format_with_domains(self, memory):
-        memory.save_daily_state(date="2025-09-05", data={
-            "a-share": "Theme Cooling",
-            "crypto": "Funding Extreme",
-            "strong_areas": ["Semiconductors", "EV Battery"],
-        })
+        memory.save_daily_state(
+            date="2025-09-05",
+            data={
+                "a-share": "Theme Cooling",
+                "crypto": "Funding Extreme",
+                "strong_areas": ["Semiconductors", "EV Battery"],
+            },
+        )
 
         ctx = memory.get_context_for_question("市场怎么样？")
         assert "A股=Theme Cooling" in ctx

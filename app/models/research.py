@@ -12,24 +12,27 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 # ------------------------------------------------------------------ #
 # 市场域定义 — 新增市场只需在此添加字面量并在 tool_registry 中注册   #
 # ------------------------------------------------------------------ #
 
 MarketDomain = Literal[
-    "a_share",       # A 股市场
-    "crypto",        # 加密货币
-    "hk_stock",      # 港股市场
-    "us_stock",      # 美股市场
-    "commodities",   # 大宗商品（黄金、铜、原油…）
-    "macro",         # 宏观经济
+    "a_share",  # A 股市场
+    "crypto",  # 加密货币
+    "hk_stock",  # 港股市场
+    "us_stock",  # 美股市场
+    "commodities",  # 大宗商品（黄金、铜、原油…）
+    "macro",  # 宏观经济
     "unknown",
 ]
 
 #: 默认启用哪些市场域；Planner 可据此做跨域决策。
 DEFAULT_DOMAINS: list[MarketDomain] = [
-    "a_share", "crypto", "hk_stock", "commodities", "us_stock",
+    "a_share",
+    "crypto",
+    "hk_stock",
+    "commodities",
+    "us_stock",
 ]
 
 
@@ -66,6 +69,6 @@ class ResearchPlan(BaseModel):
 class AnalystAssignment(BaseModel):
     """Supervisor 给某个 analyst 的工具调用分配。"""
 
-    analyst: str                                                # technical / fundamental / moneyflow / news / sentiment
+    analyst: str  # technical / fundamental / moneyflow / news / sentiment
     tool_calls: list[ToolCallPlan] = Field(default_factory=list)
-    budget: int = 0                                             # 本 analyst 本轮工具调用上限
+    budget: int = 0  # 本 analyst 本轮工具调用上限

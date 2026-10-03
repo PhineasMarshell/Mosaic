@@ -14,7 +14,6 @@ import httpx
 
 from app.config import Settings
 from app.gateway.normalizer import normalize_tool_result
-from app.gateway.tool_registry import resolve_tool
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +58,7 @@ class MarketGatewayHttpClient:
 
     async def __aenter__(self):
         if not self.settings.market_gateway_api_key:
-            raise RuntimeError(
-                "MARKET_GATEWAY_API_KEY is required when MARKET_GATEWAY_MODE=http"
-            )
+            raise RuntimeError("MARKET_GATEWAY_API_KEY is required when MARKET_GATEWAY_MODE=http")
 
         self.client = httpx.AsyncClient(
             base_url=self.settings.market_gateway_http_url.rstrip("/"),
@@ -132,12 +129,13 @@ class MarketGatewayHttpClient:
 
                 if response.status_code == 429:
                     # 限流：短暂等待后重试
-                    backoff = min(2 ** attempt, 10)
+                    backoff = min(2**attempt, 10)
                     logger.warning(
                         "Rate limited (%d), backing off %ds",
-                        response.status_code, backoff,
+                        response.status_code,
+                        backoff,
                     )
-                    last_error = f"Rate limited (429)"
+                    last_error = "Rate limited (429)"
                     await asyncio.sleep(backoff)
                     continue
 
@@ -149,7 +147,10 @@ class MarketGatewayHttpClient:
                 last_error = str(exc)
                 logger.warning(
                     "HTTP call %s attempt %d/%d failed: %s",
-                    tool_name, attempt + 1, max_attempts, exc,
+                    tool_name,
+                    attempt + 1,
+                    max_attempts,
+                    exc,
                 )
             except HTTPGatewayError as exc:
                 # 致命错误（认证/权限/请求非法），不再重试。
@@ -165,7 +166,10 @@ class MarketGatewayHttpClient:
                 last_error = str(exc)
                 logger.warning(
                     "HTTP call %s attempt %d/%d failed: %s",
-                    tool_name, attempt + 1, max_attempts, exc,
+                    tool_name,
+                    attempt + 1,
+                    max_attempts,
+                    exc,
                 )
 
             if attempt < max_attempts - 1:

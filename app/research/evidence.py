@@ -16,19 +16,38 @@ from typing import Any
 
 from app.gateway.normalizer import _is_eastmoney_f10_tool
 from app.models.evidence import Evidence
-from app.models.market import NormalizedDatum, ToolResult
-
+from app.models.market import ToolResult
 
 # ── 上限常量 ────────────────────────────────────
 _MAX_EVIDENCE_ITEMS = 80
 
 # ── 过滤键：原始工具参数（不是证据）─────────────
 _FILTERED_PARAM_KEYS = {
-    "exchange", "type", "interval", "start", "end", "symbol",
-    "q", "keyword", "refresh", "datasets",
-    "include_data", "settled_only", "limit", "offset", "direction",
-    "ok", "source", "source_used", "items", "missing",
-    "partial", "status", "note", "error", "detail",
+    "exchange",
+    "type",
+    "interval",
+    "start",
+    "end",
+    "symbol",
+    "q",
+    "keyword",
+    "refresh",
+    "datasets",
+    "include_data",
+    "settled_only",
+    "limit",
+    "offset",
+    "direction",
+    "ok",
+    "source",
+    "source_used",
+    "items",
+    "missing",
+    "partial",
+    "status",
+    "note",
+    "error",
+    "detail",
 }
 
 
@@ -179,18 +198,20 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
 
     for result in results:
         if result.status == "error":
-            evidence.append(Evidence(
-                id=f"evidence-{counter:03d}",
-                source_tool=result.tool,
-                domain="unknown",
-                metric="tool_status",
-                value=f"Failed: {result.error or 'unknown error'}"[:200],
-                timestamp=None,
-                source=None,
-                status="error",
-                partial=False,
-                note="",
-            ))
+            evidence.append(
+                Evidence(
+                    id=f"evidence-{counter:03d}",
+                    source_tool=result.tool,
+                    domain="unknown",
+                    metric="tool_status",
+                    value=f"Failed: {result.error or 'unknown error'}"[:200],
+                    timestamp=None,
+                    source=None,
+                    status="error",
+                    partial=False,
+                    note="",
+                )
+            )
             counter += 1
             continue
 
@@ -215,18 +236,20 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
             if candle_metrics:
                 summary = _extract_candle_summary_from_metrics(candle_metrics)
                 if summary.get("count", 0) > 0:
-                    evidence.append(Evidence(
-                        id=f"evidence-{counter:03d}",
-                        source_tool=result.tool,
-                        domain="crypto",
-                        metric="candle_summary",
-                        value=summary,
-                        timestamp=None,
-                        source=None,
-                        status="success",
-                        partial=False,
-                        note=f"聚合了 {summary['count']} 条 K 线数据",
-                    ))
+                    evidence.append(
+                        Evidence(
+                            id=f"evidence-{counter:03d}",
+                            source_tool=result.tool,
+                            domain="crypto",
+                            metric="candle_summary",
+                            value=summary,
+                            timestamp=None,
+                            source=None,
+                            status="success",
+                            partial=False,
+                            note=f"聚合了 {summary['count']} 条 K 线数据",
+                        )
+                    )
                     counter += 1
                 continue  # 不再添加单个 candle 指标
 
@@ -235,6 +258,7 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
                 # F10 数据：尝试进一步解析不可读值（dict/list → 数值）
                 if _is_eastmoney_f10_tool(result.tool) and isinstance(value, (dict, list)):
                     from app.gateway.normalizer import _deep_flatten_value
+
                     flattened = _deep_flatten_value(value)
                     if isinstance(flattened, (int, float)):
                         value = flattened
@@ -243,55 +267,59 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
                 elif isinstance(value, (dict, list)):
                     value = str(value)[:200]
 
-                evidence.append(Evidence(
-                    id=f"evidence-{counter:03d}",
-                    source_tool=result.tool,
-                    domain=result.normalized[0].domain if result.normalized else "unknown",
-                    metric=metric,
-                    value=value,
-                    timestamp=result.normalized[0].timestamp if result.normalized else None,
-                    source=result.normalized[0].source if result.normalized else None,
-                    status=result.status,
-                    partial=result.partial,
-                    note="",
-                ))
+                evidence.append(
+                    Evidence(
+                        id=f"evidence-{counter:03d}",
+                        source_tool=result.tool,
+                        domain=result.normalized[0].domain if result.normalized else "unknown",
+                        metric=metric,
+                        value=value,
+                        timestamp=result.normalized[0].timestamp if result.normalized else None,
+                        source=result.normalized[0].source if result.normalized else None,
+                        status=result.status,
+                        partial=result.partial,
+                        note="",
+                    )
+                )
                 counter += 1
 
             # 如果 normalized 全被过滤了，尝试从 raw 提取快照摘要
-            if not result.normalized or all(
-                _is_tool_param(d.metric) for d in result.normalized
-            ):
+            if not result.normalized or all(_is_tool_param(d.metric) for d in result.normalized):
                 if result.raw and isinstance(result.raw, dict):
                     snapshot_summary = _extract_snapshot_summary(result.raw, result.tool)
                     snapshot_summary.pop("source", None)
                     for metric, value in snapshot_summary.items():
-                        evidence.append(Evidence(
-                            id=f"evidence-{counter:03d}",
-                            source_tool=result.tool,
-                            domain="crypto",
-                            metric=metric,
-                            value=value,
-                            timestamp=None,
-                            source=result.raw.get("source_used") or result.raw.get("source"),
-                            status=result.status,
-                            partial=result.partial,
-                            note="",
-                        ))
+                        evidence.append(
+                            Evidence(
+                                id=f"evidence-{counter:03d}",
+                                source_tool=result.tool,
+                                domain="crypto",
+                                metric=metric,
+                                value=value,
+                                timestamp=None,
+                                source=result.raw.get("source_used") or result.raw.get("source"),
+                                status=result.status,
+                                partial=result.partial,
+                                note="",
+                            )
+                        )
                         counter += 1
 
         if not result.normalized and result.status in ("success", "partial"):
-            evidence.append(Evidence(
-                id=f"evidence-{counter:03d}",
-                source_tool=result.tool,
-                domain="unknown",
-                metric="tool_status",
-                value=result.status,
-                timestamp=None,
-                source=None,
-                status=result.status,
-                partial=result.partial,
-                note="",
-            ))
+            evidence.append(
+                Evidence(
+                    id=f"evidence-{counter:03d}",
+                    source_tool=result.tool,
+                    domain="unknown",
+                    metric="tool_status",
+                    value=result.status,
+                    timestamp=None,
+                    source=None,
+                    status=result.status,
+                    partial=result.partial,
+                    note="",
+                )
+            )
             counter += 1
 
     return evidence

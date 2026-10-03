@@ -6,16 +6,13 @@ from app.gateway.normalizer import (
     _make_summary,
     normalize_tool_result,
 )
-from app.models.market import NormalizedDatum
 
 
 class TestNormalizeToolResult:
     """测试正常化入口函数的行为。"""
 
     def test_error_path(self):
-        result = normalize_tool_result(
-            "overview", {}, None, error="connection refused"
-        )
+        result = normalize_tool_result("overview", {}, None, error="connection refused")
         assert result.status == "error"
         assert result.error == "connection refused"
         assert result.partial is False
@@ -70,9 +67,11 @@ class TestExtractMetrics:
         assert metrics["name"] == "test"
 
     def test_container_list(self):
-        result = _extract_metrics({
-            "items": [{"a": 1}, {"b": 2}],
-        })
+        result = _extract_metrics(
+            {
+                "items": [{"a": 1}, {"b": 2}],
+            }
+        )
         assert len(result) >= 2
         # 容器展开后生成 items[0], items[1] 以及嵌套对象的指标 a, b
         assert any(d.metric.startswith("items[") for d in result)
@@ -101,14 +100,12 @@ class TestInferDomain:
     """测试域名推断逻辑。"""
 
     def test_ashare_tools(self):
-        tools = ["ashare_sentiment_get", "xueqiu_quote_get",
-                 "tencent_price_get", "eastmoney_finance_get"]
+        tools = ["ashare_sentiment_get", "xueqiu_quote_get", "tencent_price_get", "eastmoney_finance_get"]
         for tool in tools:
             assert _infer_domain(tool) == "a_share"
 
     def test_crypto_tools(self):
-        tools = ["market_klines_post", "coinglass_funding_get",
-                 "hyperliquid_symbols_get"]
+        tools = ["market_klines_post", "coinglass_funding_get", "hyperliquid_symbols_get"]
         for tool in tools:
             assert _infer_domain(tool) == "crypto"
 

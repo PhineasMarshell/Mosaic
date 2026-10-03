@@ -63,9 +63,7 @@ async def test_morning_brief_uses_graph(monkeypatch):
 
     monkeypatch.setattr("app.agent.orchestrator.Orchestrator", _FakeOrchestratorSuccess)
 
-    result = await briefs.generate_morning_brief(
-        settings=Settings(), memory=_FakeMemory()
-    )
+    result = await briefs.generate_morning_brief(settings=Settings(), memory=_FakeMemory())
 
     assert result["title"] == "Good Morning. Here's what matters today."
     assert result["type"] == "morning"
@@ -82,9 +80,7 @@ async def test_evening_brief_uses_graph(monkeypatch):
 
     monkeypatch.setattr("app.agent.orchestrator.Orchestrator", _FakeOrchestratorSuccess)
 
-    result = await briefs.generate_evening_brief(
-        settings=Settings(), memory=_FakeMemory()
-    )
+    result = await briefs.generate_evening_brief(settings=Settings(), memory=_FakeMemory())
 
     assert result["title"] == "What actually happened today?"
     assert result["type"] == "evening"
@@ -106,9 +102,7 @@ async def test_morning_brief_fallback_to_memory(monkeypatch):
 
     monkeypatch.setattr("app.agent.orchestrator.Orchestrator", _FakeOrchestratorFail)
 
-    result = await briefs.generate_morning_brief(
-        settings=Settings(), memory=_FakeMemory()
-    )
+    result = await briefs.generate_morning_brief(settings=Settings(), memory=_FakeMemory())
 
     assert result["title"] == "Good Morning. Here's what matters today."
     assert result["type"] == "morning"
@@ -126,9 +120,7 @@ async def test_evening_brief_fallback_to_memory(monkeypatch):
 
     monkeypatch.setattr("app.agent.orchestrator.Orchestrator", _FakeOrchestratorFail)
 
-    result = await briefs.generate_evening_brief(
-        settings=Settings(), memory=_FakeMemory()
-    )
+    result = await briefs.generate_evening_brief(settings=Settings(), memory=_FakeMemory())
 
     assert result["title"] == "What actually happened today?"
     assert result["type"] == "evening"

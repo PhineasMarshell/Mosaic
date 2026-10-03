@@ -8,12 +8,9 @@ from openai import AsyncOpenAI
 
 from app.agent.prompts_graph import PLANNER_PROMPT
 from app.config import Settings
-from app.errors import LLMOutputError
 from app.gateway.tool_registry import registry_text
-from app.graph.state import ResearchState
 from app.llm_json import parse_json_object
 from app.models.research import DEFAULT_DOMAINS, ResearchPlan
-
 
 # 默认全部启用；后续可通过配置关闭某些域
 _ENABLED_DOMAINS: list = DEFAULT_DOMAINS
@@ -74,14 +71,12 @@ class SupervisorNode:
         conv_id = state.get("conversation_id") if isinstance(state, dict) else getattr(state, "conversation_id", None)
         if conv_id:
             from app.memory.storage import get_memory
+
             memory = get_memory()
-            conv_history = memory.get_conversation_history(
-                conv_id, self.settings.max_conversation_turns
-            )
+            conv_history = memory.get_conversation_history(conv_id, self.settings.max_conversation_turns)
 
         registry = registry_text()
         question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
-        domain = state.get("domain") if isinstance(state, dict) else getattr(state, "domain", None)
 
         prompt = PLANNER_PROMPT.format(
             question=question,
@@ -125,6 +120,7 @@ class SupervisorNode:
     def _build_route(self, plan: ResearchPlan) -> list:
         """将 ResearchPlan.steps 按工具 category 分组为 AnalystAssignment 列表。"""
         from app.gateway.tool_registry import resolve_tool
+
         groups: dict[str, list] = {}
         allowed = route_candidate_categories(self.settings)
         for step in plan.steps:
@@ -132,9 +128,9 @@ class SupervisorNode:
                 meta = resolve_tool(step.tool_key)
                 cat = meta.category
             except Exception:
-                cat = "technical"          # 无法解析的工具键兜底给技术面
+                cat = "technical"  # 无法解析的工具键兜底给技术面
             if cat not in allowed:
-                cat = "technical"          # 未启用的 category 暂归技术面
+                cat = "technical"  # 未启用的 category 暂归技术面
             groups.setdefault(cat, []).append(step)
         return [
             {"analyst": cat, "tool_calls": [s.model_dump() for s in steps], "budget": len(steps)}

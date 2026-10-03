@@ -17,10 +17,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.config import Settings
-from app.gateway.tool_registry import by_category
 from app.graph.state import AnalystName
 from app.graph.tool_runtime import ToolRuntime
-from app.models.market import NormalizedDatum, STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, Status, ToolResult
+from app.models.market import STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -44,20 +43,22 @@ class MarketAnalystNode:
 
     #: 无需 symbol 即可安全执行的 tool_name 白名单（GET / 聚合类端点）。
     #: 任何不在列表中的工具调用时必须提供 symbol，否则会因参数校验失败报错。
-    WHITELIST_NO_SYMBOL: set[str] = frozenset([
-        # —— technical (情绪/涨跌池/板块) ——
-        "public_sentiment_ashare_master_sentiment_get",
-        "public_limit_up_count_ashare_master_limit_up_count_get",
-        "public_limit_up_sectors_ashare_master_limit_up_sectors_get",
-        "public_limit_up_pool_ashare_master_limit_up_pool_get",
-        # —— crypto 无币种要求 ——
-        "hyperliquid_symbols_coinglass_hyperliquid_symbols_get",
-        "hyperliquid_user_count_coinglass_hyperliquid_user_count_get",
-        "hyperliquid_vaults_coinglass_hyperliquid_vaults_get",
-        "exchanges_market_exchanges_get",
-        "health_health_get",
-        "health_market_health_get",
-    ])
+    WHITELIST_NO_SYMBOL: set[str] = frozenset(
+        [
+            # —— technical (情绪/涨跌池/板块) ——
+            "public_sentiment_ashare_master_sentiment_get",
+            "public_limit_up_count_ashare_master_limit_up_count_get",
+            "public_limit_up_sectors_ashare_master_limit_up_sectors_get",
+            "public_limit_up_pool_ashare_master_limit_up_pool_get",
+            # —— crypto 无币种要求 ——
+            "hyperliquid_symbols_coinglass_hyperliquid_symbols_get",
+            "hyperliquid_user_count_coinglass_hyperliquid_user_count_get",
+            "hyperliquid_vaults_coinglass_hyperliquid_vaults_get",
+            "exchanges_market_exchanges_get",
+            "health_health_get",
+            "health_market_health_get",
+        ]
+    )
 
     def __init__(self, settings: Settings):
         """初始化分析员节点。"""
@@ -80,9 +81,7 @@ class MarketAnalystNode:
             cache_stats: dict[str, int] = {}
             called_signatures: set[str] = set()
 
-            for result in await self._execute_tools(
-                state, called_signatures
-            ):
+            for result in await self._execute_tools(state, called_signatures):
                 results.append(result)
                 tools_used.append(result.tool)
                 stats = getattr(result, "_cache_info", None)
@@ -95,16 +94,19 @@ class MarketAnalystNode:
 
             # 统一构建 Evidence 列表（§1 约定：source_tool / timestamp 语义）
             from app.research.evidence import build_evidence
+
             evidence_items = build_evidence(results)
 
             return {
                 "results": results,
-                "findings": [{
-                    "analyst": self.category,
-                    "digest": self._make_digest(tools_used, results),
-                    "tools_used": tools_used,
-                    "failed": False,
-                }],
+                "findings": [
+                    {
+                        "analyst": self.category,
+                        "digest": self._make_digest(tools_used, results),
+                        "tools_used": tools_used,
+                        "failed": False,
+                    }
+                ],
                 "evidence": evidence_items,
                 "tool_results": results,
                 "cache_stats": cache_stats,
@@ -115,12 +117,14 @@ class MarketAnalystNode:
             logger.warning("Analyst %s failed: %s", self.category, exc)
             return {
                 "errors": [f"{self.category} analysis failed: {exc}"],
-                "findings": [{
-                    "analyst": self.category,
-                    "digest": f"分析失败: {exc}",
-                    "tools_used": [],
-                    "failed": True,
-                }],
+                "findings": [
+                    {
+                        "analyst": self.category,
+                        "digest": f"分析失败: {exc}",
+                        "tools_used": [],
+                        "failed": True,
+                    }
+                ],
             }
 
     # ------------------------------------------------------------------ #
@@ -136,7 +140,7 @@ class MarketAnalystNode:
         # ① 正则匹配 6 位纯数字（"贵州茅台600519"/"股票代码000001"）
         # 优先精确匹配，避免把长串编号误认成代码
         candidates: list[str] = []
-        for match in re.finditer(r'(?<!\d)(\d{6})(?!\d)', question):
+        for match in re.finditer(r"(?<!\d)(\d{6})(?!\d)", question):
             code = match.group(1)
             if code not in candidates:
                 candidates.append(code)
@@ -200,7 +204,10 @@ class MarketAnalystNode:
         return results
 
     def _build_arguments(
-        self, meta, domain: str | None, stocks: list[str] | None = None,
+        self,
+        meta,
+        domain: str | None,
+        stocks: list[str] | None = None,
     ) -> dict:
         """根据工具和当前域构建调用参数。"""
         tool_name = meta.tool_name
@@ -219,9 +226,7 @@ class MarketAnalystNode:
 
         return arguments
 
-    def _make_digest(
-        self, tools_used: list[str], results: list[ToolResult]
-    ) -> str:
+    def _make_digest(self, tools_used: list[str], results: list[ToolResult]) -> str:
         """生成 ≤200 字的执行摘要，供 Reasoning 引用。"""
         successful = sum(1 for r in results if r.status == STATUS_SUCCESS)
         partial = sum(1 for r in results if r.status == STATUS_PARTIAL)
