@@ -31,4 +31,6 @@ jobs:
         run: ruff format --check app/ tests/
 
       - name: Run tests
-        run: pytest tests/ -q
+        run: |
+          set -o pipefail
+          pytest tests/ -q --tb=short 2>&1 | tail -200
