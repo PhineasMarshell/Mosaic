@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from app.agent.orchestrator import Orchestrator
+from app.agent.persistence import persist_research
 from app.config import get_settings
 from app.errors import LLMOutputError, UpstreamTimeoutError
 from app.logging_config import setup_logging
@@ -209,38 +210,9 @@ async def ask(request: dict):
 
         data = result.model_dump()
 
-        # 保存研究记录到 Memory
-        try:
-            memory.save_research(question, data)
-        except Exception as exc:
-            logger.debug("Memory save failed (non-fatal): %s", exc)
-
-        # 保存对话轮次到 Memory
-        if conversation_id:
-            try:
-                summary = f"{result.report.state_label}：{result.report.what_happened[:80]}…"
-                memory.save_turn(conversation_id, question, summary)
-            except Exception as exc:
-                logger.debug("Turn save failed (non-fatal): %s", exc)
-
-        # 更新 Daily State
-        try:
-            state_data = {
-                "market_state": result.report.market_state,
-                "state_label": result.report.state_label,
-                "strong_areas": result.report.strong_areas,
-                "confidence": result.report.confidence,
-                "anomalies": result.report.anomalies[:5] if result.report.anomalies else [],
-            }
-            from app.gateway.tool_registry import get_enabled_domains
-
-            for d in get_enabled_domains():
-                key = d.replace("_", "-")
-                domain_report = {"state_label": result.report.state_label}
-                state_data[key] = domain_report
-            memory.save_daily_state(data=state_data)
-        except Exception as exc:
-            logger.debug("Daily state save failed (non-fatal): %s", exc)
+        # T3：同步与 SSE 共用同一持久化逻辑，避免双路径漂移（SSE 曾读错字段层级，
+        # 把空摘要/空状态写入库）。
+        await persist_research(result, question, conversation_id)
 
         return JSONResponse(content=data)
     except TimeoutError as exc:
@@ -370,9 +342,10 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         yield json_event("progress", {"step": "done", "node": None, "message": "调查完成"})
 
         save_result = result.model_dump()
-        if conversation_id:
-            asyncio.create_task(_save_turn(conversation_id, question, save_result))
-        asyncio.create_task(_save_research_and_state(question, save_result))
+        # T3：SSE 与同步共用同一持久化函数，内部从 result.report 读字段；
+        # 旧实现读 model_dump() 顶层（字段嵌在 report 下），导致摘要恒空、当日状态
+        # 被空值覆盖且漏写 market_state。
+        asyncio.create_task(persist_research(result, question, conversation_id))
 
         yield json_event("result", save_result)
 
@@ -430,45 +403,6 @@ def _get_step_message(step: str) -> str:
         "reasoning": "正在生成结构化市场情报…",
     }
     return messages.get(step, "调查中…")
-
-
-async def _save_turn(conversation_id: str | None, question: str, report_dict: dict) -> None:
-    """后台保存对话轮次（非致命错误）。"""
-    if not conversation_id:
-        return
-    try:
-        state_label = report_dict.get("state_label", "")
-        what_happened = report_dict.get("what_happened", "")
-        summary = f"{state_label}：{what_happened[:80]}…" if what_happened else state_label
-        memory.save_turn(conversation_id, question, summary)
-    except Exception as exc:
-        logger.debug("Turn save failed (non-fatal): %s", exc)
-
-
-async def _save_research_and_state(question: str, report_dict: dict) -> None:
-    """后台保存研究记录和 Daily State（非致命错误）。"""
-    try:
-        memory.save_research(question, report_dict)
-    except Exception as exc:
-        logger.debug("Research save failed (non-fatal): %s", exc)
-
-    # Build daily state snapshot — mirrors logic in POST /api/ask
-    try:
-        state_data = {
-            "state_label": report_dict.get("state_label", ""),
-            "strong_areas": report_dict.get("strong_areas", []),
-            "confidence": report_dict.get("confidence", ""),
-            "anomalies": report_dict.get("anomalies", [])[:5] if report_dict.get("anomalies") else [],
-        }
-        from app.gateway.tool_registry import get_enabled_domains
-
-        for d in get_enabled_domains():
-            key = d.replace("_", "-")
-            domain_report = {"state_label": report_dict.get("state_label", "")}
-            state_data[key] = domain_report
-        memory.save_daily_state(data=state_data)
-    except Exception as exc:
-        logger.debug("Daily state save failed (non-fatal): %s", exc)
 
 
 @app.post("/api/ask/stream")
