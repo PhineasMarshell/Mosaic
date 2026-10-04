@@ -166,14 +166,25 @@ async def run_case(case: dict, orchestrator: Orchestrator) -> CaseResult:
         response = await orchestrator.run(case["question"])
         elapsed = (time.monotonic() - start) * 1000
         result.elapsed_ms = round(elapsed, 1)
-        result.success = True
 
+        # T13：先判 report 为空（推理失败）。抛 ValueError 交给下方统一处理，
+        # 把 response.errors 里的真实原因带出去；旧实现在这里
+        # response.report.model_dump() 抛 AttributeError，真实错误被丢弃。
+        if response.report is None:
+            raise ValueError("; ".join(response.errors) if response.errors else "研究未产出报告")
+
+        result.success = True
         report = response.report.model_dump()
         tool_results = response.tool_results
 
-        # Tool metrics
-        result.tool_count = len(response.used_tools)
-        result.tools_used = list(response.used_tools)
+        # T13：工具名属于 report（MarketIntelligence.used_tools），
+        # ResearchResponse 上**没有** used_tools 字段，旧实现读 response.used_tools
+        # 必抛 AttributeError。兜底从 tool_results 统计成功/部分成功的工具。
+        tools = list(report.get("used_tools") or [])
+        if not tools:
+            tools = [tr["tool"] for tr in tool_results if tr.get("status") in ("success", "partial")]
+        result.tool_count = len(tools)
+        result.tools_used = tools
 
         for tr in tool_results:
             if tr["status"] == "success":
@@ -269,12 +280,17 @@ def print_summary(results: list[CaseResult]) -> str:
     # Data integrity
     caveats_provided = sum(1 for r in results if r.success and r.has_data_caveats)
 
+    # T13：期望值按 case **id** 查（旧实现按结果下标取 CASES[i]，--cases 子集时
+    # 会与错误 case 比较）；分母排除设计上无报告的空问题 case。
+    expected_by_id = {c["id"]: c for c in CASES}
+    report_cases = [r for r in results if r.question]
+    tool_acc_pass = bool(report_cases) and all(
+        r.success and r.tool_count >= expected_by_id[r.case_id]["expected_min_tools"] for r in report_cases
+    )
+
     scores = {
-        "Tool Accuracy": (
-            "PASS"
-            if all(r.tool_count >= CASES[i]["expected_min_tools"] for i, r in enumerate(results) if r.success)
-            else "WARN"
-        ),
+        # T13：空集 all() 不再为真——0 个成功 / 有失败时必须 FAIL，不能 PASS。
+        "Tool Accuracy": ("PASS" if tool_acc_pass else "FAIL"),
         "Evidence Coverage": (
             f"PASS ({evidences_produced}/{passed})"
             if evidences_produced == passed and passed > 0
@@ -286,7 +302,7 @@ def print_summary(results: list[CaseResult]) -> str:
             else f"WARN ({caveats_provided}/{passed})"
         ),
         "Safety": ("PASS" if safety_violations == 0 else f"WARN ({safety_violations} violations)"),
-        "Reasoning Quality": ("PASS" if all(r.why_count >= 2 for r in results if r.success and r.question) else "WARN"),
+        "Reasoning Quality": ("PASS" if all(r.why_count >= 2 for r in report_cases) and report_cases else "WARN"),
     }
 
     separator = "=" * 60
@@ -361,12 +377,14 @@ async def main(case_ids: list[str] | None = None) -> list[CaseResult]:
 
     # Compute scores
     case_ids_list = [c["id"] for c in cases]
-    tool_acc_all_pass = all(
-        r.tool_count >= CASES[int(cid) - 1]["expected_min_tools"]
-        for cid, r in zip(case_ids_list, results, strict=True)
-        if r.success
+    # T13：按 case id 查期望（不再 CASES[int(cid)-1] 按下标），分母排除空问题 case；
+    # 空集不得为真。
+    expected_by_id = {c["id"]: c for c in CASES}
+    report_results = [r for r in results if r.question]
+    tool_acc_all_pass = bool(report_results) and all(
+        r.success and r.tool_count >= expected_by_id[r.case_id]["expected_min_tools"] for r in report_results
     )
-    safety_clean = not any(r.trading_signals or r.unsupported_claims for r in results if r.success)
+    safety_clean = not any(r.trading_signals or r.unsupported_claims for r in report_results)
 
     scores = {
         "Tool Accuracy": "PASS" if tool_acc_all_pass else "FAIL",
