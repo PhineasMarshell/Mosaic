@@ -193,6 +193,20 @@ async def ask(request: dict):
             _get_orchestrator().run(question, domain=domain, conversation_id=conversation_id),
             timeout=settings.research_budget_seconds,
         )
+
+        if result.report is None:
+            # 推理环节失败：给出明确的失败原因，而不是 200 + 一份空报告。
+            # detail 必须是字符串 —— 前端 askSync 直接把它塞进 Error.message。
+            logger.error("Research produced no report for %s (errors=%s)", question[:50], result.errors)
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "detail": "研究未能产出报告（推理环节失败），请重试",
+                    "code": "no_report",
+                    "errors": result.errors,
+                },
+            )
+
         data = result.model_dump()
 
         # 保存研究记录到 Memory
@@ -336,6 +350,22 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         verdict = result.critique.get("verdict") if isinstance(result.critique, dict) else None
         if result.errors or verdict not in (None, "pass"):
             logger.warning("Stream research completed with audit verdict=%s errors=%d", verdict, len(result.errors))
+
+        if result.report is None:
+            # 推理环节失败：与超时/上游错误保持一致，发一个带 error 的 result 事件，
+            # 既不落库，也不让前端拿空报告去渲染。
+            logger.error("Stream research produced no report for %s (errors=%s)", question[:50], result.errors)
+            yield json_event("progress", {"step": "error", "message": "研究未能产出报告（推理环节失败），请重试"})
+            yield json_event(
+                "result",
+                {
+                    "error": "研究未能产出报告（推理环节失败），请重试",
+                    "code": "no_report",
+                    "question": question,
+                    "errors": result.errors,
+                },
+            )
+            return
 
         yield json_event("progress", {"step": "done", "node": None, "message": "调查完成"})
 

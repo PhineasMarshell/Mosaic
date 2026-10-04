@@ -37,7 +37,12 @@ class MarketIntelligence(BaseModel):
 
 class ResearchResponse(BaseModel):
     question: str
-    report: MarketIntelligence
+    #: reasoning 环节失败时为空。此前该字段是必填的，导致"没产出报告"这种最需要
+    #: 被解释的失败反而在组装响应时就抛 ValidationError，调用方只能拿到 500 和
+    #: 一段 pydantic 校验文本，state.errors 里真正的原因永远传不出去。
+    #: 现在允许为空，调用方必须检查它（见 errors）并给出明确的失败提示，
+    #: 不要把空报告当成正常结果渲染。
+    report: MarketIntelligence | None = None
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     cache_stats: dict[str, int] = Field(default_factory=dict)
     conversation_id: str | None = None
@@ -65,12 +70,18 @@ def build_response_from_state(
     if critique is not None and not isinstance(critique, dict) and hasattr(critique, "model_dump"):
         critique = critique.model_dump()
 
+    report = state.get("report")
+    errors = list(state.get("errors") or [])
+    if report is None and not errors:
+        # 保证 report 为空时调用方手里一定有一条可展示的原因，而不是只有空报告。
+        errors.append("reasoning produced no report")
+
     return ResearchResponse(
         question=question,
-        report=state.get("report"),
+        report=report,
         tool_results=tool_results,
         cache_stats=dict(state.get("cache_stats") or {}),
         conversation_id=conversation_id,
         critique=critique,
-        errors=list(state.get("errors") or []),
+        errors=errors,
     )
