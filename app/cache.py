@@ -124,8 +124,15 @@ def _make_cache_key(tool: str, arguments: dict) -> str:
     return f"{tool}:{sorted_args}"
 
 
-def _resolve_ttl(tool: str) -> float:
-    """根据工具名选择 TTL。"""
+def _resolve_ttl(tool: str, settings=None) -> float:
+    """根据工具名选择 TTL。
+
+    T17：``news_search`` 的 6 小时 TTL 来自 settings（DDGS 限流保护），
+    不能落进 30 秒默认值——旧实现 ``execute()`` 会用它重新 set 同一个 key，
+    把内部工具写入的 21600s 覆盖掉。settings 未传时保持旧返回值（测试依赖）。
+    """
+    if tool == "news_search" and settings is not None:
+        return float(settings.news_search_ttl_seconds)
     mapping = {
         # A 股
         "quote_tencent_quote_get": QUOTE_TTL,

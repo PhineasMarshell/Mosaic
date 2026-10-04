@@ -81,7 +81,7 @@ class ToolRuntime:
         # 对工作对象的原地改写不会污染缓存（旧实现存同一实例，truncate 会改到缓存）。
         if result.status in (STATUS_SUCCESS, STATUS_PARTIAL):
             cache_key = _make_cache_key(tool_name, arguments)
-            ttl = _resolve_ttl(tool_name)
+            ttl = _resolve_ttl(tool_name, self.settings)
             market_cache.set(cache_key, result.model_copy(deep=True), ttl=ttl)
 
         return result
