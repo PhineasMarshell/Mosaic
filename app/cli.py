@@ -171,6 +171,15 @@ async def main(question: str | None = None) -> None:
 
     try:
         result = await orchestrator.run(question)
+
+        if result.report is None:
+            # T9：推理失败（reasoning 写 report=None）时，把 result.errors 里真正的
+            # 原因打到 stderr 并非 0 退出。旧实现直接 result.report.model_dump() 抛
+            # AttributeError，真实原因永远看不到（API 侧 main.py 早有此分支，CLI 漏了）。
+            detail = "\n".join(result.errors) if result.errors else "研究未能产出报告"
+            print(f"Error: {detail}", file=sys.stderr)
+            sys.exit(1)
+
         report = result.report.model_dump()
         _clean_text_fields(report)
         rendered = render_report(report, question)
