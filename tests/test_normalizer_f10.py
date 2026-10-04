@@ -244,7 +244,7 @@ class TestF10NormalizeResult:
     """测试 F10 数据的 normalize_tool_result 输出。"""
 
     def test_deeply_nested_indicators(self):
-        """深层嵌套的 indicators 应提取出数值。"""
+        """多个兄弟指标必须全部保留，且 metric 可辨识、unit 合并进 value datum。"""
         raw = {
             "source": "eastmoney",
             "section": "finance",
@@ -259,7 +259,24 @@ class TestF10NormalizeResult:
         }
         result = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
         assert result.status == "success"
-        assert result.normalized  # 应该有提取出的指标
+        by_metric = {d.metric: d for d in result.normalized}
+        # T2：以前整块 flatten 只保留第一个指标，PE/PB 永久丢失。
+        assert by_metric["data.indicators.ROE.value"].value == 12.5
+        assert by_metric["data.indicators.PE.value"].value == 15.2
+        assert by_metric["data.indicators.PB.value"].value == 2.5
+        # T2：同级 unit 合并进 value datum，不再产出独立的 .unit 字符串指标。
+        assert by_metric["data.indicators.ROE.value"].unit == "%"
+        assert by_metric["data.indicators.PE.value"].unit == "x"
+        assert not any(m.endswith(".unit") for m in by_metric)
+        assert len(result.normalized) >= 3
+
+    def test_single_indicator_still_works(self):
+        """单指标形状 {"data":{"indicators":{"PB":{"value":2.5}}}} 仍能提取且保留指标名。"""
+        raw = {"data": {"indicators": {"PB": {"value": 2.5}}}}
+        result = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
+        assert result.status == "success"
+        by_metric = {d.metric: d.value for d in result.normalized}
+        assert by_metric["data.indicators.PB.value"] == 2.5
 
     def test_name_value_list(self):
         """name/value 列表应提取出可读指标。"""

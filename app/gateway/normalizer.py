@@ -286,6 +286,14 @@ def _is_eastmoney_f10_tool(tool_name):
     return any(p in tool_name for p in f10_patterns)
 
 
+def _dict_has_value_sibling(obj: dict) -> bool:
+    """T2：dict 中是否存在非 None 的 value/val 键。
+
+    用于决定同级 ``unit`` 是合并进 value datum，还是作为一条独立指标保留。
+    """
+    return any(k.lower() in ("value", "val") and obj[k] is not None for k in obj)
+
+
 def _extract_f10_list_items(obj, parent_path, result, *, _tool, _domain, _status, _partial, _timestamp, _source):
     """从列表中提取 name/value 对（F10 常用格式）。
 
@@ -532,12 +540,12 @@ def _extract_metrics(
     if result is None:
         result = []
 
-    def _make_datum(metric: str, value: Any, note: str | None = None) -> NormalizedDatum:
+    def _make_datum(metric: str, value: Any, note: str | None = None, unit: str | None = None) -> NormalizedDatum:
         return NormalizedDatum(
             domain=_domain,
             metric=metric,
             value=value,
-            unit=None,
+            unit=unit,
             timestamp=_timestamp,
             source=_source,
             tool=_tool,
@@ -547,6 +555,8 @@ def _extract_metrics(
         )
 
     if isinstance(obj, dict):
+        # T2：本 dict 是否含 value/val 兄弟；决定同级 unit 是否合并进 value datum。
+        _has_value_pair = _dict_has_value_sibling(obj)
         for key, value in obj.items():
             path = f"{parent_path}.{key}" if parent_path else key
 
@@ -554,6 +564,11 @@ def _extract_metrics(
                 continue
 
             if key in _METADATA_KEYS:
+                continue
+
+            # T2：value/val 的同级 unit 合并进该 value datum（在下方附加），
+            # 不再作为一条独立的字符串指标。仅当确实存在 value 兄弟且 unit 为字符串。
+            if key.lower() == "unit" and _has_value_pair and isinstance(value, str):
                 continue
 
             if is_container_key(key):
@@ -607,62 +622,37 @@ def _extract_metrics(
                         sub_containers = {k: v for k, v in value.items() if isinstance(v, (dict, list))}
 
                     if _is_eastmoney_f10_tool(_tool) and sub_containers:
-                        # Try deep flatten for F10 nested financial data
-                        flattened = _deep_flatten_value(value)
-                        if isinstance(flattened, (int, float)):
-                            result.append(_make_datum(path, flattened))
-                        else:
-                            found = False
-                            for k, v in sub_containers.items():
-                                if k.lower() in ("value", "val"):
-                                    dv = _deep_flatten_value(v)
-                                    if isinstance(dv, (int, float)):
-                                        result.append(_make_datum(f"{path}.{k}", dv))
-                                        found = True
-                                else:
-                                    # 递归子容器提取
-                                    _extract_metrics(
-                                        v,
-                                        parent_path=f"{path}.{k}",
-                                        result=result,
-                                        _tool=_tool,
-                                        _domain=_domain,
-                                        _status=_status,
-                                        _partial=_partial,
-                                        _timestamp=_timestamp,
-                                        _source=_source,
-                                    )
-                                    found = True
-                            if not found:
-                                # 没有匹配到 metric 名的子键 → 递归展开容器内容
-                                _extract_metrics(
-                                    v,
-                                    parent_path=f"{path}.{k}",
-                                    result=result,
-                                    _tool=_tool,
-                                    _domain=_domain,
-                                    _status=_status,
-                                    _partial=_partial,
-                                    _timestamp=_timestamp,
-                                    _source=_source,
-                                )
+                        # T2：绝不能对整块 value 做 _deep_flatten_value——该函数遇到
+                        # 多个兄弟指标（{"ROE":{...},"PE":{...}}）只返回第一个数值，
+                        # 其余指标（PE/PB…）永久丢失，且存活 datum 的 metric 是父路径
+                        # （如 data.indicators），无法辨识指标名。改为逐子键递归，使
+                        # metric 保持 data.indicators.ROE.value 这种可读形式；单个子
+                        # 容器也递归进去以保留其名称与同级 unit。
+                        _extract_metrics(
+                            value,
+                            parent_path=path,
+                            result=result,
+                            _tool=_tool,
+                            _domain=_domain,
+                            _status=_status,
+                            _partial=_partial,
+                            _timestamp=_timestamp,
+                            _source=_source,
+                        )
                     elif _is_eastmoney_f10_tool(_tool):
-                        flattened = _deep_flatten_value(value)
-                        if isinstance(flattened, (int, float)):
-                            result.append(_make_datum(path, flattened))
-                        else:
-                            # F10 非数值且深度扁平失败 → 递归展开
-                            _extract_metrics(
-                                value,
-                                parent_path=path,
-                                result=result,
-                                _tool=_tool,
-                                _domain=_domain,
-                                _status=_status,
-                                _partial=_partial,
-                                _timestamp=_timestamp,
-                                _source=_source,
-                            )
+                        # T2：没有子容器时也递归展开（而非 flatten 后挂在父路径上），
+                        # 让内层 {"value":..,"unit":..} 走 value/unit 合并逻辑，保留单位。
+                        _extract_metrics(
+                            value,
+                            parent_path=path,
+                            result=result,
+                            _tool=_tool,
+                            _domain=_domain,
+                            _status=_status,
+                            _partial=_partial,
+                            _timestamp=_timestamp,
+                            _source=_source,
+                        )
                     else:
                         # 通用路径：遇到嵌套 dict/list → 递归展开，而不是压成字符串。
                         # 审计发现的 CRITICAL 问题（snapshot 的 ticker.last 变成 "[object:base_volume,...]"）
@@ -699,7 +689,12 @@ def _extract_metrics(
                         else:
                             result.append(_make_datum(path, value))
                 else:
-                    result.append(_make_datum(path, value))
+                    # T2：value/val 标量若有同级 unit，把 unit 合并进该 datum。
+                    _unit = None
+                    if key.lower() in ("value", "val"):
+                        _candidate_unit = obj.get("unit")
+                        _unit = _candidate_unit if isinstance(_candidate_unit, str) else None
+                    result.append(_make_datum(path, value, unit=_unit))
 
     elif isinstance(obj, list):
         _items, _start = _slice_list(parent_path.rsplit(".", 1)[-1] if parent_path else None, obj, _tool)
