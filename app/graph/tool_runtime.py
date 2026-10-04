@@ -12,6 +12,7 @@ analyst 节点通过此层执行分配给自己的工具。
 """
 
 import logging
+from contextlib import asynccontextmanager
 
 from app.cache import _make_cache_key, _resolve_ttl, market_cache
 from app.config import Settings
@@ -52,6 +53,40 @@ class ToolRuntime:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        # T18：analyst 运行级别复用的 Gateway 客户端（gateway_session 打开期间非 None）。
+        # 旧实现每个工具调用都 async with 新建客户端——MCP 模式下等于每次 spawn
+        # 子进程 + 握手 + list_tools，一轮 12 个工具就是 12 次。
+        self._gateway = None
+        self._available_tools: set[str] | None = None
+
+    @asynccontextmanager
+    async def gateway_session(self):
+        """在 analyst 一次运行（一个节点调用）内复用同一个 Gateway 客户端。
+
+        用法：``async with runtime.gateway_session(): ... execute(...) ...``。
+        首次进入时创建并连接客户端、解析可用工具集；退出（含异常）时关闭。
+        未在会话内直接调 execute() 仍走旧的逐次新建路径（兼容单工具调用方）。
+        """
+        if self._gateway is not None:
+            yield self._gateway
+            return
+
+        gateway = self._gateway_class()(self.settings)
+        self._gateway = gateway
+        try:
+            await gateway.__aenter__()
+            if self.settings.market_gateway_mode.lower() == "mcp":
+                self._available_tools = {tool.name for tool in gateway.tools}
+            else:
+                self._available_tools = {t.tool_name for t in self._http_allowed_tools()}
+            yield gateway
+        finally:
+            self._gateway = None
+            self._available_tools = None
+            try:
+                await gateway.__aexit__(None, None, None)
+            except Exception as exc:
+                logger.warning("Gateway client close failed: %s", exc)
 
     # ------------------------------------------------------------------ #
     # 公共 API                                                            #
@@ -146,25 +181,33 @@ class ToolRuntime:
         if getattr(meta, "http_method", None) == "INTERNAL":
             return await self._execute_internal(tool_name, arguments)
 
+        # T18：gateway_session 打开期间复用已连接的客户端
+        if self._gateway is not None:
+            return await self._call_gateway(self._gateway, self._available_tools or set(), tool_name, arguments)
+
         gateway_cls = self._gateway_class()
         async with gateway_cls(self.settings) as gateway:
+            return await self._call_gateway(gateway, None, tool_name, arguments)
+
+    async def _call_gateway(self, gateway, available: set[str] | None, tool_name: str, arguments: dict) -> ToolResult:
+        """通过已连接的 gateway 执行一次调用；available 为 None 时按模式现场解析。"""
+        if available is None:
             available = (
                 {tool.name for tool in gateway.tools}
                 if self.settings.market_gateway_mode.lower() == "mcp"
                 else {t.tool_name for t in self._http_allowed_tools()}
             )
 
-            if tool_name not in available:
-                return ToolResult(
-                    tool=tool_name,
-                    arguments=arguments,
-                    status=STATUS_ERROR,
-                    normalized=[],
-                    error=f"Tool not available: {tool_name}",
-                )
+        if tool_name not in available:
+            return ToolResult(
+                tool=tool_name,
+                arguments=arguments,
+                status=STATUS_ERROR,
+                normalized=[],
+                error=f"Tool not available: {tool_name}",
+            )
 
-            result = await gateway.call(tool_name, arguments)
-            return result
+        return await gateway.call(tool_name, arguments)
 
     def _check_cache(
         self,

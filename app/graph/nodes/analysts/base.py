@@ -87,12 +87,15 @@ class MarketAnalystNode:
             cache_stats: dict[str, int] = {}
             called_signatures: set[str] = set()
 
-            for result in await self._execute_tools(state, called_signatures):
-                results.append(result)
-                tools_used.append(result.tool)
-                stats = getattr(result, "_cache_info", None)
-                if stats:
-                    cache_stats.update(stats)
+            # T18：整个 analyst 运行共用一个 Gateway 客户端（MCP 模式旧实现
+            # 每个工具 spawn 一次子进程 + 握手）。异常时 async with 保证关闭。
+            async with self._runtime.gateway_session():
+                for result in await self._execute_tools(state, called_signatures):
+                    results.append(result)
+                    tools_used.append(result.tool)
+                    stats = getattr(result, "_cache_info", None)
+                    if stats:
+                        cache_stats.update(stats)
 
             # Truncate oversized results
             for r in results:
