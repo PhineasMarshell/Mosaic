@@ -79,23 +79,26 @@ def setup_logging(
 
     formatter = JSONFormatter() if json_format else HumanFormatter()
 
-    # 注意：这是 "mosaic" 命名空间的 logger，不是真正的 root logger。
-    # 变量以前叫 root，很容易误以为已经清掉了全局 handler。
-    mosaic_logger = logging.getLogger("mosaic")
-    mosaic_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-    mosaic_logger.handlers.clear()
-    mosaic_logger.propagate = propagate
-
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
-    mosaic_logger.addHandler(handler)
+
+    # T10：handler 以前只挂在 "mosaic" 命名空间，而所有模块用
+    # logging.getLogger(__name__) 得到的是 app.*，二者不是父子关系，于是 app.* 的
+    # INFO 全部丢失（WARNING+ 只经 root lastResort 裸文本进 stderr，JSON 承诺失效）。
+    # 同时配置 app 与 mosaic 两个命名空间、复用同一 handler，覆盖两条命名空间。
+    for namespace in ("app", "mosaic"):
+        ns_logger = logging.getLogger(namespace)
+        ns_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+        ns_logger.handlers.clear()
+        ns_logger.addHandler(handler)
+        ns_logger.propagate = propagate
 
     # Suppress noisy third-party logs
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("mcp").setLevel(logging.WARNING)
     logging.getLogger("anyio").setLevel(logging.WARNING)
 
-    mosaic_logger.info("Logging initialized: level=%s json=%s", level, json_format)
+    logging.getLogger("app").info("Logging initialized: level=%s json=%s", level, json_format)
 
 
 def get_logger(name: str) -> logging.Logger:

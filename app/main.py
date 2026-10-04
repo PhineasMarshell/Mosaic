@@ -18,7 +18,7 @@ from app.logging_config import setup_logging
 from app.models.response import build_response_from_state
 
 setup_logging(level="INFO")
-logger = logging.getLogger("mosaic.app")
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
