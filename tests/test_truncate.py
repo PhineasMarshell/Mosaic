@@ -29,6 +29,10 @@ def test_truncate_keeps_newest_and_reports_partial():
     assert values[-1] == 249  # 最新一条保留
     note = next(d for d in result.normalized if d.metric == "_truncated_count")
     assert "原始 250" in note.value
+    # T5b：note 文案须与实际条数一致——200 条数据 + 本说明条，共 201；
+    # 旧文案"已截断至 200"让读者以为最终只剩 200 条。
+    assert "保留最新 200 条" in note.value
+    assert len(result.normalized) == 201
     assert result.status == "partial"
     assert result.partial is True
 

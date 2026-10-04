@@ -100,7 +100,7 @@ class ToolRuntime:
                 source="truncation_note",
                 tool=result.tool,
                 metric="_truncated_count",
-                value=f"原始 {original_count} 项，已截断至 200（保留最近 200）",
+                value=f"原始 {original_count} 项，保留最新 200 条（另加本说明条，不计入 200）",
                 status=STATUS_PARTIAL,
                 partial=True,
             )

@@ -90,3 +90,51 @@ def test_seconds_until_uses_fixed_offset():
     # 08:00 本地到 09:15
     now2 = datetime(2026, 10, 4, 8, 0, tzinfo=briefs.LOCAL_TZ)
     assert briefs._seconds_until(briefs.MORNING_TIME, now2) == 75 * 60
+
+
+# ── T14b：过点不补（GRACE 窗口）─────────────────────────────────────
+# ①③ 在实现回退成 catch-up（now >= 目标时刻）时必须变红；
+# ② 防的是另一方向的回归：GRACE 被删掉 / 写成 now == target 严格相等（永不触发）。
+
+
+async def test_t14b_no_catchup_when_started_at_2300(monkeypatch):
+    """① 23:00 启动：两个触发窗口都已过，当天不发任何简报，直接睡到次日 09:15。"""
+    h = SchedulerHarness(datetime(2026, 10, 4, 23, 0, tzinfo=briefs.LOCAL_TZ))
+    task = await _run(monkeypatch, h)
+    try:
+        assert h.events == []
+        # 到次日 09:15 = 10h15m = 36900s（catch-up 会先补发 morning+evening）
+        assert 36890 <= h.waits[-1] <= 36900
+
+        h.at(9, 15, day=5)
+        await h.release()
+        assert h.events == ["morning"]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_t14b_fires_within_grace_window(monkeypatch):
+    """② 09:18 启动（09:15+3min，仍在 GRACE 内）：morning 照常触发。"""
+    h = SchedulerHarness(datetime(2026, 10, 4, 9, 18, tzinfo=briefs.LOCAL_TZ))
+    task = await _run(monkeypatch, h)
+    try:
+        assert h.events == ["morning"]
+        # 触发后睡到当天 15:30 = 6h12m = 22320s
+        assert 22310 <= h.waits[-1] <= 22320
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_t14b_no_fire_after_grace_window(monkeypatch):
+    """③ 09:30 启动（窗口 09:15–09:20 已过）：不触发 morning，睡到当天 15:30。"""
+    h = SchedulerHarness(datetime(2026, 10, 4, 9, 30, tzinfo=briefs.LOCAL_TZ))
+    task = await _run(monkeypatch, h)
+    try:
+        assert h.events == []
+        # 到当天 15:30 = 6h = 21600s（若误判到期会立刻触发并睡向次日）
+        assert 21590 <= h.waits[-1] <= 21600
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

@@ -27,6 +27,12 @@ LOCAL_TZ = timezone(timedelta(hours=8))
 MORNING_TIME = dt_time(9, 15)
 EVENING_TIME = dt_time(15, 30)
 
+# T14b：过点不补——只有落在触发点后 GRACE 窗口内才算到期。窗口只为容忍
+# asyncio.sleep 的调度抖动（醒来通常已晚几毫秒到几秒），**不是**补发窗口；
+# 23:00 重启不得回补当天的 morning/evening。GRACE=0（严格相等）会导致永不触发，不可用。
+# 若将来需要跨时区市场，LOCAL_TZ 应改为配置项。
+GRACE = timedelta(minutes=5)
+
 
 def _seconds_until(target: dt_time, now: datetime) -> float:
     """计算从 ``now``（带 tz）到下一个 ``target`` 本地时刻的正秒数。"""
@@ -36,6 +42,16 @@ def _seconds_until(target: dt_time, now: datetime) -> float:
         next_target = datetime.combine(now.date() + timedelta(days=1), target, tzinfo=now.tzinfo)
         delta = (next_target - now).total_seconds()
     return delta
+
+
+def _in_window(target: dt_time, now: datetime) -> bool:
+    """T14b：now 是否落在当天 ``[target, target+GRACE]`` 触发窗口内（含端点）。
+
+    窗口只容忍精确睡眠醒来后的调度抖动，**过点不补**：晚于窗口即视为今天
+    该简报已错过（catch-up 语义会把 23:00 重启变成立刻补发过期早报，已废弃）。
+    """
+    start = datetime.combine(now.date(), target, tzinfo=LOCAL_TZ)
+    return start <= now <= start + GRACE
 
 
 def _brief_file_dir(brief_type: str) -> Path:
@@ -87,9 +103,10 @@ async def _run_scheduler(morning_fn, evening_fn, *, now_fn=None, sleep_fn=None):
         now = now_fn()
         today = now.date().isoformat()
 
-        # 到达/越过当天触发时刻即到期（catch-up：重启后也能补触发，保证每天一次）。
-        morning_due = now >= datetime.combine(now.date(), MORNING_TIME, tzinfo=LOCAL_TZ)
-        evening_due = now >= datetime.combine(now.date(), EVENING_TIME, tzinfo=LOCAL_TZ)
+        # T14b：过点不补、窗口只容忍抖动——只有 now 落在 [触发点, 触发点+GRACE]
+        # 内才算到期；错过窗口（如 23:00 重启、09:30 才醒）就当今天没有，不补发。
+        morning_due = _in_window(MORNING_TIME, now)
+        evening_due = _in_window(EVENING_TIME, now)
 
         morning_key = f"{today}:morning"
         evening_key = f"{today}:evening"
