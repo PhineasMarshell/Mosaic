@@ -262,6 +262,18 @@ def _render_result(r: CaseResult) -> str:
     return "\n".join(lines)
 
 
+def _meets_expected_min_tools(r: CaseResult, expected_by_id: dict[str, dict[str, Any]]) -> bool:
+    """T13b：case_id 不在 CASES（手工构造 CaseResult 复用评估框架）时按 FAIL 处理。
+
+    旧实现 ``expected_by_id[r.case_id][...]`` 直接 KeyError 中断整个汇总输出。
+    无期望值即无法判定达标，按 FAIL（不跳过，避免空集 all() 又变回真）。
+    """
+    expected = expected_by_id.get(r.case_id)
+    if expected is None:
+        return False
+    return r.success and r.tool_count >= expected["expected_min_tools"]
+
+
 def print_summary(results: list[CaseResult]) -> str:
     """汇总所有 case 结果并输出评价报告。"""
     total = len(results)
@@ -284,9 +296,7 @@ def print_summary(results: list[CaseResult]) -> str:
     # 会与错误 case 比较）；分母排除设计上无报告的空问题 case。
     expected_by_id = {c["id"]: c for c in CASES}
     report_cases = [r for r in results if r.question]
-    tool_acc_pass = bool(report_cases) and all(
-        r.success and r.tool_count >= expected_by_id[r.case_id]["expected_min_tools"] for r in report_cases
-    )
+    tool_acc_pass = bool(report_cases) and all(_meets_expected_min_tools(r, expected_by_id) for r in report_cases)
 
     scores = {
         # T13：空集 all() 不再为真——0 个成功 / 有失败时必须 FAIL，不能 PASS。
@@ -382,7 +392,7 @@ async def main(case_ids: list[str] | None = None) -> list[CaseResult]:
     expected_by_id = {c["id"]: c for c in CASES}
     report_results = [r for r in results if r.question]
     tool_acc_all_pass = bool(report_results) and all(
-        r.success and r.tool_count >= expected_by_id[r.case_id]["expected_min_tools"] for r in report_results
+        _meets_expected_min_tools(r, expected_by_id) for r in report_results
     )
     safety_clean = not any(r.trading_signals or r.unsupported_claims for r in report_results)
 

@@ -51,3 +51,11 @@ def test_expected_looked_up_by_id(tool_count, expected_pass):
     results = [CaseResult(case_id="003", question="q", success=True, tool_count=tool_count)]
     summary = print_summary(results)
     assert ("Tool Accuracy: PASS" in summary) is expected_pass
+
+
+def test_unknown_case_id_fails_instead_of_keyerror():
+    # T13b：手工构造的 case_id 不在 CASES 里 → 不得抛 KeyError，按 FAIL 处理
+    results = [CaseResult(case_id="custom-99", question="自定义问题", success=True, tool_count=99)]
+    summary = print_summary(results)  # 旧实现在这里 KeyError: 'custom-99'
+    assert "Tool Accuracy: FAIL" in summary
+    assert "Tool Accuracy: PASS" not in summary
