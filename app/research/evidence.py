@@ -198,6 +198,52 @@ def _extract_snapshot_summary(response: dict[str, Any], tool: str) -> dict[str, 
     return summary
 
 
+def _cap_evidence(evidence: list[Evidence], cap: int) -> list[Evidence]:
+    """把证据链截到 ``cap`` 条以内（T6，方案 A）。
+
+    - 按 ``source_tool`` 分组；组内末尾代表最新（K 线/列表均时间升序）。
+    - 轮转地从每个来源取其最新条目，直到达到 ``cap``，保证每个来源尽量都有代表、
+      且优先保留最新数据；最后恢复原始相对顺序。
+    - 被截断时把说明写进保留条目的 ``note``，不额外增加条目（保证总量 ≤ cap）。
+    """
+    if len(evidence) <= cap:
+        return evidence
+
+    original_total = len(evidence)
+
+    groups: dict[str, list[tuple[int, Evidence]]] = {}
+    order: list[str] = []
+    for position, item in enumerate(evidence):
+        if item.source_tool not in groups:
+            groups[item.source_tool] = []
+            order.append(item.source_tool)
+        groups[item.source_tool].append((position, item))
+
+    # 每组转成"最新优先"。
+    newest_first = {source: list(reversed(pairs)) for source, pairs in groups.items()}
+
+    kept_pairs: list[tuple[int, Evidence]] = []
+    while len(kept_pairs) < cap:
+        progressed = False
+        for source in order:
+            if newest_first[source]:
+                kept_pairs.append(newest_first[source].pop(0))
+                progressed = True
+                if len(kept_pairs) >= cap:
+                    break
+        if not progressed:
+            break
+
+    kept_pairs.sort(key=lambda pair: pair[0])
+    kept = [item for _, item in kept_pairs]
+
+    dropped = original_total - len(kept)
+    truncation_note = f"证据链超出 {cap} 条上限，已按来源保留最新 {len(kept)} 条（截断 {dropped} 条）"
+    target = kept[-1]
+    target.note = f"{target.note}；{truncation_note}" if target.note else truncation_note
+    return kept
+
+
 def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> list[Evidence]:
     """从工具调用结果构建用户友好的证据链。
 
@@ -332,4 +378,5 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
         # 通过 Evidence Gate。normalizer 现在已保证空结果必为 status=error（在上方
         # error 分支处理并 continue）；若此处仍遇到直接构造的空结果，按"无证据"跳过。
 
-    return evidence
+    # T6：文档承诺的硬上限现在真正生效。
+    return _cap_evidence(evidence, _MAX_EVIDENCE_ITEMS)
