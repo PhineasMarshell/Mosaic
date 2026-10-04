@@ -53,35 +53,62 @@ class MarketGatewayClient:
         )
 
         try:
-            read_stream, write_stream = await asyncio.wait_for(
-                self.stack.enter_async_context(stdio_client(params)),
-                timeout=self.settings.research_timeout_seconds,
-            )
-        except TimeoutError:
-            raise MCPConnectionError(
-                f"MCP server startup timed out after {self.settings.research_timeout_seconds}s"
-            ) from None
+            try:
+                read_stream, write_stream = await asyncio.wait_for(
+                    self.stack.enter_async_context(stdio_client(params)),
+                    timeout=self.settings.research_timeout_seconds,
+                )
+            except TimeoutError:
+                raise MCPConnectionError(
+                    f"MCP server startup timed out after {self.settings.research_timeout_seconds}s"
+                ) from None
+            except Exception as exc:
+                raise MCPConnectionError(f"MCP server startup failed: {exc}") from exc
 
-        self.session = await self.stack.enter_async_context(ClientSession(read_stream, write_stream))
+            self.session = await self.stack.enter_async_context(ClientSession(read_stream, write_stream))
 
-        try:
-            listed = await asyncio.wait_for(
-                self.session.list_tools(),
-                timeout=self.settings.research_timeout_seconds,
-            )
-            self.tools = list(listed.tools)
-            logger.info("MCP connected: %d tools available", len(self.tools))
-        except TimeoutError:
-            raise MCPConnectionError("MCP list_tools timed out") from None
+            # T12：mcp 2.x 的 ClientSession.__aenter__ 只启动 dispatcher、**不做握手**；
+            # 服务端在未握手时（除 ping 外）会拒绝一切请求。list_tools 前必须显式
+            # initialize()，并把超时 / 协议错误统一包成 MCPConnectionError。
+            try:
+                await asyncio.wait_for(
+                    self.session.initialize(),
+                    timeout=self.settings.research_timeout_seconds,
+                )
+            except TimeoutError:
+                raise MCPConnectionError("MCP initialize (handshake) timed out") from None
+            except Exception as exc:
+                raise MCPConnectionError(f"MCP initialize (handshake) failed: {exc}") from exc
+
+            try:
+                listed = await asyncio.wait_for(
+                    self.session.list_tools(),
+                    timeout=self.settings.research_timeout_seconds,
+                )
+                self.tools = list(listed.tools)
+                logger.info("MCP connected: %d tools available", len(self.tools))
+            except TimeoutError:
+                raise MCPConnectionError("MCP list_tools timed out") from None
+            except Exception as exc:
+                raise MCPConnectionError(f"MCP list_tools failed: {exc}") from exc
+        except MCPConnectionError:
+            # 任何连接阶段失败：先回收已进入的资源（含 stdio 子进程），再向上抛。
+            await self.close()
+            raise
 
     async def close(self) -> None:
         try:
-            if self.session is not None:
-                await self.stack.aclose()
+            # 无条件关闭整个 exit stack（stdio 子进程 + session）。旧实现只在
+            # session 非空时关闭，而 connect() 在 session 建立前失败（如启动 /
+            # 握手超时）会留下 stdio 子进程不被回收。
+            await self.stack.aclose()
         except Exception as exc:
-            logger.debug("MCP close cleanup failed: %s", exc)
+            logger.warning("MCP close cleanup failed: %s", exc)
         finally:
             self.session = None
+            self.tools = []
+            # 重建 stack，允许同一客户端在失败后重新 connect。
+            self.stack = AsyncExitStack()
 
     async def call(
         self,
