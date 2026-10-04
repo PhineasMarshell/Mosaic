@@ -3,6 +3,8 @@
 > 行号基准：提交 `cabd00c`。若行号已漂移，以「定位锚点」里给的代码片段为准。
 > 产出：两轮分模块审计（130 条发现）+ critical/high 的对抗性验证（23 确认 / 1 驳回）+ 本文档作者亲自实测复现。
 > 每条任务的「置信度」标明证据强度，**执行前必须先用文中的复现命令确认问题存在**，复现不了就停下来报告，不要照改。
+> **本文档是活文档**：每批任务结束后更新 §0.4「当前进展」，已完成的任务保留原文（作为回归依据）并就地补记裁决语义。
+> 当前 HEAD：`3454af5`（批次 1、2 已完成并验收通过）。
 
 ---
 
@@ -22,6 +24,8 @@
    ```
    三者全绿才算完成（`--no-cache` 是为了绕开受限环境下 `.ruff_cache` 不可写，CI 上不需要）。
 6. **凡是"把异常吞成默认值"的代码**（本项目大量存在），改的时候要保证：失败要么变成明确的 `status=error`/`errors`，要么降级为 `partial` + `note`，**不允许静默变成成功**。
+7. **已完成任务的裁决语义是契约，不要改回。** 动手前先读该任务的「✅ 已完成」小节（T11、T12、T13、T14、T14b 均已记录）。
+   若某条与你手上的新需求冲突，**先报告**，不要自己回退。
 
 ### 0.2 每个任务的固定结构
 
@@ -45,6 +49,54 @@
 | 3 | **P2 中**：可靠性、成本、契约一致性 | T15–T27 | 无强依赖 |
 | 4 | **测试有效性**：把假阳性测试改成真测试 | T28–T34 | 可与批次 2 并行，但建议在批次 1 之后（批次 1 会给它们提供真实回归场景） |
 | 5 | **待人类决策**：需要产品判断，不要自行决定 | D1–D4 | — |
+
+### 0.4 当前进展（每批结束后更新本节）
+
+> 最后更新：批次 2 验收通过之后。行号基准仍为 `cabd00c`，当前 HEAD `3454af5`。
+> 本节的更新本身是未提交改动（`M AUDIT_FIX_PLAN.md`）——执行方在下一批的 housekeeping 提交里一并带上即可。
+
+| 批次 | 状态 | 说明 |
+|---|---|---|
+| 批次 1（T1–T3） | ✅ 完成并通过验收 | `735aeaa`(T1) `b8e114c`(T2) `f86df07`(T3) |
+| 批次 2（T4–T14） | ✅ 完成并通过验收 | 另含 `dc75971`（纳入本计划 + 移除已被主人删除的 PROJECT_STATUS.md） |
+| 批次 3（T15–T27） | ⬜ 未开始 | T15 需 D2、T20 部分需 D3 |
+| 批次 4（T28–T35） | ⬜ 未开始 | — |
+| 批次 5（D1–D4） | ⏳ 待决策 | T12 的 `pyproject.toml` 版本区间仍未动，等 D1 |
+
+任务级状态：
+
+| 任务 | 状态 | 提交 |
+|---|---|---|
+| T1 空载荷判失败 | ✅ | `735aeaa` |
+| T2 F10 多指标 / unit | ✅ | `b8e114c` |
+| T3 持久化字段层级 | ✅ | `f86df07` |
+| T4 evidence id 唯一化 | ✅ | `c471dec` |
+| T5 truncate 保留末尾 | ✅ | `d9f60fe` |
+| T6 证据条数上限 | ✅ | `50aff98` |
+| T7 candle_summary 取值 | ✅ | `432b7ab` |
+| T8 symbol 守卫白名单 | ✅ | `ff03a2d` |
+| T9 CLI report=None | ✅ | `164c920` |
+| T10 日志命名空间 | ✅ | `8c7c4ab` |
+| T11 Critic verdict 约束 | ✅ **裁决语义已定，见 T11 节，不要改回** | `589cff7` |
+| T12 MCP 握手 + 失败清理 | ✅（`pyproject` 版本区间待 D1） | `a293e44` |
+| T13 evaluation 假验收 | ✅（另见 T13b） | `f4bee89` |
+| T14 简报调度时区与窗口 | ✅（另见 **T14b**，过点不补尚未做） | `3454af5` |
+| **T14b 简报过点不补** | ⬜ **待做（已定方案，见 T14 节）** | — |
+| T13b evaluation 兜底 | ⬜ 待做 | — |
+| T5b truncate note 文案 | ⬜ 待做（可选，非阻塞） | — |
+| T36 文档同步 | ⬜ 待做（建议批次 3/4 收尾时做） | — |
+| T15–T27 / T28–T35 | ⬜ 待做 | — |
+
+**批次 2 验收复核记录**（由验收者独立重跑，非采信执行方报告）：
+- 测试数字一致：`408 passed / 2 skipped`（验收环境受限时表现为 `377 + 4 环境失败 + 2 环境 error + 25 端点通过`）。
+  那 4 个失败 + 2 个 error 全部是把 sqlite 路径重定向到仓库根的副产品，**不是回归**，不要去"修"它们：
+  `test_writes_are_visible_to_a_second_connection` / `test_writes_survive_a_restart` /
+  `test_conversation_history_round_trips_across_instances`（需要两条连接打开同一文件）、
+  `test_db_file_created_on_init`（断言 DB 文件路径）、`test_persistence.py` 两条（`tmp_path` 不可写）。
+- T4–T11 的复现命令已逐条重跑，行为全部符合预期（含 `truncate` 缓存不复用同一实例、证据上限保留最新）。
+- T12/T13/T14 的新测试已逐条审阅，断言具体、在旧实现下会红。
+- 批次 2 对既有测试的唯一改动是 `tests/test_graph_nodes.py` 里 T11 的有意反转，diff 内已注明理由。
+- 日志修复经实测无重复输出（`app.*` 与 `mosaic.*` 各一条记录只打一行）。
 
 ---
 
@@ -341,6 +393,32 @@ for k in ("news_search","search","longhu","hk_northbound_daily","hk_index_snapsh
 **必补测试**：参数化 `verdict` 为 `pass/revise/research_more/PASS/ fail/''/None`，断言：合法值走对应路由；非法值进 `errors` 且不触发 `research_more` 回环。
 **验收**：`tests/test_graph_topology.py` 的 `critic_route_decision` 用例扩充后全绿。
 
+**✅ 已完成（`589cff7`）— 裁决语义（仓库主人已确认，后续任何批次都不要改回）**
+
+Critic 现在有四种走出方式，其中三种属于**「审计失败」= 节点没能完成审计这件事**，
+**不是**"Critic 认为报告有问题"（后者是正常裁决 `revise` / `research_more`）：
+
+| 情形 | 触发原因 | verdict | 用户可见的 `errors` |
+|---|---|---|---|
+| 正常 | 模型给出合法裁决 | `pass` / `revise` / `research_more` | 无 |
+| 审计失败① | 模型返回的不是合法 JSON object（`parse_json_object` 抛 `LLMOutputError`） | `error` | `Critic audit failed: Critic returned invalid JSON: raw='...'` |
+| 审计失败② | **调模型本身失败**：provider 4xx/5xx（401/429/400）、超时（`llm_timeout_seconds=90`）、网络错误、节点内部异常 | `error` | `Critic audit failed: Error code: 400 - {...}` |
+| 审计失败③ | payload 校验失败（`ValidationError`），或裁决不在 `pass/revise/research_more` 内（`fail`/`reject`/`PASS`/空串/非字符串） | `error` | `Unrecognized critic verdict: 'fail'` / `Invalid critic payload: ...` |
+
+**已定的约定（不要再讨论、不要改回）**：
+1. 审计失败**不得**再返回 `research_more`。旧行为会路由回 Supervisor 重跑一整轮工具 + LLM（最多两轮），
+   还会伪造 `missing_points=["经过 Critic 审计的报告"]` 当作"研究缺口"喂给 Supervisor。
+   这正是本项目最初那个真实 bug（`critic.py` 的 system message 缺 `role` → DashScope 400 →
+   每次提问整条流水线白跑 3 遍、Critic 一条报告都没审计过）能长期潜伏的原因。
+2. 审计失败一律 `verdict="error"` → `critic_route_decision` **安全终止（END）**，**保留已有 report**，只写 `errors`。
+3. 因为 `report` 不为 None，`/api/ask` 仍返回 **200**。
+   **调用方 / 前端要区分"审计失败"必须看 `critique.verdict == "error"` 或 `errors` 非空**
+   （`orchestrator` 与 SSE 路径各打一条 warning）。这是有意的产品选择，**不要为此改成非 2xx**。
+4. `Verdict = Literal["pass","revise","research_more","error"]`，其中 `error` 只允许本节点内部产生，模型不得返回。
+
+**回归保护**：`tests/test_critic_verdict.py`（20 项）+ `tests/test_graph_nodes.py` 里那条已按新语义反转的用例。
+任何后续改动若让"非法 verdict / 审计失败"重新落回 `research_more` 或静默判 pass，这两处必须变红。
+
 ---
 
 ### T12 — MCP 客户端从不握手（**先按 D1 决策再动手**）
@@ -387,6 +465,58 @@ for k in ("news_search","search","longhu","hk_northbound_daily","hk_index_snapsh
 **现象**：2 秒触发窗口配 30 秒轮询 → 命中率约 1/15 且与启动相位绑定，漏一次等 24 小时；即使命中，UTC 9:15/15:30 是北京 17:15/23:30。`memory/morning`、`memory/evening` 目录为空可佐证从未生成。
 **修改**：改为「算到目标时刻的剩余秒数再 sleep」，目标时间用 `Asia/Shanghai`（修正 `_next_run` 的 naive/aware 混用 TypeError），并记录当日已触发，避免重复/漏触发。
 **必补测试**：注入可控时钟，断言在目标时刻前后能触发且同一日只触发一次；断言时区换算（UTC 01:15 == 北京 09:15）。
+
+**✅ 已完成（`3454af5`）**：改为精确睡眠 + `fired` 每日去重 + 跨日重置；时区用固定 `timezone(timedelta(hours=8))`
+（北京自 1991 年无夏令时，且规避 Windows 缺 tzdata 的问题），并加了 `now_fn` / `sleep_fn` 注入点便于可控时钟测试。
+
+---
+
+### T14b — 简报「过点不补」（**方案已定，待实现**）
+
+**决策（仓库主人）**：**只认 09:15 / 15:30 两个时刻；过了就当今天没有**，不要在任意晚些时候补发。
+
+**问题**：当前实现是「越过触发点即到期」（catch-up），因此 **23:00 重启会立刻补发 morning + evening 两份**，
+把一份过期的"早报"写成当天文件，时间语义错误。
+
+**修改规格**（只动 `app/scheduler/briefs.py` 的 `_run_scheduler`）
+1. 触发判定从 `now >= 当天目标时刻` 改为 **`目标时刻 <= now <= 目标时刻 + GRACE`**，
+   `GRACE = timedelta(minutes=5)`。
+2. **不能写成 `now == target`**：循环是精确睡到目标时刻，醒来通常已晚几毫秒到几秒（`asyncio.sleep` 不提前返回，
+   但有调度抖动），严格相等会导致**永远不触发**。必须保留一个抖动窗口。窗口宽度可调，`GRACE=0` 不可用。
+3. 保留 `fired` 每日去重与精确睡眠；不动其它逻辑。
+4. 在代码注释里写明"过点不补、窗口只容忍抖动"，并留一句：若将来需要跨时区市场，`LOCAL_TZ` 应改为配置项。
+
+**必补测试**（更新 `tests/test_brief_scheduler.py`）
+- ① 23:00 启动 → **当天不触发任何简报**，直接等到次日 09:15；
+- ② 09:18（窗口内）→ 触发 morning；
+- ③ 09:30（窗口外）→ 不触发。
+- 三条在把实现改回 catch-up 时必须变红。
+
+**验收**：三条命令全绿；测试用例数只增不减（当前 408 passed / 2 skipped）。
+
+---
+
+### T13b — evaluation 期望值查表兜底（小健壮性，非阻塞）
+
+`app/evaluation.py` 的 `print_summary` 与 `main()` 用 `expected_by_id[r.case_id]["expected_min_tools"]`，
+当 `case_id` 不属于 `CASES`（手工构造 `CaseResult` 跑评估）时抛 `KeyError`。
+改为 `expected_by_id.get(r.case_id)` + 缺失时按 FAIL/跳过处理，并补一条用例。
+
+---
+
+### T5b — `truncate` 的 note 文案与实际条数不一致（可选，非阻塞）
+
+截断后 `len(result.normalized) == 201`（200 条 + 说明条），而 note 写"已截断至 200"。
+把 note 改成"保留最新 200 条 + 本说明"，或不计入说明条，二选一即可；不影响行为，可与 T14b 一起提交。
+
+---
+
+### T36 — 文档与实现同步（建议放在批次 3/4 收尾）
+
+- `docs/architecture.md` / `README.md` 仍写 Critic 只输出 `pass/revise/research_more`，需补内部 `error` 语义（见 T11 节）。
+- `app/agent/prompts.py` 的 evidence id 示例仍是 `evidence-001`，实际已是 `{category}-NNN`（T4 之后）。
+- `app/graph/tool_registry.py` 的域过滤注释与实现相反（T24 会修，改完同步注释）。
+- 完成后做一次全局检查：**不再存在"文档承诺、代码没有"的项**（`has_evidence`、`anomalies`、证据上限、MCP 模式四处是重点）。
 
 ---
 
@@ -483,11 +613,34 @@ skip 理由写"P0 图为 supervisor→kernel"，但 `builder.py:111-120` 早已�
 | **D3** | `anomalies` 字段怎么填？ | A) 加进 reasoning prompt 与 `_ensure_list`；B) 用 `app/detector/anomaly.py::detect_anomalies` 在代码里填（需设计调用点，它目前无生产调用）；C) 从前端与模型里删掉该字段。 |
 | **D4** | `budget` / `max_tool_calls` 语义 | `config.py:27` 的 `max_tool_calls` 只出现在 `/health`，graph 路径实际不受它约束；`_execute_tools` 的 `budget` 恒等于 `len(tool_calls)`（恒真守卫）。要不要把两者真正接上？ |
 
+**已由仓库主人拍板、不要再问的决策**：
+
+| 议题 | 结论 | 落地位置 |
+|---|---|---|
+| Critic「审计失败」的语义 | **不归为 `research_more`**；改为终止（END）+ 保留 report + `critique.verdict="error"` + `errors`；`/api/ask` 仍 200，调用方看 `verdict`/`errors` 区分 | 已实现于 `589cff7`，见 **T11 节**（不要改回） |
+| 简报触发 | **只认 09:15 / 15:30 两个时刻，过点不补**（不要 catch-up） | 待实现，见 **T14b** |
+| `PROJECT_STATUS.md` | 已由主人删除，**不要再创建** | 状态以 §0.4 为准 |
+
 ---
 
 ## 附录 A — 在受限环境跑完整测试
 
-正常情况下 `pytest -q` 即可。**在本项目当前的 Windows 沙箱会话里**，`memory/` 等子目录缺少写入授权，sqlite 相关模块（`test_ask_endpoint` / `test_stream_endpoint` / `test_market_memory` / `test_conversation` / `test_data_integrity`）会以 `unable to open database file` 失败——这是环境问题，不是代码问题。可用下面的 stub 把默认库重定向到可写根目录后运行（**不要提交这个文件**）：
+正常情况下 `pytest -q` 即可。
+
+**情况一：会话是「完全访问」(full access)** —— 什么都不用做，`pytest -q` 直接跑全量
+（批次 2 的执行会话就是这种，`tmp_path` 与 `memory/` 均可写，报 `408 passed / 2 skipped`）。
+**不要**在这种会话里套用下面的 stub。
+
+**情况二：会话是 workspace-write 且工作区子目录缺写入授权** —— `memory/` 等子目录无法建文件，
+sqlite 相关模块（`test_ask_endpoint` / `test_stream_endpoint` / `test_market_memory` / `test_conversation` /
+`test_data_integrity` / `test_persistence`）会以 `unable to open database file` 或 `tmp_path` 权限错误失败。
+**这是环境问题，不是代码问题，不要为了让它变绿去改产品代码或改测试断言。**
+可用下面的 stub 把默认库重定向到可写根目录后运行（**不要提交这个文件**）：
+
+> 已知副作用（验收时已确认，属正常）：重定向后这几条必然失败，因为它们的语义要求"两条连接打开同一个文件"或断言文件路径：
+> `test_writes_are_visible_to_a_second_connection`、`test_writes_survive_a_restart`、
+> `test_conversation_history_round_trips_across_instances`、`test_db_file_created_on_init`。
+> `tmp_path` 类用例（`test_persistence.py`）在这种会话里仍会 error，属预期。
 
 ```python
 # run_tests_local.py  （放在仓库根，用完删）
@@ -551,23 +704,29 @@ python -c "import importlib.metadata as m, inspect; from mcp import ClientSessio
 ## 附录 C — 修复顺序速览（可直接当 checklist）
 
 ```
-批次 1（P0，必须连续做完）
-[ ] T1 空载荷判失败            + 测试
-[ ] T2 F10 折叠 / unit         + 强化 test_normalizer_f10
-[ ] T3 SSE 落库字段层级        + 新建 test_persistence  （顺手确认 briefs 读法不变）
+批次 1（P0）— ✅ 全部完成并验收（735aeaa / b8e114c / f86df07）
+[x] T1 空载荷判失败            + 测试
+[x] T2 F10 折叠 / unit         + 强化 test_normalizer_f10
+[x] T3 SSE 落库字段层级        + 新建 test_persistence
 
-批次 2（P1）  建议顺序：T11 → T12 → T9 → T10 → T4 → T5 → T7 → T6 → T8 → T13 → T14
-[ ] T4  evidence id 唯一化
-[ ] T5  truncate 保留末尾 + partial + 不污染缓存
-[ ] T6  evidence 条数上限（或删常量）
-[ ] T7  candle_summary 取值 + 混合指标
-[ ] T8  symbol 守卫白名单 / requires_symbol
-[ ] T9  CLI report=None
-[ ] T10 日志命名空间
-[ ] T11 Critic verdict Literal + 失败语义
-[ ] T12 MCP 握手 + 依赖区间 + 失败清理（先看 D1）
-[ ] T13 evaluation 假验收
-[ ] T14 briefs 调度时区与窗口
+批次 2（P1）— ✅ 全部完成并验收（dc75971 + 589cff7 a293e44 164c920 8c7c4ab c471dec
+                                  d9f60fe 432b7ab 50aff98 ff03a2d f4bee89 3454af5）
+[x] T4  evidence id 唯一化
+[x] T5  truncate 保留末尾 + partial + 不污染缓存
+[x] T6  evidence 条数上限
+[x] T7  candle_summary 取值 + 混合指标
+[x] T8  symbol 守卫白名单
+[x] T9  CLI report=None
+[x] T10 日志命名空间
+[x] T11 Critic verdict Literal + 失败语义（语义已定，见 T11 节，不要改回）
+[x] T12 MCP 握手 + 失败清理（pyproject 版本区间待 D1）
+[x] T13 evaluation 假验收
+[x] T14 briefs 调度时区与窗口
+
+批次 2 遗留（先做，再开批次 3）
+[ ] T14b 简报过点不补（GRACE 窗口；方案已定）
+[ ] T13b evaluation 期望值查表兜底
+[ ] T5b  truncate note 文案（可选）
 
 批次 3（P2）
 [ ] T15 Evidence Gate 门控力（先看 D2）   [ ] T16 回边 reducer
@@ -581,6 +740,13 @@ python -c "import importlib.metadata as m, inspect; from mcp import ClientSessio
 批次 4（测试有效性）  T28 T29 T30 T31 T32 T33 T34 + T35 机制性防线
 
 批次 5（决策）  D1 MCP 版本与模式   D2 Gate 是否门控   D3 anomalies   D4 budget/max_tool_calls
+                （T14 的时间窗已定：过点不补 → 见 T14b）
+
+收尾
+[ ] T36 文档与实现同步（architecture/README/prompts/tool_registry）
 ```
 
-**完成定义**：三个批次全绿（`ruff` × 2 + `pytest`），每条修复都带一个「改坏它就会红」的测试，并且 `PROJECT_STATUS.md` 里对 `has_evidence` / `anomalies` / 证据上限 / MCP 模式的描述与代码实际行为一致（不再有"文档承诺、代码没有"的项）。
+**完成定义**：批次 1–4 全绿（`ruff check` + `ruff format --check` + `pytest -q`），每条修复都带一个「改坏它就会红」的测试，
+并且文档与代码实际行为一致——重点核对四处：`has_evidence`（T15 定的是真门控还是提示）、`anomalies`（D3）、
+证据条数上限（T6）、MCP 模式与版本区间（D1）。`PROJECT_STATUS.md` 已被仓库主人删除，不要再创建；
+状态以此文档的 §0.4 为准。
