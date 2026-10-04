@@ -4,6 +4,7 @@
 不依赖外部传入参数（除了通过 ainvoke 传入的初始 state）。
 """
 
+import json
 from operator import add
 from typing import Annotated, Any, Literal
 
@@ -13,6 +14,75 @@ def _merge_dicts(a: dict, b: dict) -> dict:
     merged = dict(a)
     merged.update(b)
     return merged
+
+
+# ------------------------------------------------------------------ #
+# T16：research_more 回环的去重 reducer                                #
+# ------------------------------------------------------------------ #
+# 旧实现 results / evidence / findings / tool_results 全用 operator.add：
+# critic 判 research_more 回 supervisor 后 analyst 再跑一轮，同名同参的
+# ToolResult、同 id 的 Evidence、同 analyst 的 finding 全部**追加**，
+# reasoning 的 normalized_data 里同一份行情出现两遍（见 research/reasoning.py
+# 的 normalized_data 拼装）。route 明确"回环时整体覆盖"，这几个字段必须同等语义：
+# 同键后到者覆盖（保留最新），不同键正常追加（保留并行 analyst 合并能力）。
+
+
+def _dedup_append(a: list, b: list, key_fn) -> list:
+    """按 key_fn 去重合并两个列表：b 中与 a 同键的项**覆盖**旧值，其余追加。"""
+    merged = list(a)
+    index = {key_fn(item): i for i, item in enumerate(merged)}
+    for item in b:
+        key = key_fn(item)
+        if key in index:
+            merged[index[key]] = item
+        else:
+            index[key] = len(merged)
+            merged.append(item)
+    return merged
+
+
+def _tool_result_key(item) -> tuple[str, str]:
+    """ToolResult（对象或 dict）按 (tool, arguments) 去重。"""
+    if isinstance(item, dict):
+        tool = str(item.get("tool", ""))
+        arguments = item.get("arguments") or {}
+    else:
+        tool = str(getattr(item, "tool", "") or "")
+        arguments = getattr(item, "arguments", None) or {}
+    return tool, json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _merge_results(a: list, b: list) -> list:
+    """results 的去重 reducer（同签名保留最新一轮的结果）。"""
+    return _dedup_append(a, b, _tool_result_key)
+
+
+def _evidence_key(item) -> str:
+    """Evidence（对象或 dict）按 id 去重（T4 后 id 形如 technical-001）。"""
+    if isinstance(item, dict):
+        evid = item.get("id")
+    else:
+        evid = getattr(item, "id", None)
+    return str(evid) if evid else f"__no_id_{id(item)}"
+
+
+def _merge_evidence(a: list, b: list) -> list:
+    """evidence 的去重 reducer（同 id 保留最新一轮的证据）。"""
+    return _dedup_append(a, b, _evidence_key)
+
+
+def _finding_key(item) -> str:
+    """AnalystFinding（对象或 dict）按 analyst 去重——每个 analyst 每轮只产一条。"""
+    if isinstance(item, dict):
+        analyst = item.get("analyst")
+    else:
+        analyst = getattr(item, "analyst", None)
+    return str(analyst) if analyst else f"__no_analyst_{id(item)}"
+
+
+def _merge_findings(a: list, b: list) -> list:
+    """findings 的去重 reducer（同 analyst 保留最新一轮的 digest）。"""
+    return _dedup_append(a, b, _finding_key)
 
 
 from pydantic import BaseModel
@@ -46,9 +116,10 @@ class ResearchState(BaseModel):
 
     # ── analyst 产出（P3：三节点 Send 并行）──
     report: object | None = None
-    #: ToolResult[] — gate / reasoning 读取的原始结果（reducer 合并三节点输出）
-    results: Annotated[list[object], add] = []
-    tool_results: Annotated[list[object], add] = []
+    #: ToolResult[] — gate / reasoning 读取的原始结果（reducer 合并三节点输出；
+    #: T16 起按 (tool, arguments) 去重，research_more 回环不再成倍重复）
+    results: Annotated[list[object], _merge_results] = []
+    #: （T16 已删除）旧字段 tool_results 与 results 内容完全相同且无任何读取方
     cache_stats: Annotated[dict[str, int], _merge_dicts] = {}
 
     # ── Evidence Gate ──
@@ -59,6 +130,7 @@ class ResearchState(BaseModel):
     revision_count: int = 0  # 修订轮次计数器
 
     # ── 并行写入字段（必须 reducer）──
-    evidence: Annotated[list[Any], add] = []  # NormalizedDatum or Evidence
-    findings: Annotated[list, add] = []  # AnalystFinding
-    errors: Annotated[list[str], add] = []
+    #: T16：evidence 按 id、findings 按 analyst 去重（回环覆盖，保留最新）
+    evidence: Annotated[list[Any], _merge_evidence] = []  # Evidence（T4 后带唯一 id）
+    findings: Annotated[list, _merge_findings] = []  # AnalystFinding
+    errors: Annotated[list[str], add] = []  # 错误跨轮追加是期望行为

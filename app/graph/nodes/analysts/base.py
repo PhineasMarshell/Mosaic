@@ -114,7 +114,6 @@ class MarketAnalystNode:
                     }
                 ],
                 "evidence": evidence_items,
-                "tool_results": results,
                 "cache_stats": cache_stats,
                 "errors": [],  # always present — reducer appends on merge
             }
