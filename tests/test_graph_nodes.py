@@ -482,7 +482,8 @@ async def test_critic_invalid_json_fallback_records_error():
         )
         result = await critic(state)
 
-    assert result["critique"].verdict == "research_more"
+    # T11（有意反转）：审计自身失败改为内部 error 安全终止，不再 research_more 重跑。
+    assert result["critique"].verdict == "error"
     assert "Critic audit failed" in result["critique"].reason
     assert result["errors"]
     assert "Critic audit failed" in result["errors"][0]

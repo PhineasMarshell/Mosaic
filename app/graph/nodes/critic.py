@@ -9,9 +9,10 @@ P2 验收：Critic 条件边路由正确；打回重写的完整路径有测试�
 """
 
 import logging
+from typing import Literal
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
 from app.errors import LLMOutputError
@@ -19,11 +20,15 @@ from app.llm_json import parse_json_object
 
 logger = logging.getLogger(__name__)
 
+#: Critic 合法裁决。额外的 "error" 不允许模型返回，仅由本节点在「审计自身失败 /
+#: verdict 无法识别」时内部产生，路由层据此安全终止，而不是当成 pass 或 research_more。
+Verdict = Literal["pass", "revise", "research_more", "error"]
+
 
 class Critique(BaseModel):
     """Critic 评估结论。"""
 
-    verdict: str  # "pass" | "revise" | "research_more"
+    verdict: Verdict
     reason: str = ""
     missing_points: list[str] = []  # 证据缺口（research_more 时喂回 Supervisor）
     unsupported_claims: list[str] = []  # 无证据支撑的表述（revise 时喂回 Reasoning）
@@ -179,29 +184,51 @@ class CriticNode:
 
             content = response.choices[0].message.content or "{}"
             data = parse_json_object(content, source="Critic")
-            critique = Critique.model_validate(data)
+
+            # T11：verdict 先归一化（去空白 + 小写），再做校验。
+            raw_verdict = str(data.get("verdict", "")).strip().lower()
+            data["verdict"] = raw_verdict
+            if raw_verdict not in ("pass", "revise", "research_more"):
+                # 非法 / 无法识别的 verdict：安全终止并记 errors，
+                # 绝不能像旧逻辑那样落到路由默认 end（= 静默当 pass），
+                # 也不伪造 research_more 再烧一到两轮完整工具 + LLM。
+                logger.error("Critic verdict 无法识别 %r，安全终止", raw_verdict)
+                return {
+                    "critique": Critique(
+                        verdict="error",
+                        reason=f"Unrecognized critic verdict: {raw_verdict!r}",
+                    ),
+                    "errors": [f"Critic 返回了无法识别的 verdict: {raw_verdict!r}，已安全终止"],
+                }
+
+            try:
+                critique = Critique.model_validate(data)
+            except ValidationError as exc:
+                logger.error("Critic 输出校验失败，安全终止: %s", str(exc)[:300])
+                return {
+                    "critique": Critique(
+                        verdict="error",
+                        reason=f"Invalid critic payload: {exc}",
+                    ),
+                    "errors": [f"Critic 输出无法解析为合法结论: {str(exc)[:200]}"],
+                }
 
             logger.info("Critic verdict: %s (reason: %s)", critique.verdict, critique.reason)
 
             return {"critique": critique}
 
         except LLMOutputError as exc:
-            logger.warning("Critic LLM output error, defaulting to research_more: %s", exc)
+            # T11：审计自身失败（LLM 超时 / JSON 坏）不再返回 research_more——
+            # 那会触发一到两轮完整工具 + LLM（烧钱）且伪造 missing_points。
+            # 改为内部 error verdict 安全终止，只保留 errors。
+            logger.error("Critic LLM 输出不可用，安全终止: %s", exc)
             return {
-                "critique": Critique(
-                    verdict="research_more",
-                    reason=f"Critic audit failed: {exc}",
-                    missing_points=["经过 Critic 审计的报告"],
-                ),
+                "critique": Critique(verdict="error", reason=f"Critic audit failed: {exc}"),
                 "errors": [f"Critic audit failed: {exc}"],
             }
         except Exception as exc:
-            logger.exception("Critic node failed")
+            logger.exception("Critic node failed，安全终止")
             return {
-                "critique": Critique(
-                    verdict="research_more",
-                    reason=f"Critic audit failed: {exc}",
-                    missing_points=["经过 Critic 审计的报告"],
-                ),
+                "critique": Critique(verdict="error", reason=f"Critic audit failed: {exc}"),
                 "errors": [f"Critic audit failed: {exc}"],
             }

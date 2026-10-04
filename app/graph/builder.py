@@ -52,10 +52,13 @@ def critic_route_decision(state, settings: Settings) -> str:
         return "end"
 
     if isinstance(critique, dict):
-        verdict = critique.get("verdict")
+        verdict = str(critique.get("verdict", "")).strip().lower()
     else:
-        verdict = getattr(critique, "verdict", None)
-    if not verdict:
+        verdict = str(getattr(critique, "verdict", "")).strip().lower()
+
+    # T11：内部 error（审计自身失败 / verdict 无法识别）或空 verdict：
+    # 安全终止。errors 已由 Critic 节点写入，不是静默 pass。
+    if not verdict or verdict == "error":
         return "end"
 
     revision_count = state.get("revision_count", 0) or 0
@@ -74,7 +77,12 @@ def critic_route_decision(state, settings: Settings) -> str:
             return "supervisor"
         return "end"
 
-    return "end"  # "pass" or unknown
+    if verdict == "pass":
+        return "end"
+
+    # T11：理论上 Critic 已拦截非法 verdict；兜底仍按安全终止处理（不当 pass）。
+    logger.error("critic_route_decision 遇到未预期 verdict %r，安全终止", verdict)
+    return "end"
 
 
 def build_graph(settings: Settings):
