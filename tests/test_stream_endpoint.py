@@ -108,6 +108,8 @@ def test_stream_emits_per_node_progress_then_result(monkeypatch):
         "report": report,
         "results": [],
         "cache_stats": {},
+        "critique": {"verdict": "pass", "reason": "ok"},
+        "errors": [],
     }
     script = [
         ("updates", {"supervisor": {"intent": {"domain": "a_share"}}}),
@@ -140,10 +142,35 @@ def test_stream_emits_per_node_progress_then_result(monkeypatch):
     assert final.get("report") is not None
     assert final["report"]["what_happened"] == "测试用最小报告"
     assert final["question"] == "今天A股发生了什么？"
+    assert final["critique"] == {"verdict": "pass", "reason": "ok"}
+    assert final["errors"] == []
 
     # astream 被调用且传了正确的 stream_mode
     assert len(graph.calls) == 1
     assert graph.calls[0][1] == ["updates", "values"]
+
+
+def test_stream_result_includes_critic_errors(monkeypatch):
+    """终态中的 critique / errors 必须通过 result 事件暴露给调用方。"""
+    report = _make_report()
+    final_state = {
+        "question": "q",
+        "domain": "a_share",
+        "report": report,
+        "results": [],
+        "cache_stats": {},
+        "critique": {"verdict": "research_more", "reason": "Critic audit failed: boom"},
+        "errors": ["Critic audit failed: boom"],
+    }
+    graph = FakeGraph([], final_state)
+    _use_fake_graph(monkeypatch, graph)
+    _use_budget(monkeypatch, seconds=30)
+
+    events = _read_sse({"question": "q"})
+    final = [d for n, d in events if n == "result"][-1]
+
+    assert final["critique"]["verdict"] == "research_more"
+    assert final["errors"] == ["Critic audit failed: boom"]
 
 
 def test_stream_empty_route_falls_back_to_all_analysts_progress(monkeypatch):

@@ -8,12 +8,15 @@
 - state reducer 并行写不丢数据（通过单元测试验证 by_category 工具分类覆盖）
 """
 
+import logging
+
 import pytest
 
 from app.config import Settings
 from app.gateway.tool_registry import by_category
 from app.graph.builder import build_graph, critic_route_decision
 from app.graph.nodes.critic import Critique
+from app.graph.nodes.supervisor import route_candidate_categories
 
 
 @pytest.fixture()
@@ -214,13 +217,13 @@ def _patch_reasoning_and_critic(monkeypatch):
 def _patch_tool_runtime(monkeypatch):
     """mock ToolRuntime.execute，避免真实网络请求。"""
     from app.graph.tool_runtime import ToolRuntime
-    from app.models.market import Status, ToolResult
+    from app.models.market import ToolResult
 
     async def fake_execute(self, tool_name, arguments, called_signatures):
         return ToolResult(
             tool=tool_name,
             arguments=arguments,
-            status=Status.SUCCESS.value,
+            status="success",
             normalized=[],
             error=None,
         )
@@ -254,9 +257,11 @@ async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
     monkeypatch.setattr(MarketAnalystNode, "__call__", tracked_call)
 
     graph = build_graph(Settings())
-    await graph.ainvoke({"question": "测试", "domain": "a_share"})
+    result_state = await graph.ainvoke({"question": "测试", "domain": "a_share"})
 
     assert called_categories == ["technical"], f"route 非空时应只执行 technical，实际: {called_categories}"
+    assert not result_state.get("errors")
+    assert len(result_state.get("results", [])) == 1
 
 
 @pytest.mark.asyncio
@@ -282,11 +287,13 @@ async def test_fanout_falls_back_to_all_analysts_when_route_empty(monkeypatch):
     monkeypatch.setattr(MarketAnalystNode, "__call__", tracked_call)
 
     graph = build_graph(Settings())
-    await graph.ainvoke({"question": "测试", "domain": "a_share"})
+    result_state = await graph.ainvoke({"question": "测试", "domain": "a_share"})
 
     assert set(called_categories) == {"technical", "fundamental", "moneyflow"}, (
         f"route 为空时应三个 analyst 全上，实际: {called_categories}"
     )
+    assert not result_state.get("errors")
+    assert result_state.get("results", []) == []
 
 
 # ------------------------------------------------------------------ #
@@ -303,11 +310,26 @@ def test_news_node_absent_when_disabled():
     assert "sentiment" not in nodes
 
 
+def test_sentiment_enabled_warns_and_does_not_crash_graph(caplog):
+    """Sentiment 节点未实现时，开关打开应明确 warning，且不能映射到未知节点。"""
+    settings = Settings(sentiment_enabled=True)
+
+    with caplog.at_level(logging.WARNING, logger="app.graph.builder"):
+        graph = build_graph(settings)
+
+    assert "sentiment node is not implemented" in caplog.text
+    nodes = graph.get_graph().nodes
+
+    assert "sentiment" not in nodes
+    assert {"technical", "fundamental", "moneyflow"}.issubset(set(nodes))
+    assert route_candidate_categories(settings) == ("technical", "fundamental", "moneyflow")
+
+
 @pytest.mark.asyncio
 async def test_news_node_executed_when_enabled(monkeypatch):
     """news_enabled=True + plan 含 news_search step → news 节点执行，
     fake runtime 收到 news_search 调用。"""
-    from app.models.market import Status, ToolResult
+    from app.models.market import ToolResult
 
     settings = Settings(news_enabled=True)
 
@@ -327,7 +349,7 @@ async def test_news_node_executed_when_enabled(monkeypatch):
         return ToolResult(
             tool=tool_name,
             arguments=arguments,
-            status=Status.SUCCESS.value,
+            status="success",
             normalized=[],
             error=None,
         )
@@ -365,6 +387,7 @@ async def test_default_settings_e2e_matches_p25_baseline(monkeypatch):
     result = await graph.ainvoke({"question": "测试", "domain": "a_share"})
 
     assert result.get("report") is not None
+    assert not result.get("errors")
     nodes = graph.get_graph().nodes
     assert "news" not in nodes
     assert "sentiment" not in nodes

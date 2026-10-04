@@ -41,3 +41,36 @@ class ResearchResponse(BaseModel):
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     cache_stats: dict[str, int] = Field(default_factory=dict)
     conversation_id: str | None = None
+    critique: dict[str, Any] | None = None
+    errors: list[str] = Field(default_factory=list)
+
+
+def build_response_from_state(
+    state: dict[str, Any],
+    question: str,
+    conversation_id: str | None = None,
+) -> ResearchResponse:
+    """从 LangGraph 终态组装 ResearchResponse。
+
+    同步路径（Orchestrator.run）与 SSE 路径（/api/ask/stream）共用，
+    避免 tool_results / critique 的归一化逻辑在两边漂移。
+
+    注意：values 流模式与 ainvoke 的终态里，results 仍是 ToolResult 实例，
+    而 ResearchResponse.tool_results 是 list[dict]，这里统一 dump。
+    """
+    raw_results = state.get("results") or []
+    tool_results = [r if isinstance(r, dict) else r.model_dump() for r in raw_results]
+
+    critique = state.get("critique")
+    if critique is not None and not isinstance(critique, dict) and hasattr(critique, "model_dump"):
+        critique = critique.model_dump()
+
+    return ResearchResponse(
+        question=question,
+        report=state.get("report"),
+        tool_results=tool_results,
+        cache_stats=dict(state.get("cache_stats") or {}),
+        conversation_id=conversation_id,
+        critique=critique,
+        errors=list(state.get("errors") or []),
+    )

@@ -1,0 +1,58 @@
+"""Orchestrator 对最终研究响应的组装测试。"""
+
+import logging
+
+import pytest
+
+from app.agent.orchestrator import Orchestrator
+from app.config import Settings
+from app.models.market import ToolResult
+from app.models.response import MarketIntelligence
+
+
+class FakeGraph:
+    def __init__(self, final_state):
+        self.final_state = final_state
+
+    async def ainvoke(self, state, config=None):
+        return self.final_state
+
+
+def _report() -> MarketIntelligence:
+    return MarketIntelligence.model_validate(
+        {
+            "title": "测试情报",
+            "market_state": "震荡",
+            "state_label": "Neutral",
+            "what_happened": "测试用最小报告",
+            "confidence": "low",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_includes_critique_and_errors(caplog):
+    # 真实 ainvoke 的终态里 results 是 ToolResult 实例，不是 dict —
+    # 这里必须放非空的实例，否则抓不到 tool_results 的类型转换。
+    tool_result = ToolResult(tool="public_limit_up_pool", arguments={"date": "2026-10-04"}, status="success")
+    final_state = {
+        "report": _report(),
+        "results": [tool_result],
+        "cache_stats": {},
+        "critique": {
+            "verdict": "research_more",
+            "reason": "Critic audit failed: boom",
+        },
+        "errors": ["Critic audit failed: boom"],
+    }
+    orchestrator = Orchestrator(Settings())
+    orchestrator._graph = FakeGraph(final_state)
+
+    caplog.set_level(logging.WARNING, logger="app.agent.orchestrator")
+    result = await orchestrator.run("q")
+
+    assert result.critique == final_state["critique"]
+    assert result.errors == ["Critic audit failed: boom"]
+    assert result.tool_results == [tool_result.model_dump()]
+    assert all(isinstance(item, dict) for item in result.tool_results)
+    assert any("audit verdict=research_more" in record.message for record in caplog.records)

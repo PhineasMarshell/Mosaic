@@ -170,7 +170,7 @@ class CriticNode:
             response = await self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 messages=[
-                    {"system": "你是 Mosaic 的 Critic，只返回合法 JSON。"},
+                    {"role": "system", "content": "你是 Mosaic 的 Critic，只返回合法 JSON。"},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
@@ -190,17 +190,18 @@ class CriticNode:
             return {
                 "critique": Critique(
                     verdict="research_more",
-                    reason=f"Critic LLM error: {exc}",
+                    reason=f"Critic audit failed: {exc}",
                     missing_points=["经过 Critic 审计的报告"],
-                )
+                ),
+                "errors": [f"Critic audit failed: {exc}"],
             }
         except Exception as exc:
             logger.exception("Critic node failed")
             return {
                 "critique": Critique(
                     verdict="research_more",
-                    reason=f"Critic node error: {exc}",
+                    reason=f"Critic audit failed: {exc}",
                     missing_points=["经过 Critic 审计的报告"],
                 ),
-                "errors": [f"Critic failed: {exc}"],
+                "errors": [f"Critic audit failed: {exc}"],
             }

@@ -14,13 +14,13 @@ from app.config import Settings
 @pytest.fixture(autouse=True)
 def mock_tools(monkeypatch):
     """Mock ToolRuntime.execute → avoid real MCP calls."""
-    from app.models.market import Status, ToolResult
+    from app.models.market import ToolResult
 
     async def fake_execute(self, tool_name, arguments, called_signatures):
         return ToolResult(
             tool=tool_name,
             arguments=arguments,
-            status=Status.SUCCESS.value,
+            status="success",
             normalized=[],
             error=None,
         )

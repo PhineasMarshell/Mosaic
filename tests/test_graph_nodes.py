@@ -356,6 +356,138 @@ async def test_critic_dict_state_returns_pass(monkeypatch):
     assert CriticNode.__init__ is mock_init
 
 
+@pytest.mark.asyncio
+async def test_critic_sdk_request_has_system_role():
+    """走 AsyncOpenAI + httpx 的真实序列化路径，拦截实际 HTTP 请求体。"""
+    import json
+
+    import httpx
+    from openai import AsyncOpenAI
+
+    from app.graph.nodes.critic import CriticNode
+
+    captured_body: dict = {}
+
+    async def mock_handler(request: httpx.Request) -> httpx.Response:
+        captured_body["json"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"verdict": "pass", "reason": "ok"}),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    fake_report = types.SimpleNamespace(
+        what_happened="测试报告内容",
+        confidence=0.8,
+        state_label="neutral",
+        strong_areas=[],
+        risks=[],
+        why=[],
+    )
+    state = {
+        "report": fake_report,
+        "results": [],
+        "evidence": [],
+        "gate": None,
+        "question": "测试问题",
+        "domain": "a_share",
+    }
+
+    settings = Settings(openai_api_key="test-key", openai_base_url="http://mosaic.test/v1")
+    critic = CriticNode(settings)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_handler)) as http_client:
+        critic.client = AsyncOpenAI(
+            api_key="test-key",
+            base_url="http://mosaic.test/v1",
+            http_client=http_client,
+        )
+        result = await critic(state)
+
+    messages = captured_body["json"]["messages"]
+    assert messages[0] == {
+        "role": "system",
+        "content": "你是 Mosaic 的 Critic，只返回合法 JSON。",
+    }
+    assert messages[1]["role"] == "user"
+    assert result["critique"].verdict == "pass"
+    assert result["critique"].reason == "ok"
+
+
+@pytest.mark.asyncio
+async def test_critic_invalid_json_fallback_records_error():
+    """Critic 输出无法解析时，fallback 必须显式写入 errors。"""
+    import httpx
+    from openai import AsyncOpenAI
+
+    from app.graph.nodes.critic import CriticNode
+
+    async def mock_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "not json"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    fake_report = types.SimpleNamespace(
+        what_happened="测试报告内容",
+        confidence=0.8,
+        state_label="neutral",
+        strong_areas=[],
+        risks=[],
+        why=[],
+    )
+    state = {
+        "report": fake_report,
+        "results": [],
+        "evidence": [],
+        "gate": None,
+        "question": "测试问题",
+        "domain": "a_share",
+    }
+
+    settings = Settings(openai_api_key="test-key", openai_base_url="http://mosaic.test/v1")
+    critic = CriticNode(settings)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_handler)) as http_client:
+        critic.client = AsyncOpenAI(
+            api_key="test-key",
+            base_url="http://mosaic.test/v1",
+            http_client=http_client,
+        )
+        result = await critic(state)
+
+    assert result["critique"].verdict == "research_more"
+    assert "Critic audit failed" in result["critique"].reason
+    assert result["errors"]
+    assert "Critic audit failed" in result["errors"][0]
+
+
 # ------------------------------------------------------------------ #
 # P2.5-5：Evidence 条目对齐 §1 约定                                      #
 # ------------------------------------------------------------------ #

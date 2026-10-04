@@ -14,6 +14,7 @@ from app.agent.orchestrator import Orchestrator
 from app.config import get_settings
 from app.errors import LLMOutputError, UpstreamTimeoutError
 from app.logging_config import setup_logging
+from app.models.response import build_response_from_state
 
 setup_logging(level="INFO")
 logger = logging.getLogger("mosaic.app")
@@ -329,19 +330,13 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                     step, message = _NODE_PROGRESS.get(node_name, (node_name, node_name))
                     yield json_event("progress", {"step": step, "node": node_name, "message": message})
 
-        # ── 组装结果（与 orchestrator.run 对齐）──
-        from app.models.response import ResearchResponse
+        # ── 组装结果（与 orchestrator.run 共用同一构造器）──
+        result = build_response_from_state(final_state, question=question, conversation_id=conversation_id)
 
-        raw_results = final_state.get("results", [])
-        # values 流模式保留 Pydantic 对象，ResearchResponse.tool_results 需要 dict
-        tool_results_dicts = [r if isinstance(r, dict) else r.model_dump() for r in raw_results]
-        result = ResearchResponse(
-            question=question,
-            report=final_state.get("report"),
-            tool_results=tool_results_dicts,
-            cache_stats=dict(final_state.get("cache_stats", {})),
-            conversation_id=conversation_id,
-        )
+        verdict = result.critique.get("verdict") if isinstance(result.critique, dict) else None
+        if result.errors or verdict not in (None, "pass"):
+            logger.warning("Stream research completed with audit verdict=%s errors=%d", verdict, len(result.errors))
+
         yield json_event("progress", {"step": "done", "node": None, "message": "调查完成"})
 
         save_result = result.model_dump()

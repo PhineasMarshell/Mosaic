@@ -17,6 +17,8 @@
 - critic: Report vs Evidence 审计 → pass / revise / research_more
 """
 
+import logging
+
 from langgraph.graph import END, StateGraph
 
 from app.config import Settings
@@ -29,6 +31,8 @@ from app.graph.nodes.gate import GateNode
 from app.graph.nodes.reasoning import ReasoningNode
 from app.graph.nodes.supervisor import SupervisorNode, route_candidate_categories
 from app.graph.state import ResearchState
+
+logger = logging.getLogger(__name__)
 
 
 def critic_route_decision(state, settings: Settings) -> str:
@@ -90,6 +94,11 @@ def build_graph(settings: Settings):
     """
     builder = StateGraph(ResearchState)
 
+    if settings.sentiment_enabled:
+        logger.warning(
+            "sentiment_enabled=true, but the sentiment node is not implemented; this setting will be ignored."
+        )
+
     # ── 注册节点 ────────────────────────────────────────────
     supervisor_node = SupervisorNode(settings)
     technical_node = TechnicalAnalystNode(settings)
@@ -132,8 +141,6 @@ def build_graph(settings: Settings):
     }
     if settings.news_enabled:
         _fanout_map["news"] = "news"
-    if settings.sentiment_enabled:
-        _fanout_map["sentiment"] = "sentiment"
 
     builder.add_conditional_edges(
         "supervisor",
