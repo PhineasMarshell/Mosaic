@@ -13,21 +13,29 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# T14：简报按**本地时间**（北京时间）触发。旧实现用 datetime.now(UTC) 却直接和
+# 9:15 / 15:30 比较，等于在 UTC 01:15 / 07:30 触发，时区错了 8 小时。
+# 北京自 1991 年起无夏令时，固定 UTC+8 即可，避免对系统 tzdata 的依赖（Windows 无内置时区库）。
+LOCAL_TZ = timezone(timedelta(hours=8))
+MORNING_TIME = dt_time(9, 15)
+EVENING_TIME = dt_time(15, 30)
 
-def _next_run(target_time: dt_time) -> int:
-    """计算距离下次目标时间（秒）。"""
-    target = dt_time(target_time.hour, target_time.minute)
-    diff = (datetime.combine(datetime.today(), target) - datetime.now().replace(tzinfo=UTC)).total_seconds()
-    if diff <= 0:
-        diff += 86400  # 明天
-    return max(int(diff), 60)  # 至少 60 秒
+
+def _seconds_until(target: dt_time, now: datetime) -> float:
+    """计算从 ``now``（带 tz）到下一个 ``target`` 本地时刻的正秒数。"""
+    today_target = datetime.combine(now.date(), target, tzinfo=now.tzinfo)
+    delta = (today_target - now).total_seconds()
+    if delta <= 0:
+        next_target = datetime.combine(now.date() + timedelta(days=1), target, tzinfo=now.tzinfo)
+        delta = (next_target - now).total_seconds()
+    return delta
 
 
 def _brief_file_dir(brief_type: str) -> Path:
@@ -54,46 +62,55 @@ def _save_brief_to_file(brief: dict[str, Any], brief_type: str) -> Path:
     return path
 
 
-async def _run_scheduler(morning_fn, evening_fn):
-    """后台调度循环——用 asyncio.sleep 而非 APScheduler。"""
+async def _run_scheduler(morning_fn, evening_fn, *, now_fn=None, sleep_fn=None):
+    """后台调度循环：精确睡到下一个触发时刻，而不是靠 2 秒窗口每 30 秒轮询。
+
+    - 触发时刻按 LOCAL_TZ（Asia/Shanghai）解释，修复 UTC 时区错误。
+    - 每个类型每天最多触发一次（``fired`` 记录），跨日自动重置。
+    - ``now_fn`` / ``sleep_fn`` 可注入，便于用可控时钟测试。
+    """
+    now_fn = now_fn or (lambda: datetime.now(LOCAL_TZ))
+    sleep_fn = sleep_fn or asyncio.sleep
     logger.info("Brief scheduler started")
 
-    while True:
+    fired: set[str] = set()
+
+    async def _fire(brief_type: str, fn) -> None:
         try:
-            now = datetime.now(UTC)
-            morning_trigger = False
-            evening_trigger = False
+            logger.info("Triggering %s brief", brief_type)
+            brief = await fn()
+            _save_brief_to_file(brief, brief_type)
+        except Exception as exc:
+            logger.error("%s brief failed: %s", brief_type, exc)
 
-            # 只在到达分钟时检查一次（避免每分钟重复触发）
-            if now.hour == 9 and now.minute == 15 and now.second < 2:
-                morning_trigger = True
-            if now.hour == 15 and now.minute == 30 and now.second < 2:
-                evening_trigger = True
+    while True:
+        now = now_fn()
+        today = now.date().isoformat()
 
-            if morning_trigger:
-                logger.info("Triggering morning brief")
-                try:
-                    brief = await morning_fn()
-                    _save_brief_to_file(brief, "morning")
-                except Exception as exc:
-                    logger.error("Morning brief failed: %s", exc)
+        # 到达/越过当天触发时刻即到期（catch-up：重启后也能补触发，保证每天一次）。
+        morning_due = now >= datetime.combine(now.date(), MORNING_TIME, tzinfo=LOCAL_TZ)
+        evening_due = now >= datetime.combine(now.date(), EVENING_TIME, tzinfo=LOCAL_TZ)
 
-            if evening_trigger:
-                logger.info("Triggering evening brief")
-                try:
-                    brief = await evening_fn()
-                    _save_brief_to_file(brief, "evening")
-                except Exception as exc:
-                    logger.error("Evening brief failed: %s", exc)
+        morning_key = f"{today}:morning"
+        evening_key = f"{today}:evening"
+        if morning_due and morning_key not in fired:
+            await _fire("morning", morning_fn)
+            fired.add(morning_key)
+        if evening_due and evening_key not in fired:
+            await _fire("evening", evening_fn)
+            fired.add(evening_key)
 
-            # 每 30 秒检查一次，平衡精度和开销
-            await asyncio.sleep(30)
+        # 只保留今天的触发记录（跨日重置）。
+        fired = {k for k in fired if k.startswith(today)}
+
+        # 精确计算到下一个最近触发时刻的秒数并睡到点，避免窗口轮询漏触发。
+        now = now_fn()
+        wait = min(_seconds_until(MORNING_TIME, now), _seconds_until(EVENING_TIME, now))
+        try:
+            await sleep_fn(max(wait, 1.0))
         except asyncio.CancelledError:
             logger.info("Brief scheduler cancelled")
             break
-        except Exception as exc:
-            logger.error("Scheduler error: %s", exc)
-            await asyncio.sleep(60)
 
 
 # ── Brief Generators ──────────────────────
