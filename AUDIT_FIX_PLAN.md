@@ -1,10 +1,13 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
-> 行号基准：提交 `cabd00c`。若行号已漂移，以「定位锚点」里给的代码片段为准。
-> 产出：两轮分模块审计（130 条发现）+ critical/high 的对抗性验证（23 确认 / 1 驳回）+ 本文档作者亲自实测复现。
-> 每条任务的「置信度」标明证据强度，**执行前必须先用文中的复现命令确认问题存在**，复现不了就停下来报告，不要照改。
-> **本文档是活文档**：每批任务结束后更新 §0.4「当前进展」，已完成的任务保留原文（作为回归依据）并就地补记裁决语义。
-> 当前 HEAD：`3454af5`（批次 1、2 已完成并验收通过）。
+> **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
+> **行号基准**：`44c307f`（当前 HEAD）。行号已相对初版 `cabd00c` 漂移，本文所有锚点均已按当前代码校正；
+> 若再次漂移，以「定位锚点」里给的代码片段 grep 为准。
+> **怎么用这份文档**：§1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
+> §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
+> 每条任务都必须先跑「复现」确认问题存在——**复现不了就停下来报告，不要照改**。
+> 已完成的 T1–T18 细节不再全文保留，压缩进 **附录 D 契约备忘**；原始描述可用
+> `git log --oneline` + 对应提交号查回（每个任务一个提交）。
 
 ---
 
@@ -12,20 +15,29 @@
 
 ### 0.1 硬性规则
 
-1. **一次只做一个批次，批内一个任务一次提交。** 提交信息用仓库现有风格：`fix: <中文描述>` / `test: <中文描述>`。
+1. **一次只做一个批次，批内一个任务一次提交。** 提交信息用仓库现有风格：`fix: <中文描述>` / `test: <中文描述>` / `chore: <中文描述>`。
 2. **每个修复必须附带一个「改坏它会失败」的测试。** 这是本项目的核心教训：现有测试大量假阳性（见批次 4），只补代码不补有效测试，同类 bug 会以同样方式复发。
-3. **不要顺手重构无关代码**，不要改 `.env`，不要把密钥写进任何文件，不要 `git add -A`（仓库根有临时目录风险）。
+3. **不要顺手重构无关代码**，不要改 `.env`，不要把密钥写进任何文件，不要 `git add -A`（仓库根有临时目录风险：`.tmp/`、`__pycache__/`）。
 4. **不要动** `app/graph/nodes/critic.py` 的 system message（已修）、`app/memory/storage.py` 的 WAL 逻辑（已回退，不要恢复 fallback）。
-5. 每个任务完成后运行：
+5. 每个任务完成后运行（`--no-cache` 是为了绕开受限环境下 `.ruff_cache` 不可写，CI 上不需要）：
    ```bash
    ruff check --no-cache app/ tests/
    ruff format --check --no-cache app/ tests/
    pytest -q --tb=short
    ```
-   三者全绿才算完成（`--no-cache` 是为了绕开受限环境下 `.ruff_cache` 不可写，CI 上不需要）。
+   三者全绿才算完成。受限会话跑全量的办法见 **附录 A**。
 6. **凡是"把异常吞成默认值"的代码**（本项目大量存在），改的时候要保证：失败要么变成明确的 `status=error`/`errors`，要么降级为 `partial` + `note`，**不允许静默变成成功**。
-7. **已完成任务的裁决语义是契约，不要改回。** 动手前先读该任务的「✅ 已完成」小节（T11、T12、T13、T14、T14b 均已记录）。
+7. **已完成任务的裁决语义是契约，不要改回。** 动手前先读 **附录 D**。
    若某条与你手上的新需求冲突，**先报告**，不要自己回退。
+8. **提交纪律（本次新增，因为刚吃过亏）**：**全量测试不是全绿就不许提交**。
+   提交前必须自己看过 `pytest -q` 的尾部汇总行。若确有与本次改动无关的失败要先提交，
+   必须在提交信息里写清"失败的是哪条、为什么与本提交无关、归属哪个任务"。
+   T17（`2bf11b7`）与 T18（`44c307f`）两次提交时全量测试里各有一条失败没有被先查明，这是流程失误，不要重复。
+9. **测试修复纪律（本次新增）**：测试红了，**先判断是产品 bug 还是测试 bug**。
+   是测试 bug（stub 缺方法、patch 打错目标、断言错）就改测试；
+   **不许为了让测试变绿而在产品代码里加"没有 runtime 就跳过"之类的兜底分支**——
+   那会把真实的装配错误变成静默跳过。§2 的 T18T 就是这种情形，已按"改 stub"拍板。
+10. **`APPROVAL/COMMIT 纪律`**：`AUDIT_FIX_PLAN.md` 的更新（§0.4、新任务裁决）单独一个 `chore:` 提交，不要和代码修复混在一起。
 
 ### 0.2 每个任务的固定结构
 
@@ -42,711 +54,863 @@
 
 ### 0.3 批次划分与依赖
 
-| 批次 | 主题 | 任务 | 依赖 |
+| 批次 | 主题 | 任务 | 状态 |
 |---|---|---|---|
-| 1 | **P0 正确性**：正在产生错误结论或污染数据 | T1 T2 T3 | 无，先做 |
-| 2 | **P1 高**：功能静默失效 / 可观测性 / 证据链可信度 | T4–T14 | T1、T2 完成后更稳（部分测试会复用它们） |
-| 3 | **P2 中**：可靠性、成本、契约一致性 | T15–T27 | 无强依赖 |
-| 4 | **测试有效性**：把假阳性测试改成真测试 | T28–T34 | 可与批次 2 并行，但建议在批次 1 之后（批次 1 会给它们提供真实回归场景） |
-| 5 | **待人类决策**：需要产品判断，不要自行决定 | D1–D4 | — |
+| 1 | **P0 正确性**：正在产生错误结论或污染数据 | T1 T2 T3 | ✅ 完成并验收 |
+| 2 | **P1 高**：功能静默失效 / 可观测性 / 证据链可信度 | T4–T14 | ✅ 完成并验收 |
+| 2.5 | **批次 2 遗留**：T14b / T13b / T5b | 3 条 | ✅ 已实现，**验收已通过** |
+| 3 | **P2 中**：可靠性、成本、契约一致性 | T15–T27 | 🔶 部分完成：T16 T17 T18 已提交；**T19–T27 未做**；T15 需 D2（已定） |
+| 3.0 | **修红（本次新增，必须最先做）** | T18b / T17T / T18T | ⬜ 未做，**阻塞后续所有批次** |
+| 4 | **测试有效性**：把假阳性测试改成真测试 | T28–T35 | ⬜ 未开始（可与批次 3 并行，建议修红后按 T28→T35 顺序做） |
+| 5 | **待人类决策** | D1–D4 | ✅ **本次全部拍板，见 §1.4** |
 
-### 0.4 当前进展（每批结束后更新本节）
+### 0.4 当前进展
 
-> 最后更新：批次 2 验收通过之后。行号基准仍为 `cabd00c`，当前 HEAD `3454af5`。
-> 本节的更新本身是未提交改动（`M AUDIT_FIX_PLAN.md`）——执行方在下一批的 housekeeping 提交里一并带上即可。
+> **当前 HEAD：`44c307f`。工作区干净（`git status --porcelain` 只有未跟踪的临时目录）。**
+> 行号基准 = `44c307f`。全部测试 420 项（**`415 passed + 3 failed + 2 skipped`**，失败清单见 §1.2）。
 
-| 批次 | 状态 | 说明 |
+| 任务 | 状态 | 提交 | 备注 |
+|---|---|---|---|
+| T1–T14 | ✅ 完成并验收 | 见附录 D | 细节压缩，契约见附录 D |
+| **T14b 简报过点不补** | ✅ 已实现并**验收通过** | `7e87c6c` | GRACE=5min；3 条新用例含等待秒数断言 |
+| **T13b evaluation 兜底** | ✅ 已实现并**验收通过** | `fca2025` | 抽 `_meets_expected_min_tools`，未知 case_id 按 FAIL |
+| **T5b truncate note 文案** | ✅ 已实现并**验收通过** | `7e87c6c` | 实测 250 条 → 保留 201（200+说明条），`status=partial` |
+| **T16 回边 reducer 去重** | ✅ 已实现并**验收通过** | `df757a5` | 已独立复现"改回 `add` 必红" |
+| **T17 news_search TTL** | ✅ 产品代码正确（`2bf11b7`）；**测试有缺陷**，见 §2 的 **T17T** | `2bf11b7` | 实测 execute() 后剩余 TTL = 21600s |
+| **T18 analyst 级复用 Gateway** | 🔶 方向正确，但**引入一处产品级回归**（急切连接），见 §2 的 **T18b**；另有 2 条 stub 测试回归，见 **T18T** | `44c307f` | `test_gateway_reuse.py` 本身是有效测试 |
+| **T19–T27** | ⬜ 未开始 | — | 本次已把 D2/D3/D4 的裁决写进各自任务 |
+| **T36 文档同步** | ⬜ 未做 | — | §5，建议批次 3 收尾时做 |
+| **T28–T35** | ⬜ 未做 | — | §4 |
+
+---
+
+## 1. 交接验收结论（主 Agent 独立复核）
+
+> 复核方式：不采信执行方报告，自己读 diff、跑测试、写脚本复现、并对关键修复做「改坏 → 必须变红」的反向验证。
+> 复核环境：workspace-write 会话，sqlite 无法写 `memory/`（见附录 A），因此分两种 gateway 模式各跑一遍。
+
+### 1.1 复核通过项（结论：可以采信）
+
+| 项 | 我实际做的事 | 结果 |
 |---|---|---|
-| 批次 1（T1–T3） | ✅ 完成并通过验收 | `735aeaa`(T1) `b8e114c`(T2) `f86df07`(T3) |
-| 批次 2（T4–T14） | ✅ 完成并通过验收 | 另含 `dc75971`（纳入本计划 + 移除已被主人删除的 PROJECT_STATUS.md） |
-| 批次 3（T15–T27） | ⬜ 未开始 | T15 需 D2、T20 部分需 D3 |
-| 批次 4（T28–T35） | ⬜ 未开始 | — |
-| 批次 5（D1–D4） | ⏳ 待决策 | T12 的 `pyproject.toml` 版本区间仍未动，等 D1 |
+| **T16 reducer 去重** | 读 `app/graph/state.py:16-88` diff；跑 `tests/test_graph_state_reducers.py`；**把三个字段的 reducer 临时改回 `operator.add` 再跑** | 正常 2 passed；改回 `add` 后 `test_same_signature_loop_back_overwrites` 变红（`assert 2 == 1`）→ **测试真的能防回归**；改回后已恢复 `git diff` 为空 |
+| **T16 删除 `state.tool_results`** | 全仓 grep `tool_results`，确认写入方（`analysts/base.py`）与读取方 | 无任何读取方：`app/models/response.py:66` 从 `state["results"]` 组装，`app/graph/nodes/gate.py:27` 读 `results` → **删除安全** |
+| **T17 产品修复** | 用自己的脚本（patch 目标是模块全局，写法正确）跑 `runtime.execute("news_search", {...})` | 缓存剩余 TTL = **21600s**（旧实现 ≈30s）；`_resolve_ttl("news_search", Settings()) == 21600.0` → **修复正确** |
+| **T17 改动兼容性** | grep `_resolve_ttl` 的全部调用方（`test_cache_multi_domain.py` 只传 1 个参数） | 新签名 `settings=None` 向后兼容 → 无回归 |
+| **T18 运行级复用** | 读 diff；跑 `tests/test_gateway_reuse.py` | 3 工具 → 1 个客户端、异常时 `__aexit__` 被调用 → **该测试有效且通过** |
+| **T14b 过点不补** | 读 `briefs.py` diff 与 3 条新用例 | 23:00 不补发、09:18 触发、09:30 不触发，且断言了等待秒数（能同时防"严格相等永不触发"的反向回归）→ **有效** |
+| **T13b / T5b** | 读 diff；跑 `tests/test_evaluation.py`、`tests/test_truncate.py` | 抽函数正确，note 文案与实际条数一致 → **有效** |
+| **批次 2 遗留三条的联合回归** | 跑 `test_gateway_reuse + test_brief_scheduler + test_evaluation + test_truncate + test_news_search + test_evidence + test_cache_multi_domain` | **37 passed** |
 
-任务级状态：
+### 1.2 未收尾问题清单（必须先处理）
 
-| 任务 | 状态 | 提交 |
+**P0 — 阻塞项（就是当前 3 条红）**
+
+| # | 测试 | 性质 | 归属任务 |
+|---|---|---|---|
+| 1 | `tests/test_graph_nodes.py::test_analyst_with_no_matching_tools_returns_empty` | 测试 stub 缺陷（fixture 把 `_runtime` 设成 `None`，而 `__call__` 现在无条件调 `self._runtime.gateway_session()`）→ AttributeError 被节点兜底 except 吞成 `failed=True` → 用例取 `result["results"]` 得 `KeyError: 'results'` | **T18T**（§2） |
+| 2 | `tests/test_graph_nodes.py::test_execute_skips_non_whitelist_no_stock` | 同上（`FakeRuntime` 缺 `gateway_session`） | **T18T**（§2） |
+| 3 | `tests/test_tool_runtime_ttl.py::test_news_search_cache_ttl_survives_execute` | **测试自身缺陷**：用 `runtime._search_news = fake` 打补丁，但生产代码读的是模块全局 `_search_news`（`app/graph/tool_runtime.py:304`），patch 无效 → 测试实际打真实 DDGS 网络，网络失败就红。**产品代码（T17 修复）没有问题** | **T17T**（§2） |
+
+**P1 — 本次新发现的产品级回归（T18 引入，必须和上面一起修）**
+
+`ToolRuntime.gateway_session()`（`app/graph/tool_runtime.py:62-89`）在**进入时就**创建并连接 Gateway。
+修改前，只分配内部工具（`news_search` / `internal_hk_northbound` / `internal_hk_index`）的 analyst
+根本不会碰 Gateway（`_do_execute` 里 INTERNAL 分支在任何 Gateway 代码之前 return）。
+修改后这类 analyst 也会 spawn MCP 子进程 + `initialize()` + `list_tools`；**网关不可用时整个 analyst 直接失败**。
+
+我的实测证据：
+- 脚本计数：`async with runtime.gateway_session(): await runtime.execute("news_search", ...)`
+  → **Gateway 被创建/进入 1 次**（期望 0）。
+- 本会话直接开一次会话：`MCPConnectionError: MCP server startup failed: [WinError 5] 拒绝访问`
+  （沙箱禁止 spawn 子进程；`.env` 里 `MARKET_GATEWAY_MODE=mcp`）。
+- 因此在 `mcp` 模式下，除上面 2 条 stub 用例外，**另有 6 条测试连带变红**，且红的原因与它们要测的东西完全无关：
+  `test_graph_nodes.py::test_analyst_exception_degrades_to_error`（报的是 "MCP server startup failed" 而不是 "intentional failure"）、
+  `test_graph_nodes.py::test_analyst_evidence_is_evidence_instances`、
+  `test_graph_topology.py` 4 条（`test_fanout_routes_to_analyst_when_route_nonempty`、`test_fanout_falls_back_to_all_analysts_when_route_empty`、`test_news_node_executed_when_enabled`、`test_default_settings_e2e_matches_p25_baseline`）、
+  `test_news_no_symbol.py` 2 条。
+  切到 `MARKET_GATEWAY_MODE=http` 后这 6 条全绿 → 证明它们只是被"急切连接"放大，根因是同一处。
+
+**→ 修法见 §2 T18b（按需连接）。这一条修完，`mcp` 模式下这 6 条会自然变绿，不需要改这 6 条测试。**
+
+**P2 — 流程失误（已记录，不单独提交代码）**
+
+- T17（`2bf11b7`）与 T18（`44c307f`）两次提交时，全量测试里已有 1 条失败未查明就提交。
+  当时那条失败就是 P0-3（坏测试），不是产品回归；但正确做法是先查明归属再提交。已写入规则 8。
+
+### 1.3 未做任务的复现预跑（主 Agent 已逐条确认，附实测输出）
+
+> 目的：执行方不必再花时间判断"这条问题到底存不存在"。下面这些**都已复现**，可以直接进入修复。
+> 若你跑出来和这里不一致，说明代码已漂移，**先报告再动手**。
+
+| 任务 | 我跑的命令 | 实测输出（= bug 存在） |
 |---|---|---|
-| T1 空载荷判失败 | ✅ | `735aeaa` |
-| T2 F10 多指标 / unit | ✅ | `b8e114c` |
-| T3 持久化字段层级 | ✅ | `f86df07` |
-| T4 evidence id 唯一化 | ✅ | `c471dec` |
-| T5 truncate 保留末尾 | ✅ | `d9f60fe` |
-| T6 证据条数上限 | ✅ | `50aff98` |
-| T7 candle_summary 取值 | ✅ | `432b7ab` |
-| T8 symbol 守卫白名单 | ✅ | `ff03a2d` |
-| T9 CLI report=None | ✅ | `164c920` |
-| T10 日志命名空间 | ✅ | `8c7c4ab` |
-| T11 Critic verdict 约束 | ✅ **裁决语义已定，见 T11 节，不要改回** | `589cff7` |
-| T12 MCP 握手 + 失败清理 | ✅（`pyproject` 版本区间待 D1） | `a293e44` |
-| T13 evaluation 假验收 | ✅（另见 T13b） | `f4bee89` |
-| T14 简报调度时区与窗口 | ✅（另见 **T14b**，过点不补尚未做） | `3454af5` |
-| **T14b 简报过点不补** | ⬜ **待做（已定方案，见 T14 节）** | — |
-| T13b evaluation 兜底 | ⬜ 待做 | — |
-| T5b truncate note 文案 | ⬜ 待做（可选，非阻塞） | — |
-| T36 文档同步 | ⬜ 待做（建议批次 3/4 收尾时做） | — |
-| T15–T27 / T28–T35 | ⬜ 待做 | — |
+| T19 `ttl=0` | `Cache().set("k", 1, ttl=0); get("k")` | 返回 `1`（还在，30s 后才过期）→ 期望 `None` |
+| T19 无上限 | 连 `set` 2000 个键后 `stats["size"]` | `2001` → 期望 ≤ `max_entries` |
+| T20 必填字段 | `MarketIntelligence.model_validate({"title":"t","state_label":"Neutral"})` | `ValidationError: 2 validation errors ... market_state Field required / what_happened Field required` |
+| T21 跨线程连接 | 另一线程调 `MarketMemory.save_turn` | `ProgrammingError: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 27032 and this is thread id 29528.` |
+| T22 阈值单位 | `detect_anomalies` 喂 `openInterest=3.2e9, fundingRate=0.0001` | 输出 **两条** `critical` + `high`，描述是 `OI 剧烈增长 3200000000.0%`；`fundingRate` 一条都没触发 |
+| T24 域过滤 | `registry_text(domains=["us_stock"])` | `40` 行 = `len(ALL_TOOLS)`，且含 `[a_share]` → 静默回退全量 |
+| T24 health | `registry_text(domains=["hk_stock"])` | `2` 行、**不含** `[unknown]` → 与"始终包含 health 工具"的注释相反 |
+| T5b（已修，回归确认） | 250 条 datum → `truncate` | `kept: 201`，`status: partial`，note 写明 250/200 ✓ |
+| T17（已修，回归确认） | `execute("news_search", ...)` 后看缓存 | 剩余 TTL `21600s` ✓ |
 
-**批次 2 验收复核记录**（由验收者独立重跑，非采信执行方报告）：
-- 测试数字一致：`408 passed / 2 skipped`（验收环境受限时表现为 `377 + 4 环境失败 + 2 环境 error + 25 端点通过`）。
-  那 4 个失败 + 2 个 error 全部是把 sqlite 路径重定向到仓库根的副产品，**不是回归**，不要去"修"它们：
-  `test_writes_are_visible_to_a_second_connection` / `test_writes_survive_a_restart` /
-  `test_conversation_history_round_trips_across_instances`（需要两条连接打开同一文件）、
-  `test_db_file_created_on_init`（断言 DB 文件路径）、`test_persistence.py` 两条（`tmp_path` 不可写）。
-- T4–T11 的复现命令已逐条重跑，行为全部符合预期（含 `truncate` 缓存不复用同一实例、证据上限保留最新）。
-- T12/T13/T14 的新测试已逐条审阅，断言具体、在旧实现下会红。
-- 批次 2 对既有测试的唯一改动是 `tests/test_graph_nodes.py` 里 T11 的有意反转，diff 内已注明理由。
-- 日志修复经实测无重复输出（`app.*` 与 `mosaic.*` 各一条记录只打一行）。
+**尚未复现（执行时自己确认）**：T23（重试预算，需 stub transport 计数）、T25（前端并发/渲染，需浏览器或文本契约）、
+T26（SSE 错误分支，需 TestClient + monkeypatch）、T27（`called_signatures`，需计数 Gateway stub）。
+T27 的根因已由阅读确认：`_check_cache` 只在**缓存命中**时 `called_signatures.add(...)`，
+而"签名已存在"时 `return None` 被调用方当成"无缓存"→ 真的再打一次网关。
 
----
+### 1.4 已拍板决策（不要再问、不要再改）
 
-## 批次 1 — P0：正在产生错误结论或污染数据
+| ID | 决策 | 落地位置 |
+|---|---|---|
+| **D1** | **以 MCP 2.x 为准**：`pyproject.toml` 把 `mcp>=1.12` 收成 **`mcp>=2,<3`**，保留 `initialize()` 握手 | 批次 3 的 T12 收尾项（§3 开头） |
+| **D2** | **Gate 不短路**：`has_evidence=False` 时**仍产出报告**，但强制 `confidence=low` + `data_caveats` + 写 `errors`；并把 `evidence_gate.py` 的文档承诺与实际行为改成一致 | **T15**（§3） |
+| **D3** | **`anomalies` 由代码填**：用 `app/detector/anomaly.py::detect_anomalies` 在代码里生成，**不要**交给模型。**必须先做完 T22**（阈值/单位）再接入，否则每次快照都误报 critical | **T20 后半 + T22**（§3） |
+| **D4** | **接通预算语义**：`config.max_tool_calls` 成为真实上限；`budget` 显式值优先（`budget if budget is not None else len(tool_calls)`）；`budget=0` 表示"不执行"，修掉 `or` 吞掉 0 的 bug | **T30 顺带 + §3 的 T20 备注** |
+| **stub 修法** | **改测试 stub，不改产品代码迁就测试**（见规则 9） | **T18T**（§2） |
 
-### T1 — 空载荷被归一化为「成功证据」
+**已由仓库主人拍板、不要改回的其它契约**（完整版见附录 D）：
 
-**置信度**：已实测复现（本文档作者）
-
-**定位锚点**
-- `app/gateway/normalizer.py:777` — `if raw is None:`（唯一的判空守卫）
-- 下游消费：`app/agent/evidence_gate.py:70`、`app/research/evidence.py:308-323`
-
-**现象**：上游用「200 + 空 body / `{}` / 纯文本」表示查不到数据时，工具仍被记为成功，Evidence Gate 报 `has_evidence=True`，Reasoning LLM 在零数据点的情况下撰写报告。
-
-**复现**
-```python
-from app.gateway.normalizer import normalize_tool_result
-for raw in ({}, [], None, "Server busy", 0):
-    r = normalize_tool_result("quote_tencent_quote_get", {}, raw)
-    print(f"{raw!r:16} -> status={r.status} n={len(r.normalized)} err={r.error}")
-```
-当前输出：
-```
-{}               -> status=success n=0
-[]               -> status=success n=0
-None             -> status=error   n=0
-'Server busy'    -> status=success n=1   ← 裸文本被 str() 成一条"证据"
-0                -> status=success n=1
-```
-
-**根因**：`normalize_tool_result` 只把 `raw is None` 当失败；空容器走正常路径但产出 0 条 datum；非 dict/list 标量在 `else` 分支被 `str(raw)` 包装成 `metric="response"` 的"证据"。
-
-**修改**
-1. 把守卫扩成"无可用数据"的判定，例如：
-   ```python
-   if raw is None or raw == [] or (isinstance(raw, dict) and not raw):
-       return ToolResult(..., status="error", normalized=[],
-                         error="Gateway returned no data (empty response)")
-   ```
-2. 非 `dict`/`list` 标量（`str`/`int`/`bool`）不再包装成证据：返回 `status="error"`，`error` 里带上原文前 200 字（便于定位是上游报错文本还是真的空响应）。
-3. 兜底不变式：**构造返回值前，若 `normalized` 为空则强制 `status="error"`**（防御以后新加的分支再犯同样错误）。
-4. 同步修 `app/research/evidence.py:308-323`：该处在 `result.normalized` 为空但 `status=="success"` 时会造出一条 `value="success"` 的证据，正是 T1 的产物，应改为 `status="error"` + note，或直接不生成。
-
-**必补测试**：`tests/test_normalizer_enhanced.py`（或新建 `tests/test_normalizer_empty.py`）
-```python
-@pytest.mark.parametrize("raw", [{}, [], "", "Server busy", 0, False])
-def test_empty_or_scalar_payload_is_error(raw):
-    r = normalize_tool_result("quote_tencent_quote_get", {}, raw)
-    assert r.status == "error"
-    assert r.normalized == []
-```
-并检查 `tests/test_data_integrity.py:47-50` 现有对 `{}` 的断言——它锁的是旧行为，需按新语义更新（若它断言 `success`，那正是 T1 的假阳性）。
-
-**验收**：上面的复现脚本全部输出 `status=error`；`evidence_gate` 对这批结果报 `has_evidence=False`。
-
-**风险 / 牵连**：非交易日上游可能合法返回空 → 改动后会被判 error，这是**期望行为**（无数据本就该是无证据）；但要确认 `reasoning` 不会因此直接崩（它会拿到 0 条证据，走 `data_caveats` 路径，属正常降级）。
+| 议题 | 结论 |
+|---|---|
+| Critic「审计失败」语义 | 不归为 `research_more`；`verdict="error"` → 安全 END + 保留 report + 写 `errors`；`/api/ask` 仍 200 |
+| 简报触发 | 只认 09:15 / 15:30，**过点不补**（GRACE=5min 只容忍抖动） |
+| `PROJECT_STATUS.md` | 已由主人删除，**不要再创建**；状态以 §0.4 为准 |
+| evidence id | `{category}-NNN`（T4 之后），不要再退回 `evidence-NNN` |
+| `truncate` | 保留**末尾** 200 条 + 1 条说明，`status=partial`，缓存存深拷贝 |
 
 ---
 
-### T2 — F10「指标 → {value, unit}」被折叠成单条，兄弟指标静默丢失
+## 2. 批次 3 前置：修红（**必须最先做完，全绿前不要开始 T19**）
 
-**置信度**：已实测复现
+> 本节的 3 个任务可以合成 1–3 个提交，但**必须三条命令全绿之后再提交**。
+> 建议顺序：T18b（产品）→ T17T（测试）→ T18T（测试）。
 
-**定位锚点**
-- `app/gateway/normalizer.py:605-613` — `if _is_eastmoney_f10_tool(_tool) and sub_containers: flattened = _deep_flatten_value(value)`
-- 辅助函数 `_deep_flatten_value`：`app/gateway/normalizer.py:232-261`（对多键 dict「返回第一个数字」）
-
-**现象**：一次 F10 调用里有多个指标时只保留第一个，其余（PE/PB…）永久丢失；存活那条的 `metric` 是父路径 `data.indicators`，无法判断是哪个指标。
-
-**复现**
-```python
-from app.gateway.normalizer import normalize_tool_result
-raw = {"data": {"indicators": {"ROE": {"value": 12.5, "unit": "%"},
-                               "PE":  {"value": 15.2, "unit": "x"}}}}
-r = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
-print([(d.metric, d.value) for d in r.normalized])
-```
-当前输出：`[('data.indicators', 12.5)]`（PE 丢失，metric 无指标名）
-
-**根因**：该分支对整块 `value` 做 `_deep_flatten_value`，而该函数遇到多键 dict 会**返回第一个**数值，然后用父路径落一条 datum。
-
-**修改**
-1. 当 `sub_containers` 含 **多个** 子键时，放弃"整块 flatten"，改为逐子键递归（与普通路径一致），使指标名保持 `data.indicators.ROE.value` 这种可读形式。
-2. 只在一个子键、或子键名形如 `value`/`val` 时才允许走 flatten 快路径——且必须把命中的子键拼进 `metric`（如 `f"{path}.{hit_key}"`）。
-3. `_deep_flatten_value` 返回候选值不唯一时（>1 个数值）不要"取第一个"，返回哨兵让调用方改走逐键展开。
-4. `_make_datum`（`app/gateway/normalizer.py:535-547`）目前把 `unit` 硬编码为 `None`，而同级的 `unit` 键在通用路径下会变成一条字符串指标。改为：`_make_datum(..., unit=None)` 增加 `unit` 形参，F10 分支把同级 `unit` 写进 datum 的 `unit`；通用路径遇到 `value` 的同级 `unit` 也合并进该 datum 而不是产出独立指标。
-
-**必补测试**：**强化** `tests/test_normalizer_f10.py:246-262`
-```python
-metrics = {d.metric: d.value for d in result.normalized}
-assert metrics["data.indicators.ROE.value"] == 12.5   # 或修复后的命名
-assert metrics["data.indicators.PE.value"] == 15.2
-assert len(result.normalized) >= 2
-```
-**不要**再只用 `assert result.normalized` —— 这正是该缺陷长期存在的原因。
-另外确认 `tests/test_normalizer_f10.py:220-224` 声明的单键形状 `{"data":{"indicators":{"PB":{"value":2.5}}}}` 仍然工作。
-
-**验收**：复现脚本输出包含 2 个指标且 metric 名可辨识；F10 相关测试全绿。
-
-**风险 / 牵连**：`unit` 语义变化会影响 `app/research/evidence.py` 的取值展示；改完跑 `tests/test_normalizer*.py` 全部。
-
----
-
-### T3 — SSE 落库读错字段层级：对话摘要恒空 + 当日状态被空值覆盖
-
-**置信度**：已实测复现（`model_dump()` 顶层无 `state_label`）
+### T18b — `gateway_session()` 改按需连接（修复 T18 的急切连接回归）
 
 **定位锚点**
-- `app/main.py:435-445` `_save_turn`：`report_dict.get("state_label", "")`
-- `app/main.py:448-471` `_save_research_and_state`：`report_dict.get("state_label"/"strong_areas"/"confidence"/"anomalies")`
-- 调用点：`app/main.py:372-375`（`save_result = result.model_dump()`）
-- 对照组（正确写法）：`app/main.py:205-227`（`/api/ask`，用 `result.report.state_label`）
-- 消费方：`app/scheduler/briefs.py:115`、`:134`、`:146-147`；`app/memory/storage.py:127-165`（**merge 写入**）、`:270-288`
+- `app/graph/tool_runtime.py:62-89` — `gateway_session()`（`await gateway.__aenter__()` 在进入时就执行）
+- `app/graph/tool_runtime.py:177-210` — `_do_execute` / `_call_gateway`
+- `app/graph/nodes/analysts/base.py:90-98` — `async with self._runtime.gateway_session():`
 
 **现象**
-- 每轮 SSE 对话存进 `conversations.answer_summary` 的都是 `""` → `get_conversation_history` 只剩问题、没有答案 → 多轮上下文形同虚设且无报错。
-- 当日 `daily_states` 被写入 `state_label=""`、`strong_areas=[]`、`confidence=""`；由于 `save_daily_state` 是 `merged.update(data)` 的**合并**语义，空值会覆盖当天先前写入的正确快照 → 简报里"市场当前状态"是空白（`.get("state_label", "N/A")` 拿到 `""`，连 N/A 都不显示）。
-- SSE 路径完全没有写 `market_state`（`/api/ask` 有写）。
+只用到内部工具的 analyst（news / hk）也会连接 Gateway；网关不可用（未装 iiix、沙箱禁 spawn、网络或鉴权故障）时整个 analyst 直接 `failed=True`，而在 T18 之前这些 analyst 完全不依赖 Gateway。MCP 模式下还会白 spawn 一次子进程 + 握手 + `list_tools`。
 
 **复现**
 ```python
-from app.models.response import ResearchResponse, MarketIntelligence
-r = ResearchResponse(question="q", report=MarketIntelligence.model_validate(
-    {"title":"t","market_state":"弱","state_label":"Neutral",
-     "what_happened":"指数普跌","confidence":"low"}))
-d = r.model_dump()
-print(sorted(d.keys()))          # 无 state_label / what_happened
-print(d.get("state_label"))      # None
+# 期望输出 opened == 0；当前输出 1
+import asyncio
+from app.config import Settings
+from app.graph.tool_runtime import ToolRuntime
+import app.graph.tool_runtime as tr
+
+async def fake_search_news(query, *, max_results=5, time_limit="d"):
+    return {"news": [{"date": "d", "title": "t", "body": "b", "url": "u"}], "meta": {"status": "ok"}}
+tr._search_news = fake_search_news
+
+class CountingGateway:
+    opened = 0
+    def __init__(self, settings): pass
+    async def __aenter__(self):
+        CountingGateway.opened += 1
+        self.tools = []
+        return self
+    async def __aexit__(self, *exc): return None
+    async def call(self, name, args): raise AssertionError("内部工具不该走 gateway")
+
+async def main():
+    rt = ToolRuntime(Settings())
+    rt._gateway_class = lambda: CountingGateway
+    async with rt.gateway_session():
+        await rt.execute("news_search", {"query": "q"}, set())
+    print("opened =", CountingGateway.opened)
+
+asyncio.run(main())
 ```
+配套证据（本会话实测，`MARKET_GATEWAY_MODE=mcp`）：
+`pytest tests/test_news_no_symbol.py tests/test_graph_topology.py -q` 全红，错误为
+`MCPConnectionError: MCP server startup failed: [WinError 5] 拒绝访问`。
 
-**根因**：`_save_turn` / `_save_research_and_state` 按"扁平 report dict"写，但收到的是 `ResearchResponse` 的 dump（report 嵌在 `report` 键下）。SSE 与同步路径各写了一份持久化逻辑，属于同类"双路径漂移"（与之前 `build_response_from_state` 的 bug 同源）。
+**根因**：`gateway_session()` 把"会话边界"和"建立连接"合并成同一件事，进入即连接。
 
-**修改**
-1. **消除双路径**：抽出唯一的持久化函数，例如放在 `app/agent/` 或 `app/memory/`：
+**修改**（只动 `app/graph/tool_runtime.py`）
+1. `__init__` 增加 `self._in_session = False`。
+2. `gateway_session()` 改为**只标记会话**、不连接：
    ```python
-   async def persist_research(result: ResearchResponse, question: str, conversation_id: str | None) -> None
+   @asynccontextmanager
+   async def gateway_session(self):
+       if self._in_session:            # 可重入
+           yield self._gateway
+           return
+       self._in_session = True
+       try:
+           yield self._gateway          # 进入时是 None，由 _ensure_gateway 按需建立
+       finally:
+           self._in_session = False
+           await self._close_gateway()
    ```
-   内部一律用 `result.report`（先判 `None`）读取字段，并**同时**写入 `/api/ask` 现在写的那几项（含 `market_state`）。
-2. `app/main.py:205-227`（同步路径）改为调用同一函数；SSE 的 `create_task` 也调用它。
-3. `result.report is None` 时：只保存研究记录（便于排查），**不写当日状态、不写对话轮次**，并记 warning。
-4. 可选加固：`save_daily_state` 合并时跳过空值（`""`/`[]`）以免任何调用方再次清空当天数据 —— 若做，需单独提交并说明语义变化。
+3. 新增 `async def _ensure_gateway(self)`：`self._gateway is None` 时创建、`await __aenter__()`、解析
+   `self._available_tools`（mcp：`{t.name for t in gateway.tools}`；http：`{t.tool_name for t in self._http_allowed_tools()}`）。
+   **`__aenter__` 失败时要把 `self._gateway` 复位为 `None` 并把异常抛出去**，不要吞成默认值（规则 6）；
+   `__aenter__` 成功才允许 `_close_gateway()` 调 `__aexit__`（失败路径由 T12 的 `mcp_client.close()` 自清理）。
+4. 新增 `async def _close_gateway(self)`：`self._gateway` 非 None 才 `await gateway.__aexit__(None, None, None)`，
+   异常只记 `logger.warning`；结束时把 `_gateway` / `_available_tools` 都复位。
+5. `_do_execute` 的会话分支改成按需：
+   ```python
+   if getattr(meta, "http_method", None) == "INTERNAL":
+       return await self._execute_internal(tool_name, arguments)
 
-**必补测试**：新建 `tests/test_persistence.py`（需要 sqlite，见附录 A）
-```python
-async def test_sse_persistence_uses_report_fields(tmp_path):
-    # 用真实 ResearchResponse（report 有 state_label="Neutral"）
-    # 调用 persist_research 后断言：
-    #   memory.get_daily_state()["state_label"] == "Neutral"
-    #   memory.get_daily_state()["strong_areas"] == [...]
-    #   memory.get_daily_state()["market_state"] == "弱"
-    #   memory.get_conversation_history(conv_id) 里包含 answer summary 文本
-```
-再补一条：先写一份正常快照，再用 `report=None` 的结果调用持久化，断言当天状态**没有被清空**。
+   if self._in_session:
+       gateway = await self._ensure_gateway()
+       return await self._call_gateway(gateway, self._available_tools, tool_name, arguments)
 
-**验收**：新测试通过；手工跑一次 SSE 后 `daily_states` 当天行的 `state_label` 非空。
+   gateway_cls = self._gateway_class()          # 会话外：保持旧的逐次新建路径
+   async with gateway_cls(self.settings) as gateway:
+       return await self._call_gateway(gateway, None, tool_name, arguments)
+   ```
 
-**风险 / 牵连**：`memory.db` 里已有历史空数据，不需要迁移；但 `briefs` 的读法（`briefs.py:115`）依赖扁平字段，改完要保持该形状不变。
+**必补测试**（`tests/test_gateway_reuse.py` 追加，复用现有 `FakeGateway` / `_state`；
+注意 `test_gateway_reuse.py` 现有的 `_state()` 是给 `TechnicalAnalystNode` 用的，
+route 里加内部工具只需把 `{"tool_key": "news_search", "arguments": {"query": "q"}}` 放进同一条
+`analyst: "technical"` 的 `tool_calls`——`_execute_tools` 按 `route.analyst == self.category` 取分配，
+不按工具类别过滤，所以这样混是合法的）
+- ① **只用内部工具**：route 只含 `news_search`，monkeypatch `app.graph.tool_runtime._search_news`
+  返回一条假新闻 → 断言 `FakeGateway.instances == []`（**改坏前这条必红**）、
+  `findings[0]["failed"] is False`、`"news_search" in findings[0]["tools_used"]`。
+- ② **混合 route**（`news_search` + `quote`）→ 断言仍然 `len(FakeGateway.instances) == 1`、`exited == 1`、
+  `len(out["results"]) == 2`（复用能力没被按需连接破坏）。
+- ③ **网关必炸但 route 只用内部工具**：`_gateway_class` 指向一个 `__aenter__` 立刻抛 `RuntimeError`
+  且把构造次数记下来的类 → 断言 `构造次数 == 0`、analyst 成功（`failed is False`、`errors == []`）。
+  这条防的是"以后有人把连接又挪回会话进入点"。
 
----
+**验收**
+- 上面的复现脚本输出 `opened = 0`。
+- 原 2 条 T18 用例仍绿（`len(instances) == 1`、异常时 `exited == 1`）。
+- **`MARKET_GATEWAY_MODE=mcp` 与 `=http` 两种模式下**，`pytest tests/test_graph_topology.py tests/test_news_no_symbol.py tests/test_graph_nodes.py -q` 都只剩 T18T 要修的那 2 条（修完 T18T 后全绿）。
 
-## 批次 2 — P1 高
-
-### T4 — Evidence id 跨 analyst 冲突，导致证据错配
-
-**置信度**：已实测复现
-**定位锚点**：`app/research/evidence.py:197`（`counter = 1`）、`:203/:241/:272/:294`（`id=f"evidence-{counter:03d}"`）；写入方 `app/graph/nodes/analysts/base.py:96-110`；消费方 `app/research/reasoning.py:56`（`{e.id: e}`）
-**现象**：`build_evidence` 每次从 001 开始编号，三个并行 analyst 合并进同一 `state.evidence` 后 id 重复，`id_to_evidence` 后者覆盖前者 → 报告里引用的 `evidence-003` 可能 note 是 A 的、数值是 B 的，且无任何报错。
-**复现**
-```python
-from app.research.evidence import build_evidence
-from app.models.market import NormalizedDatum, ToolResult
-def mk(tool, metric, value):
-    return ToolResult(tool=tool, arguments={}, status="success",
-                      normalized=[NormalizedDatum(metric=metric, value=value, tool=tool)])
-print([e.id for e in build_evidence([mk("sentiment", "market_sentiment", 54)])])
-print([e.id for e in build_evidence([mk("longhu", "net_inflow", 12.5)])])
-# 两次都是 ['evidence-001']
-```
-**修改**：`build_evidence(results, id_prefix: str = "")` → `id=f"{id_prefix}{counter:03d}"`（或 `f"{id_prefix}-{counter:03d}"`）；`base.py:98` 传入 `self.category`。同时在 `reasoning.py:56` 构造 map 时检测重复 id：重复则记 warning 并退化为 `(id, source_tool)` 匹配。
-**必补测试**：`tests/test_evidence.py` — 两次 `build_evidence` 用不同 prefix，断言 id 集合不相交；`reasoning` 层补一条"两路证据合并后按 id 取值唯一"的用例。
-**验收**：合并后无重复 id；`reasoning` 的 note 与数值来自同一工具。
-**风险**：报告/前端若按 id 渲染，改动后 id 格式变化（`technical-001`）；确认 `app/web/index.html` 与 `app/cli.py` 不硬编码 `evidence-` 前缀。
+**风险 / 牵连**：`_in_session` / `_ensure_gateway` 是新状态，注意 analyst 并发（三个 analyst 节点各有自己的
+`ToolRuntime` 实例，`analyst/__init__` 每次都 `ToolRuntime(settings)`，所以不存在跨节点共享——改完顺手确认这一点没变）。
 
 ---
 
-### T5 — `truncate()` 保留最旧 200 条却声称「保留最近 200」，且污染缓存
+### T17T — 修正 T17 测试的 patch 目标（测试缺陷，非产品问题）
 
-**置信度**：已实测复现（含 note 文本）
-**定位锚点**：`app/graph/tool_runtime.py:88-103`
-**现象**：`result.normalized[:200]` 保留的是**最旧**数据（K 线是时间升序），note 却写"保留最近 200"，且不置 `partial`；`market_cache.set` 存的是同一对象（`tool_runtime.py:84`），truncate 会**原地改写缓存**，下次 cache hit 再截断时 note 变成"原始 201 项"，真实条数丢失。
-**修改**
-- `kept = result.normalized[-200:]`（保留末尾/最新）
-- 真实原始条数在切片**之前**取；note 不要把 note 自己算进计数
-- 置 `result.status = STATUS_PARTIAL`、`partial=True`
-- 不要在共享对象上原地改：缓存里存副本（或在 truncate 时先 copy）
-**必补测试**：`tests/test_graph_nodes.py` 或新建 — 250 条 datum → 断言保留的是最后 200（首条 == 原第 51 条）、note 里的原始数 == 250、`status == "partial"`；再断言 cache hit 后 note 不变成 201。
-**验收**：对升序 K 线，`candle_summary.price_last` 反映最新价。
-**牵连**：`app/research/evidence.py:118` 的 `price_last` 依赖顺序 → 与 T7 一起验证。
-
----
-
-### T6 — 文档承诺的证据硬上限 `_MAX_EVIDENCE_ITEMS` 从未生效
-
-**置信度**：已实测（全仓只有定义处）
-**定位锚点**：`app/research/evidence.py:9-11`（文档）、`:22`（`_MAX_EVIDENCE_ITEMS = 80`）；prompt 侧 `app/graph/nodes/reasoning.py:161`（`normalized_data` 全量 dump）
-**现象**：单结果最多 200 条 datum（T5）× 最多 12 个工具全部进 prompt，文档承诺的 149KB 保护不存在。
-**修改（二选一，推荐 A）**
-- A：在 `build_evidence` 内实现上限：按 `source_tool` 分组、组内保留最新、总量截到 80，并给被截断的结果加 note。
-- B：删掉常量与 `:9-11` 的文档，并在 `reasoning.py` 对 `normalized_data` 设上限。
-**必补测试**：构造 12 个工具 × 50 条 datum，断言 `len(build_evidence(...)) <= 80`（或 prompt 侧上限生效），且 note 说明截断。
-**验收**：prompt 体积有硬上限，且不依赖 mock。
-
----
-
-### T7 — `candle_summary` 取到开盘价 + 混合载荷丢弃非 K 线指标
-
-**置信度**：已实测复现
 **定位锚点**
-- `app/research/evidence.py:96-119`（`for price_key in ("c","close","price","last","h","l","o")` 把**所有**存在的键都 append，`price_last = prices[-1]`）
-- `app/research/evidence.py:236-254`（`if candle_metrics:` → 追加摘要 → `continue` 位于 `valid_metrics` 循环之前）
+- `tests/test_tool_runtime_ttl.py:31-45` — `async def test_news_search_cache_ttl_survives_execute()`，其中 `:37` 是 `runtime._search_news = fake_search`
+- 生产代码：`app/graph/tool_runtime.py:25` `from app.research.news_search import search_news as _search_news`；`:304` 调用的是**模块全局** `_search_news`
+
+**现象**：patch 打在实例属性上，生产代码从不读 `self._search_news` → 测试实际发起真实 DDGS 网络请求。
+之前"通过"是网络恰好成功（`status=success`、正常写缓存），网络失败时 `status=error`、不写缓存，
+于是 `market_cache._store[key]` 抛 `KeyError` → 红。**这条红与 T17 的产品修复无关**。
+
 **复现**
-```python
-from app.research.evidence import build_evidence
-from app.models.market import NormalizedDatum, ToolResult
-kn = [("candles[0].o",1.0),("candles[0].c",2.0),("candles[1].o",2.0),("candles[1].c",4.0)]
-tr = ToolResult(tool="klines_market_klines_post", arguments={}, status="success",
-      normalized=[NormalizedDatum(metric=m, value=v, tool="k") for m,v in kn]
-                 + [NormalizedDatum(metric="openInterest", value=8.5, tool="k")])
-for e in build_evidence([tr]): print(e.metric, e.value)
+```bash
+pytest tests/test_tool_runtime_ttl.py -q          # 断网/网络受限时 red，日志里能看到真实 DDGS 请求
+grep -n "_search_news" app/graph/tool_runtime.py  # 25 行 import，304 行用全局；全文件没有 self._search_news
 ```
-当前输出：`candle_summary {'count':2,'price_min':1.0,'price_max':4.0,'price_last':2.0}` —— `price_last` 是 `candles[1].o`（真实最新收盘是 4.0），`openInterest` **完全消失**。
-**修改**
-- 每根 K 线只取一个价格：按 `c/close/last/price` 优先级取第一个存在的键；`h/l` 单独用于区间字段，不参与 `price_last`。
-- `price_last` 明确取最后一根的收盘价。
-- 删除/修正 `:254` 的 `continue`，让 `valid_metrics` 正常写入；只跳过单个 candle 指标项。
-**必补测试**：`tests/test_evidence.py` — 断言 `price_last == 4.0`、`price_min/max` 语义明确、且 `openInterest` 出现在证据里。
-**验收**：混合型 payload 不丢指标。
 
----
-
-### T8 — symbol 守卫把 news_search / 港股 / 龙虎榜 等无 symbol 工具静默跳过
-
-**置信度**：已实测（逐个查过白名单）
-**定位锚点**：`app/graph/nodes/analysts/base.py:195-200`；白名单 `:46-61`；`_extract_stocks` `:134-159`（只匹配 `(?<!\d)(\d{6})(?!\d)` 或 route 里 6 位代码）
-**现象**：以下工具的 `tool_name` **不在** `WHITELIST_NO_SYMBOL`，而 `arguments` 里也没有 `symbol`：`news_search`、`search_xueqiu_search_get`、`longhu_xueqiu_longhu_get`、`internal_hk_northbound`、`internal_hk_index`。于是当用户问题不含 6 位 A 股代码（如"今天港股北向资金如何""某股最近有什么新闻"）时，这些步骤被 `continue` 跳过，日志是 **debug 级**，`errors` 为空，"执行了 0 个工具"却看不出功能没跑。
-**复现**
+**修改**（只动测试）
 ```python
-from app.graph.nodes.analysts.base import MarketAnalystNode
-from app.gateway.tool_registry import resolve_tool
-wl = MarketAnalystNode.WHITELIST_NO_SYMBOL
-for k in ("news_search","search","longhu","hk_northbound_daily","hk_index_snapshot"):
-    m = resolve_tool(k); print(k, m.tool_name, m.tool_name in wl)
-# 全部 False
+async def test_news_search_cache_ttl_survives_execute(monkeypatch):
+    runtime = ToolRuntime(Settings())
+
+    async def fake_search(query, *, max_results=5, time_limit="d"):
+        return {"news": [{"title": "t", "body": "b", "url": "u", "date": "2026-10-04"}], "meta": {"status": "ok"}}
+
+    monkeypatch.setattr("app.graph.tool_runtime._search_news", fake_search)   # ← 正确目标
+    result = await runtime.execute("news_search", {"query": "A股"}, set())
+    assert result.status == "success"
+    ...
 ```
-**修改（推荐做法）**：给 `ToolMeta` 增加 `requires_symbol: bool`（公司类工具 True，news_search/search/hk internal/longhu/health False），守卫改为 `if meta.requires_symbol and not arguments.get("symbol"): ...`。
-短期最小改动：把上述 5 个 `tool_name` 加进 `WHITELIST_NO_SYMBOL`，并把跳过日志从 `debug` 提到 `warning`（带上 analyst 与 tool_key）。
-**必补测试**：`tests/test_graph_nodes.py` — 用一个**不含 6 位代码**的问题跑 news analyst（`news_enabled=True`），断言 `news_search` 真的被执行（或至少 `tools_used` 包含它），而不是 `results == []`。现有 `tests/test_graph_topology.py:336-341` 用了带 `600519` 的问题，所以永远测不到这条路径 —— 新增用例必须不带代码。
-**验收**：不带代码的问题也能触发 news/hk 工具；跳过时 warning 可见。
+（删掉 `runtime._search_news = fake_search` 这一行；`tests/test_news_no_symbol.py:40` 与 `tests/test_news_search.py:102` 已是正确写法，可照抄。）
+
+**必补测试**：本用例自身必须在**离线**下通过。顺手补一条"旧实现会红"的反向断言：
+`monkeypatch.setattr(app.cache, "_resolve_ttl", lambda tool, settings=None: 30.0)` 时该用例必须失败——
+不强制要求，但若要加，必须在用例内注释说明它防的是哪次回归。
+
+**验收**：断网跑 `pytest tests/test_tool_runtime_ttl.py -q` 全绿；把 `app/graph/tool_runtime.py:119` 的
+`_resolve_ttl(tool_name, self.settings)` 改回 `_resolve_ttl(tool_name)` 后该用例必红。
+
+**风险 / 牵连**：无产品改动。改完确认 `tests/test_news_search.py` 的用时明显下降（不再打真实网络）。
 
 ---
 
-### T9 — CLI 在 `report is None` 时抛 AttributeError，真实错误被丢弃
+### T18T — 修两条 stub 测试（**改测试，不改产品**）
 
-**置信度**：静态审查 + 对抗性验证（含实测）
-**定位锚点**：`app/cli.py:174` `report = result.report.model_dump()`
-**对照**：`app/main.py:197` 已有 `if result.report is None:` 分支（同一次修复的 API 侧），CLI 漏了。
-**现象**：推理失败（`app/graph/nodes/reasoning.py:101-112` 写 `report=None`）时，CLI 只打印 `AttributeError: 'NoneType' object has no attribute 'model_dump'`，`result.errors` 里真正的原因永远看不到。
-**修改**：dump 前加 `if result.report is None:` → 把 `"\n".join(result.errors)` 打到 stderr 并以非 0 退出码结束（与 `main.py` 顺序一致）。
-**必补测试**：`tests/` 里补一条 stub 出 `ResearchResponse(question=..., report=None, errors=["Reasoning engine failed: x"])` 的用例，断言 CLI 输出包含原始错误串且退出码非 0。
+**定位锚点**
+- `tests/test_graph_nodes.py:44-52` — `base_node` fixture，`:51` `node._runtime = None`
+- `tests/test_graph_nodes.py:135-146` — `node` fixture，`:145` `n._runtime = None`
+- `tests/test_graph_nodes.py:205-223` — 用例内联的 `class FakeRuntime`（没有 `gateway_session`）
+- `tests/test_graph_e2e.py:167-171` — 同样 `node._runtime = None`（当前被 `@pytest.mark.skip`，见 T31）
+- 产品代码：`app/graph/nodes/analysts/base.py:92` `async with self._runtime.gateway_session():`
 
----
+**现象**：`AttributeError: 'NoneType' object has no attribute 'gateway_session'`（或 `'FakeRuntime' object ...`）
+被 `base.py:124` 的兜底 `except` 吞成 `failed=True` + `errors`，用例随后取 `result["results"]` →
+`KeyError: 'results'`，**报错信息完全指不到真正原因**。这正是本项目"异常被吞成降级"导致排障困难的又一次实例。
 
-### T10 — 日志 handler 挂在 `mosaic`，但模块全用 `app.*` → 生产日志静默丢失
+**根因**：测试用"整体替换 `_runtime`"的方式断言节点行为，而 `_runtime` 的接口在 T18 变宽了（多了 `gateway_session`）。
 
-**置信度**：代码阅读确认 + 对抗性验证（实测 INFO 不打印）
-**定位锚点**：`app/logging_config.py:84-91`（`logging.getLogger("mosaic")` + `propagate=False`）；模块侧 `app/graph/nodes/critic.py:20`、`app/graph/tool_runtime.py:26`、`app/agent/orchestrator.py:14` 等统一用 `logging.getLogger(__name__)`，命名空间是 **`app.*`**；`get_logger()`（`:101-103`）零调用方。
-**现象**：CLI 与 FastAPI 进程里 `app.*` 的 INFO 全丢；WARNING+ 只经 root 的 lastResort 以裸文本进 stderr，结构化 JSON 日志承诺失效。`tests/test_ask_endpoint.py:33` 传了 `propagate=True`，把这个掩盖了。
-**修改**：把 handler 挂到 root（`logging.getLogger()`），或同时对 `app` 与 `mosaic` 两个命名空间配置；统一改用 `get_logger(__name__)` 或统一用标准 `logging.getLogger(__name__)`（二选一，别混）。
-**必补测试**：更新 `test_ask_endpoint.py` 里 `propagate=True` 的取值，并加一条断言：`caplog` 能抓到 `app.graph.nodes.critic` 的 INFO。
-**验收**：跑一次 CLI，日志以 JSON 出现在 stdout。
-
----
-
-### T11 — Critic 的 `verdict` 无约束：`fail` / `PASS` 被静默当成通过
-
-**置信度**：静态审查 + 对抗性验证（实测 `'fail'`/`'PASS'`/`''` 均路由到 END）
-**定位锚点**：`app/graph/nodes/critic.py:26`（`verdict: str`）；路由 `app/graph/builder.py:57-73`（未匹配值 `return "end"`，注释 `# "pass" or unknown`）
-**现象**：模型返回 `fail`/`reject`/`PASS`/空串时，审计结论被判为通过——不记 errors，只有 `orchestrator.py:61` 一条 warning，报告照常返回。
-**修改**
-1. `verdict: Literal["pass","revise","research_more"]`，并在 `model_validate` 前归一化：`str(data.get("verdict","")).strip().lower()`。
-2. 归一化后仍无法识别时：写 `errors`，并走**安全默认**（终止 + 告警），不要等同 pass。
-3. 顺带修 `critic.py:188-207`：审计自身失败（LLM 超时 / JSON 坏）目前也返回 `research_more`，会被当成"证据不足"再跑一到两轮完整工具+LLM（烧钱）。引入独立 verdict（如 `error`）或直接返回原 report 并只记 errors，不要伪造 `missing_points`。
-**必补测试**：参数化 `verdict` 为 `pass/revise/research_more/PASS/ fail/''/None`，断言：合法值走对应路由；非法值进 `errors` 且不触发 `research_more` 回环。
-**验收**：`tests/test_graph_topology.py` 的 `critic_route_decision` 用例扩充后全绿。
-
-**✅ 已完成（`589cff7`）— 裁决语义（仓库主人已确认，后续任何批次都不要改回）**
-
-Critic 现在有四种走出方式，其中三种属于**「审计失败」= 节点没能完成审计这件事**，
-**不是**"Critic 认为报告有问题"（后者是正常裁决 `revise` / `research_more`）：
-
-| 情形 | 触发原因 | verdict | 用户可见的 `errors` |
-|---|---|---|---|
-| 正常 | 模型给出合法裁决 | `pass` / `revise` / `research_more` | 无 |
-| 审计失败① | 模型返回的不是合法 JSON object（`parse_json_object` 抛 `LLMOutputError`） | `error` | `Critic audit failed: Critic returned invalid JSON: raw='...'` |
-| 审计失败② | **调模型本身失败**：provider 4xx/5xx（401/429/400）、超时（`llm_timeout_seconds=90`）、网络错误、节点内部异常 | `error` | `Critic audit failed: Error code: 400 - {...}` |
-| 审计失败③ | payload 校验失败（`ValidationError`），或裁决不在 `pass/revise/research_more` 内（`fail`/`reject`/`PASS`/空串/非字符串） | `error` | `Unrecognized critic verdict: 'fail'` / `Invalid critic payload: ...` |
-
-**已定的约定（不要再讨论、不要改回）**：
-1. 审计失败**不得**再返回 `research_more`。旧行为会路由回 Supervisor 重跑一整轮工具 + LLM（最多两轮），
-   还会伪造 `missing_points=["经过 Critic 审计的报告"]` 当作"研究缺口"喂给 Supervisor。
-   这正是本项目最初那个真实 bug（`critic.py` 的 system message 缺 `role` → DashScope 400 →
-   每次提问整条流水线白跑 3 遍、Critic 一条报告都没审计过）能长期潜伏的原因。
-2. 审计失败一律 `verdict="error"` → `critic_route_decision` **安全终止（END）**，**保留已有 report**，只写 `errors`。
-3. 因为 `report` 不为 None，`/api/ask` 仍返回 **200**。
-   **调用方 / 前端要区分"审计失败"必须看 `critique.verdict == "error"` 或 `errors` 非空**
-   （`orchestrator` 与 SSE 路径各打一条 warning）。这是有意的产品选择，**不要为此改成非 2xx**。
-4. `Verdict = Literal["pass","revise","research_more","error"]`，其中 `error` 只允许本节点内部产生，模型不得返回。
-
-**回归保护**：`tests/test_critic_verdict.py`（20 项）+ `tests/test_graph_nodes.py` 里那条已按新语义反转的用例。
-任何后续改动若让"非法 verdict / 审计失败"重新落回 `research_more` 或静默判 pass，这两处必须变红。
-
----
-
-### T12 — MCP 客户端从不握手（**先按 D1 决策再动手**）
-
-**置信度**：机制已确认；**影响范围待决**（见下）
-**定位锚点**：`app/gateway/mcp_client.py:65-75`（进入 `ClientSession` 后直接 `list_tools()`）；`pyproject.toml:14`（`mcp>=1.12`，当前环境实装 **2.1.1**）
-**已确认的事实**
-- `mcp==2.1.1` 的 `ClientSession.__aenter__` **只启动 dispatcher，不做握手**；类文档原文："enter as an async context manager, **then call `initialize()`**"。1.x 的 `__aenter__` 才会 `await self.initialize()`。
-- 同版本 SDK 服务端有硬门禁：`mcp/server/runner.py:211-213`，未握手时除 `_INIT_EXEMPT = frozenset({"ping"})` 外一律 `MCPError(INVALID_PARAMS, "Invalid request parameters")`。
-- 全仓 `app/` **没有任何** `session.initialize()` 调用。
-**尚未确认**：`memory.db` 里 10-02 / 10-03 的记录显示 9 个工具全部 `success`、零 error，而 `mcp 2.1.1` 是 9/4 就装好的。唯一解释是当时跑的是 HTTP 模式（`.env` 在最后一次成功之后、10-03 16:05 被改过），或 iiix 服务端对未握手请求宽容。本沙箱禁止带管道 spawn 子进程，无法端到端验证。
-**修改（无论 D1 怎么定，前两条都建议做）**
-1. `connect()` 在 `list_tools()` 之前补握手并纳入超时预算：
+**修改（决策：改 stub）**
+1. 在 `tests/test_graph_nodes.py` 顶部加一个最小 stub，供两个 fixture 与 FakeRuntime 复用：
    ```python
-   await asyncio.wait_for(self.session.initialize(), timeout=self.settings.research_timeout_seconds)
+   from contextlib import asynccontextmanager
+
+   class _NoGatewayRuntime:
+       """只提供 analyst 骨架需要的接口：会话（空实现）+ truncate。"""
+       def __init__(self):
+           self.sessions = 0
+       @asynccontextmanager
+       async def gateway_session(self):
+           self.sessions += 1
+           try:
+               yield None
+           finally:
+               self.sessions -= 1
+       def truncate(self, result):
+           pass
    ```
-   并把该处的 `TimeoutError`/`MCPError` 统一包成 `MCPConnectionError`。
-2. `pyproject.toml` 把依赖收成大版本区间：`mcp>=2,<3`（或 `<2` 以保留 1.x 语义——**取决于 D1**）。
-3. 顺带修 `mcp_client.py:47-84` 的清理：`connect()` 失败时 `stdio` 子进程不会被回收——`close()` 里 `if self.session is not None` 会跳过整个 `AsyncExitStack`，而 `__aenter__` 抛错后 `__aexit__` 不会执行。改法：`connect()` 用 try/except 包住，失败先 `await self.close()`；`close()` 去掉 session 判空、无条件 `await self.stack.aclose()`、并把 `stack` 重建为新的 `AsyncExitStack()`；清理失败日志从 `debug` 提到 `warning`。
-**必补测试**：至少一个**真正走 `connect()`** 的测试（in-memory server 或 stdio 假 server），断言握手后 `list_tools()` 可用；现有 `tests/test_data_integrity.py:146-175` 直接注入 `FakeSession`，绕过了 `connect()`，所以 CI 永远绿 —— 不要沿用那个模式。
+2. `base_node` / `node` fixture：`node._runtime = _NoGatewayRuntime()`（用例本意"没有工具可执行"仍然成立，
+   因为 `category="nonexistent"` 不匹配任何 route）。
+3. `test_execute_skips_non_whitelist_no_stock` 的内联 `FakeRuntime` 补 `gateway_session`（可从
+   `_NoGatewayRuntime` 继承），并保留它现有的 `execute` 记录行为。
+4. `tests/test_graph_e2e.py:170` 改为同样的 stub（该用例同时是 T31 的对象，一起处理）。
+5. **不要**在产品代码里加 `if self._runtime is None or not hasattr(...)` 之类的兜底（规则 9）。
+
+**必补测试**：这 3 条用例各自追加 `assert result.get("errors") == []` ——
+这样将来任何"被兜底 except 吞掉"的回归都会以**明确断言**的形式红，而不是变成难懂的 `KeyError`。
+`test_analyst_with_no_matching_tools_returns_empty` 还应断言 stub 的会话确实被进入过（`sessions` 计数），
+证明它走的仍是生产 `__call__` 骨架。
+
+**验收**：`pytest tests/test_graph_nodes.py -q` 在 `mcp` 与 `http` 两种模式下都全绿（T18b 修完后 `mcp` 模式也绿）。
+
+**风险 / 牵连**：`tests/test_graph_nodes.py` 里还有 T11 有意反转过的用例（critic 语义），不要顺手改；
+批次 4 的 T34 会回头清理这个文件里其它空转 fixture，届时与本文件的 stub 合流。
 
 ---
 
-### T13 — `app/evaluation.py` 给出假验收结论（两条 critical）
+## 3. 批次 3 剩余任务
 
-**置信度**：对抗性验证 confirmed（含实测）
-**定位锚点 1**：`app/evaluation.py:171-176`（`response.report.model_dump()` + `len(response.used_tools)`）、兜底 `:215-218`
-**定位锚点 2**：`app/evaluation.py:272-277`（用结果下标取 `CASES[i]`）、`:364-374`（`all(...)` 空集为真）
-**现象**
-- `used_tools` 属于 `MarketIntelligence`，`ResearchResponse` 上没有该字段（字段列表见 `app/models/response.py:38-46`）→ 每个走通图的 case 都 AttributeError 记失败，`response.errors` 里的真实原因被丢弃；`report` 又允许为 `None`，`report.model_dump()` 同样会炸。
-- `all(... for cid, r in zip(...) if r.success)` 在无成功案例时对空生成器求值为 **True** → 4 个 case 全失败仍打印 `Tool Accuracy: PASS`。
-- `--cases 003` 子集运行按结果位置取 `CASES[i]`，与错误 case 的期望值比较。
-**修改**
-1. 先判 `response.report is None`，把 `"; ".join(response.errors)` 写进 `error` 字段；工具名从 `report.used_tools` 或 `tool_results` 统计，不要读 `response.used_tools`。
-2. 评分改为 `if failed: FAIL`（空集不得为真）；期望值用 `{c["id"]: c for c in CASES}` 按 id 查；分母排除设计上无报告的空问题 case。
-**必补测试**：`tests/test_evaluation.py`（新建）—— stub 出 `ResearchResponse(report=None, errors=[...])` 断言记录的是原始错误；构造 0 个成功 case 断言输出为 FAIL；用 `--cases` 子集断言与正确 case 比较。
+> 顺序建议：T12 收尾（D1）→ T19 → T20（先 D4 部分，anomalies 等 T22 后）→ T21 → T22 → T23 → T24 → T25 → T26 → T27 → T15（D2）→ T36（§5）。
+> 每条仍然要求「改完补一个能失败的测试」。
 
----
+### T12 收尾（D1=A）— 依赖区间收口
+`pyproject.toml:14` 把 `mcp>=1.12` 改为 **`mcp>=2,<3`**；`app/gateway/mcp_client.py` 保留
+`await asyncio.wait_for(self.session.initialize(), timeout=...)` 握手（T12 已实现）。
+**验收**：`pip install -e .` 后 `python -c "import importlib.metadata as m; print(m.version('mcp'))"` 满足区间；
+`tests/test_data_integrity.py` 中 MCP 相关用例仍绿。
 
-### T14 — 定时简报几乎不会触发，且时区错误
-
-**置信度**：对抗性验证 confirmed（实测 60 个启动相位仅 4 个命中）
-**定位锚点**：`app/scheduler/briefs.py:63`（`datetime.now(UTC)`）、`:68` / `:70`（`now.second < 2`）、`:90`（`await asyncio.sleep(30)`）；相关 `:24-30` `_next_run` 的 naive/aware 混用
-**现象**：2 秒触发窗口配 30 秒轮询 → 命中率约 1/15 且与启动相位绑定，漏一次等 24 小时；即使命中，UTC 9:15/15:30 是北京 17:15/23:30。`memory/morning`、`memory/evening` 目录为空可佐证从未生成。
-**修改**：改为「算到目标时刻的剩余秒数再 sleep」，目标时间用 `Asia/Shanghai`（修正 `_next_run` 的 naive/aware 混用 TypeError），并记录当日已触发，避免重复/漏触发。
-**必补测试**：注入可控时钟，断言在目标时刻前后能触发且同一日只触发一次；断言时区换算（UTC 01:15 == 北京 09:15）。
-
-**✅ 已完成（`3454af5`）**：改为精确睡眠 + `fired` 每日去重 + 跨日重置；时区用固定 `timezone(timedelta(hours=8))`
-（北京自 1991 年无夏令时，且规避 Windows 缺 tzdata 的问题），并加了 `now_fn` / `sleep_fn` 注入点便于可控时钟测试。
-
----
-
-### T14b — 简报「过点不补」（**方案已定，待实现**）
-
-**决策（仓库主人）**：**只认 09:15 / 15:30 两个时刻；过了就当今天没有**，不要在任意晚些时候补发。
-
-**问题**：当前实现是「越过触发点即到期」（catch-up），因此 **23:00 重启会立刻补发 morning + evening 两份**，
-把一份过期的"早报"写成当天文件，时间语义错误。
-
-**修改规格**（只动 `app/scheduler/briefs.py` 的 `_run_scheduler`）
-1. 触发判定从 `now >= 当天目标时刻` 改为 **`目标时刻 <= now <= 目标时刻 + GRACE`**，
-   `GRACE = timedelta(minutes=5)`。
-2. **不能写成 `now == target`**：循环是精确睡到目标时刻，醒来通常已晚几毫秒到几秒（`asyncio.sleep` 不提前返回，
-   但有调度抖动），严格相等会导致**永远不触发**。必须保留一个抖动窗口。窗口宽度可调，`GRACE=0` 不可用。
-3. 保留 `fired` 每日去重与精确睡眠；不动其它逻辑。
-4. 在代码注释里写明"过点不补、窗口只容忍抖动"，并留一句：若将来需要跨时区市场，`LOCAL_TZ` 应改为配置项。
-
-**必补测试**（更新 `tests/test_brief_scheduler.py`）
-- ① 23:00 启动 → **当天不触发任何简报**，直接等到次日 09:15；
-- ② 09:18（窗口内）→ 触发 morning；
-- ③ 09:30（窗口外）→ 不触发。
-- 三条在把实现改回 catch-up 时必须变红。
-
-**验收**：三条命令全绿；测试用例数只增不减（当前 408 passed / 2 skipped）。
-
----
-
-### T13b — evaluation 期望值查表兜底（小健壮性，非阻塞）
-
-`app/evaluation.py` 的 `print_summary` 与 `main()` 用 `expected_by_id[r.case_id]["expected_min_tools"]`，
-当 `case_id` 不属于 `CASES`（手工构造 `CaseResult` 跑评估）时抛 `KeyError`。
-改为 `expected_by_id.get(r.case_id)` + 缺失时按 FAIL/跳过处理，并补一条用例。
-
----
-
-### T5b — `truncate` 的 note 文案与实际条数不一致（可选，非阻塞）
-
-截断后 `len(result.normalized) == 201`（200 条 + 说明条），而 note 写"已截断至 200"。
-把 note 改成"保留最新 200 条 + 本说明"，或不计入说明条，二选一即可；不影响行为，可与 T14b 一起提交。
-
----
-
-### T36 — 文档与实现同步（建议放在批次 3/4 收尾）
-
-- `docs/architecture.md` / `README.md` 仍写 Critic 只输出 `pass/revise/research_more`，需补内部 `error` 语义（见 T11 节）。
-- `app/agent/prompts.py` 的 evidence id 示例仍是 `evidence-001`，实际已是 `{category}-NNN`（T4 之后）。
-- `app/graph/tool_registry.py` 的域过滤注释与实现相反（T24 会修，改完同步注释）。
-- 完成后做一次全局检查：**不再存在"文档承诺、代码没有"的项**（`has_evidence`、`anomalies`、证据上限、MCP 模式四处是重点）。
-
----
-
-## 批次 3 — P2 中（可靠性 / 成本 / 契约）
-
-> 这些不需要一次做完，按需挑；每条仍要求「改完补一个能失败的测试」。
-
-### T15 — Evidence Gate 没有门控力（**需 D2 决策**）
-`app/agent/evidence_gate.py:18-20` 文档说"`has_evidence=False` 时永远不应判 sufficient"，但全仓**无生产消费方**（只有测试引用）；`app/graph/builder.py:159` `gate → reasoning` 是无条件边。零证据时仍产出 200 + 完整报告。两条路：真的门控（`has_evidence=False` → 短路 END 或强制 `confidence=low` + `data_caveats` + errors），或删掉该字段与文档承诺。**不要留下"文档说门控、代码不门控"的状态。**
-
-### T16 — 回边 reducer 累加，results/evidence/findings 成倍重复
-`app/graph/state.py:50-64` 的 `add` reducer 在 `research_more` 回环时再追加一份；`route` 明确写了"不加 reducer，回环时整体覆盖"，这几个字段没有对应处理。消费方 `app/research/reasoning.py:161` 会把同一份行情数据重复塞进 prompt。改法：回边时用 `langgraph.types.Overwrite` 覆盖，或改成按 `(tool, arguments)` 去重的 reducer；`state.tool_results` 无任何读取方，可直接删除。
-
-### T17 — `news_search` 的 6 小时 TTL 被 30 秒覆盖
-`app/graph/tool_runtime.py:268-269` 用 `settings.news_search_ttl_seconds`（21600）写缓存，但 `execute()` 在 `:81-84` 又写一遍同一 key，`_resolve_ttl`（`app/cache.py:127-152`）没有 `news_search` 项 → 落回默认 30 秒，限流保护失效。改法：给 `_resolve_ttl` 加该键（需把 settings 传进去），或内部工具已缓存则不再覆盖。
-
-### T18 — 每次工具调用都新建 Gateway 客户端（MCP 即每次 spawn 子进程）
-`app/graph/tool_runtime.py:133-158` 每个 tool 一次 `async with gateway_cls(...)`；MCP 客户端的 `connect()` 会启动 `iiix mcp serve market-gateway` 并 `list_tools`（`app/gateway/mcp_client.py:47-75`）。一轮 12 个工具 = 12 次握手，回边再翻倍；HTTP 模式则每次新建 `AsyncClient`，连接池失效。改法：按 analyst 运行级别复用客户端（`ToolRuntime` 持有，节点结束/异常时关闭）。
+### T15 — Evidence Gate 门控力（D2=B：降级不短路）
+**定位锚点**：`app/agent/evidence_gate.py:18-20`（文档承诺"`has_evidence=False` 时永远不应判 sufficient"）、
+`app/graph/builder.py` 的 `gate → reasoning` 无条件边、`app/research/reasoning.py` 的 `confidence`/`data_caveats` 组装点。
+**现象**：`has_evidence` 全仓无生产消费方（只有测试引用）→ 零证据时仍产出 200 + 完整报告 + 正常 confidence。
+**修改（D2=B）**
+1. 在 `gate → reasoning` 之间或 reasoning 内部消费 `state["gate"]`：`has_evidence=False` 时
+   强制 `confidence="low"`（覆盖模型输出）、往 `data_caveats` 追加一条"证据链为空，结论不可作为依据"、
+   并写 `errors`（例如 `"Evidence gate: no evidence collected; report is unverified"`）。
+2. **保留** `has_evidence` 字段与「不应判 sufficient」的文档，但把文档改成
+   "降级为 `confidence=low` + `data_caveats` + `errors`，不短路"——文档与行为必须一致。
+3. 同步 `docs/architecture.md` 与 README 里对 gate 的描述。
+**必补测试**：`tests/test_evidence_gate.py`（或现有文件）——构造空证据的 state 跑 reasoning（stub LLM 返回
+`confidence="high"`），断言最终 `report.confidence == "low"` 且 `data_caveats`/`errors` 非空，**且 report 不为 None**。
+**验收**：零证据路径仍然返回报告，但 confidence 恒为 low、errors 非空；把降级删掉用例必红。
 
 ### T19 — 缓存无上限 + `ttl=0` 失效
-`app/cache.py:46-65`：`_store` 无容量上限，过期项只在读到**同键**时才删；`ttl or self._default_ttl` 使 `ttl=0`（想关缓存）落回默认值。改法：`set` 时顺带清理过期项 + `max_entries` LRU 淘汰；TTL 判断改 `ttl if ttl is not None else ...`。
+**定位锚点**
+- `app/cache.py:64-65` — `def set(...): self._store[key] = _Entry(value, ttl or self._default_ttl)`
+- `app/cache.py:46-48` — `__init__(self, default_ttl=30.0)`，无容量上限
+- `app/cache.py:52-62` — 过期项只在读到**同键**时才删
+- `app/cache.py:29-40` — `_Entry.__slots__ = ("value", "expires_at")`
+**现象**
+- `ttl=0`（调用方想关缓存）被 `or` 当成 falsy → 落回默认 30s。
+- 长期运行的进程里 `_store` 只增不减：不同 query 的 `news_search`、不同 symbol 的行情都永久占内存。
+**复现**
+```python
+from app.cache import Cache
+c = Cache(default_ttl=30.0)
+c.set("k", 1, ttl=0)
+print(c.get("k"))        # 旧实现：1（还在，30s 后才过期）；期望：None
+for i in range(2000):
+    c.set(f"key{i}", i)
+print(c.stats["size"])   # 期望有上限，旧实现 2001
+```
+**修改**
+1. `set`：`ttl if ttl is not None else self._default_ttl`。
+2. `__init__(self, default_ttl: float = 30.0, max_entries: int = 512)`；`_Entry.__slots__` 增加 `last_access`，
+   `get` 命中时更新它（LRU）。
+3. `set` 时顺带清理**过期**条目；若仍超过 `max_entries`，按 `last_access` 淘汰最久未访问的，
+   淘汰数量记入 `self._evictions` 并 `logger.debug`（这一层是纯内存缓存，用 debug 即可，但要可观测）。
+4. `stats` 增加 `max_entries` / `evictions`。
+**必补测试**：新建 `tests/test_cache_capacity.py`
+- `ttl=0` → `cache.get("k") is None`（且 `invalidate` 语义不受影响）；
+- `ttl=None` → 仍用默认 TTL（防止把 `None` 也当 0）；
+- 塞 `max_entries + 50` 个键 → `stats["size"] <= max_entries`，且**最近访问过的键还在**、
+  最久未访问的被淘汰（先 `get` 一个老键再继续 set，断言它没被淘汰）；
+- 先塞一个即将过期的键（`ttl=0.01` + `time.sleep(0.02)`）再 `set` 新键 → 过期键已从 `_store` 消失。
+**验收**：复现脚本第一条输出 `None`、第二条输出 ≤ `max_entries`；把 `ttl if ttl is not None` 改回 `ttl or` 用例必红。
+**风险 / 牵连**：`market_cache` 是全局单例（`app/cache.py` 末尾），改容量后在长调查里可能出现
+"刚取过的行情被淘汰"→ 只影响性能不影响正确性；`stats` 的形状被 `/health` 或日志读取，加字段是兼容的。
 
-### T20 — `MarketIntelligence` 必填字段导致整份报告被丢弃
-`app/models/response.py:23-25`：`market_state`、`what_happened` 无默认值。LLM 少写一个或写 `null` → ValidationError → `app/research/reasoning.py:240-242` 转成 `LLMOutputError` → 节点返回 `report=None` → 整份报告和此前所有已付费的工具调用作废（调用方拿到 502 或空报告）。改法：给空串默认值，或在 reasoning 后处理里 `payload[k] = str(payload.get(k) or "")` 并写 `data_caveats`。注意 `reasoning.py:221-238` 的 `_ensure_list` 白名单里也没有 `anomalies`，而 `MarketIntelligence.anomalies` 的 prompt 从未请求过它（该字段恒空，前端 `index.html:411` 的 "What's Unusual" 永远不显示）——要么把 anomalies 加进 prompt + `_ensure_list`，要么用 `app/detector/anomaly.py` 的 `detect_anomalies` 在代码里填（它目前**没有任何生产调用点**）。
+### T20 — `MarketIntelligence` 必填字段导致整份报告被丢弃（+ D3 的 anomalies 接入）
+**定位锚点**
+- `app/models/response.py:23-25` — `market_state: str`、`what_happened: str`（无默认值）；`:33` `anomalies: list[dict[str, Any]] = Field(default_factory=list)`
+- `app/research/reasoning.py:33` `_ensure_list(val, default=None)`、`:247` 的 `payload[key] = _ensure_list(...)` 白名单、`:262`、`:265-269`（`ValidationError → LLMOutputError`）
+**现象**：模型少写 `market_state` / 写 `null` → ValidationError → `LLMOutputError` → 节点返回 `report=None`
+→ **整份报告和此前所有已付费的工具调用作废**（调用方拿到 502 或空报告）。
+**复现**
+```python
+from app.models.response import MarketIntelligence
+MarketIntelligence.model_validate({"title": "t", "state_label": "Neutral"})  # ValidationError: market_state / what_happened
+```
+**修改**
+1. `market_state: str = ""`、`what_happened: str = ""`（或保留必填但在 `reasoning.py` 归一化时
+   `payload[k] = str(payload.get(k) or "")` —— **二选一，推荐前者 + 归一化兜底双保险**）。
+2. 归一化里缺字段要写 `data_caveats`（例如 `"模型未给出 what_happened，已置空"`），
+   **不允许静默变成正常报告**（规则 6）。
+3. **D4 相关**：把 `anomalies` 加进 `_ensure_list` 的键集合（现在 `:247` 的白名单里没有它）。
+4. **D3（必须在 T22 之后做）**：在报告产出后调用 `app/detector/anomaly.py::detect_anomalies` 填 `report.anomalies`。
+   调用点建议：`app/models/response.py::build_response_from_state`（同步/SSE 双路径共用，且能拿到 `state["results"]`），
+   或在 `ReasoningNode` 产出 report 之后。**不要**同时让模型也填（会双写）。
+**必补测试**：`tests/test_reasoning_parsing.py`（真调 `reason()`，见 T29 的写法）
+- 模型 payload 缺 `market_state` → 仍产出 report，且 `data_caveats` 里说明降级；
+- 完整 payload → `anomalies` 是 `detect_anomalies` 的产出（构造一条超阈值 datum，断言非空），
+  并且**不再**依赖模型输出。
+**验收**：缺字段不再抛 `LLMOutputError`；`report is not None` 且能指出降级原因。
+**风险 / 牵连**：`app/web/index.html:394` 渲染 `anomalies[].severity`（T25 会修健壮性）；
+`anomalies` 一旦非空，前端 "What's Unusual" 才会第一次真正出现 —— 手工看一眼渲染。
 
-### T21 — SQLite 连接跨线程复用 + 写入失败只记 debug
-`app/memory/storage.py:103-113` 在导入期建连接（`app/main.py:73` 的 `get_memory()`），实测 TestClient 下 async 端点运行于另一线程会抛 `sqlite3.ProgrammingError`；而 `main.py` 里所有写入失败都吞成 `logger.debug`（`:224`/`:243`）。改法：用 `threading.local` 或短连接按线程取连接（或 `check_same_thread=False` + 锁），失败至少记 WARNING。
+### T21 — SQLite 连接跨线程复用（**"写入失败只记 debug"那半条已被 T3 提前修掉，不要再改**）
+**定位锚点**
+- `app/memory/storage.py:99-113` — `__init__` 里 `self._conn = None`，`:110-113` 懒建并缓存同一连接
+- `app/memory/storage.py:21-42` — `_sqlite_connection_factory`（`isolation_level=None` + WAL + busy_timeout）
+- `app/memory/storage.py:349-373` — `get_memory()` 进程内共享单例 + `_shared_memory_lock`
+**现象**：导入期建连接（`app/main.py` 的 `get_memory()`）后，async 端点可能运行在另一个线程 →
+`sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread`。
 
-### T22 — 异常检测阈值按百分比设定，但输入是绝对值
-`app/detector/anomaly.py:96-168` 文案含 `{:.1f}%`、阈值 5/10，而 normalizer 给的是原始绝对值且 `unit=None`（`app/gateway/normalizer.py:536-547`）→ 真实 OI（≥1e9）每次快照都误报 critical；`fundingRate 0.0001 < 0.15` 永不触发。测试用 `MockDatum("openInterest", 8.5)` 这类假百分比值所以全绿。改法：按变化率或带 unit 的量级匹配，metric 精确匹配替代 `'oi'` 子串匹配，fixture 改用 normalizer 的真实输出。
+> **核查更正（2026-10-04，主 Agent）**：初版 T21 还写了"`main.py` 里所有写入失败都吞成 `logger.debug`（:224/:243）"。
+> 这条**已经不存在了**：T3 把持久化收敛到 `app/agent/persistence.py`，三处落库失败都是
+> `logger.warning(...)`（`:77-78` / `:92-93` / `:97-98`），且 `report is None` 时也有 warning；
+> 全仓 `app/` 已无任何 `logger.debug`（T10 一并清了）。**本任务只需要处理跨线程连接，不要把日志改回去。**
+**复现**（受限会话里 sqlite 不可写，先在可写会话跑）
+```python
+import threading, time
+from pathlib import Path
+from app.memory.storage import MarketMemory
+m = MarketMemory(Path("./__t.db"))
+err = []
+def worker():
+    try: m.save_turn("c", "q", "a")
+    except Exception as e: err.append(e)
+threading.Thread(target=worker).start(); time.sleep(0.5)
+print(err)   # 期望：ProgrammingError（证明跨线程不可用）
+```
+**修改**（只做跨线程连接这一件事）
+1. 连接按线程取：`threading.local()` 存连接，或改成"每次操作开短连接"（WAL + `busy_timeout` 已具备）。
+   若选 `check_same_thread=False`，必须配锁（`storage.py:352` 已有 `_shared_memory_lock` 可复用）并说明理由。
+2. `close()` 要覆盖所有线程连接（`threading.local` 只能看到当前线程 → 需要额外的连接登记表）。
+3. **不要**动日志：落库失败已是 `logger.warning`（T3），WAL 逻辑不要动（规则 4）。
+**必补测试**：`tests/test_market_memory.py` 或新建 —— 两个线程各跑一次 `save_turn`，断言两条都落库、
+无异常；再补一条"写入失败时 `caplog` 里出现 WARNING"（monkeypatch 让底层抛错，防止将来有人把它降回 debug）。
+**验收**：跨线程写入不再抛 `ProgrammingError`；`caplog` 里仍能看到落库失败的 WARNING。
+**风险 / 牵连**：`storage.py` 的 WAL 逻辑**不要动**（规则 4）；改连接策略后 `test_persistence.py`、
+`test_data_integrity.py` 里"两条连接看同一文件"的用例必须仍然绿。
+
+### T22 — 异常检测阈值按百分比设定，但输入是绝对值（**D3 的前置**）
+**定位锚点**
+- `app/detector/anomaly.py:96-140` — 规则阈值 `5.0` / `10.0`（OI，"日变化 %"）、`0.15` / `0.5`（fundingRate，"%")
+- `app/detector/anomaly.py:235-241` `_matches_metric`（`any(p in metric_lower for p in rule.metric_pattern.split("|"))`，子串匹配）
+- `app/detector/anomaly.py:297-301` — `if rule.direction == "gt" and num_value > rule.threshold`，直接拿**绝对值**比
+- 数据来源：`app/gateway/normalizer.py` 的 `_make_datum`（`unit=None`，value 是原始绝对值）
+**现象**：真实 OI（≥1e9）每次快照都 > 10 → 每条都误报 `critical`；`fundingRate 0.0001 < 0.15` → 永不触发。
+测试用 `MockDatum("openInterest", 8.5)` 这类假百分比值，所以一直全绿。
+**复现**
+```python
+from app.detector.anomaly import detect_anomalies
+from app.models.market import NormalizedDatum, ToolResult
+tr = ToolResult(tool="derivatives", arguments={}, status="success",
+                normalized=[NormalizedDatum(metric="openInterest", value=3.2e9, tool="derivatives")])
+print([a.to_dict() for a in detect_anomalies([tr], domain="crypto")])
+# 旧实现：critical + high 两条（把 3.2e9 当成 3.2e9% 变化）
+```
+**修改**
+1. 规则语义改成**变化率**或**带量级的阈值**：优先用同一 metric 的前后两个快照算 `%` 变化
+   （需要设计状态存放点：可用 `market_cache` 里上一次的值，或让 normalizer 附带 `unit`/`prev_value`）。
+   **若无法拿到前值**，退而求其次：按量级匹配（OI 用 `> 前值的 x%`；没有前值就不触发，宁可不报不要误报）。
+2. `_matches_metric` 改为**精确 metric 匹配**（或明确的别名表），去掉 `'oi'` 这种子串匹配
+   （否则 `openInterestRate`、`noise` 之类都会被 `oi` 命中）。
+3. 文案里的 `{:.1f}%` 与实际单位一致；`normal_range` 同步。
+4. fixture 改用 `normalizer` 的真实输出（`normalize_tool_result` 的结果），不要再手搓百分比假值。
+**必补测试**：`tests/test_anomaly_detector.py`
+- 真实量级 OI（`3.2e9`，无前值或前值相同）→ **不触发**；
+- 构造 OI 前值 1e9 → 现值 1.2e9（+20%）→ 触发 high/critical，且没有"同一 datum 报两条"的重复；
+- `fundingRate = 0.002`（0.2%）→ 触发 high；`fundingRate = 0.0001` → 不触发；
+- `metric="noise"`（含 `oi` 子串）→ 不触发。
+**验收**：复现脚本不再输出 critical；用例在旧实现下必红。
+**风险 / 牵连**：`detect_anomalies` 目前**无生产调用点**（T20/D3 会接上），所以改动只影响测试；
+接上之后 `memory` 里的 `anomalies` 表会开始有记录，前端 "What's Unusual" 会亮 —— 属预期。
 
 ### T23 — HTTP 重试不感知总预算
-`app/gateway/http_client.py:91-176`：`max_retry_per_tool=1` → 2 次 × 30s 超时 + 429 退避（最多再加 ~12s）≈ 单工具 70s；`analysts/base.py:182-202` 串行执行最多 8 个工具 → 单 analyst 最坏 480s+，而 `main.py:192-195` 的总预算是 300s，结果是整次调查 504 而不是降级。改法：传入 deadline（剩余预算按剩余工具数均分），重试前检查剩余时间，超预算就以 `error` ToolResult 返回。
+**定位锚点**
+- `app/gateway/http_client.py:91-139` — `max_attempts = self.settings.max_retry_per_tool + 1`，`:132` `backoff = min(2**attempt, 10)`
+- `app/graph/nodes/analysts/base.py` 的 `_execute_tools` 串行执行工具（`budget` 上限个）
+- `app/main.py:219` / `:353` — 整次调查预算 `settings.research_budget_seconds`（超时抛 `TimeoutError` → 504）
+**现象**：2 次 × 30s 超时 + 429 退避（最多再 ~12s）≈ 单工具 70s；串行 8 个工具 → 单 analyst 最坏 480s+，
+总预算是 300s → 结果是整次调查 504，而不是"超预算就降级返回 error ToolResult"。
+**复现**（stub 一个总是超时/429 的 httpx transport 即可，不要打真实网络）
+```python
+# 断言：给定 deadline=2s、单工具超时 30s 时，第二次重试不再发生，直接返回 status="error"
+```
+**修改**
+1. `execute` 增加可选 `deadline: float | None`（monotonic 秒），由 analyst 按"剩余预算 ÷ 剩余工具数"均分下发。
+2. 重试前检查剩余时间：不够一次超时就**不再重试**，直接返回 `status=error` + `error="budget exhausted"`；
+   退避时间也不得超过剩余预算。
+3. 超预算必须以 error ToolResult 返回（规则 6），不能抛出去炸整条链。
+**必补测试**：`tests/test_http_client_budget.py` —— 用 `httpx.MockTransport` 计数请求次数，
+断言 deadline 用尽后请求次数 == 1，且返回 `status == "error"`、`errors` 语义明确。
+**验收**：复现里的请求次数断言成立；正常（预算充足）路径的重试行为不变。
 
 ### T24 — 工具注册表：域过滤与注释相反、HK 工具 domain/category 漂移
-`app/gateway/tool_registry.py:631-637`：注释说"始终包含 health 工具"，代码却把 `domain == "unknown"`（health 两个工具）过滤掉；域过滤为空时 `or ALL_TOOLS` 静默返回全部 40 个工具（实测 `registry_text(domains=["us_stock"])` 返回全量）。改法：按注释实现 `filtered + [t for t in ALL_TOOLS if t.domain == "unknown"]`，删掉 `or ALL_TOOLS`。
-另 `:275-298`：`hk_quote`/`hk_search` 的 `domain="a_share"`（应为 `hk_stock`），且 `hk_search` 的 `category` 与 A 股同名工具不一致 → 同一 operationId 因 key 不同被分派给不同 analyst。`BY_NAME`（`:599`）按 tool_name 去重时"后注册者静默胜出"，建议改成多值表或直接删掉重复占位。
+**定位锚点**
+- `app/gateway/tool_registry.py:625-639` `registry_text`：`:634` 先按 domain 过滤，
+  `:636` `filtered = [t for t in filtered if t.domain != "unknown"] or ALL_TOOLS` ← 注释说"始终包含 health"，
+  代码却把 `unknown`（两个 health 工具）**排除**，且域过滤为空时 `or ALL_TOOLS` 静默回退到全量 40 个工具
+- `app/gateway/tool_registry.py:279-298` — `hk_quote` / `hk_search` 的 `domain="a_share"`（`hk_northbound_daily` 是 `hk_stock`），
+  `hk_search` 的 `category="moneyflow"` 与 A 股同名工具不一致
+- `app/gateway/tool_registry.py:599` — `BY_NAME: dict[str, ToolMeta] = {x.tool_name: x for x in ALL_TOOLS}`（后注册者静默胜出）
+**现象**：`registry_text(domains=["us_stock"])` 返回**全部** 40 个工具（实测）；health 工具反而拿不到；
+港股工具被算进 A 股域、被分派给错误的 analyst。
+**复现**（已实测，见 §1.3）
+```python
+from app.gateway.tool_registry import ALL_TOOLS, registry_text
+us = registry_text(domains=["us_stock"]).splitlines()
+print(len(us), len(ALL_TOOLS))               # 旧实现：40 40 → us_stock 没有注册工具，被 `or ALL_TOOLS` 静默回退成全量
+print(any("[a_share]" in l for l in us))     # 旧实现：True → us_stock 域里混进 A 股工具
+hk = registry_text(domains=["hk_stock"]).splitlines()
+print(len(hk), any("[unknown]" in l for l in hk))   # 旧实现：2 False → 注释承诺"始终包含 health"，实际被过滤掉
+```
+**修改**
+1. 按注释实现：`tools = filtered + [t for t in ALL_TOOLS if t.domain == "unknown"]`；**删掉 `or ALL_TOOLS`**
+   （域过滤为空时返回"只有 health 工具"或直接返回空 + warning，**不要**静默回退全量）。
+2. `hk_quote` / `hk_search` 的 `domain` 改成 `"hk_stock"`，`category` 与同类工具对齐
+   （确认 `by_category` 索引与 `resolve_tool` 的 key 唯一性不受影响）。
+3. `BY_NAME` 的重复 `tool_name`：要么改成多值表（`dict[str, list[ToolMeta]]`）并让 `resolve_tool_by_name` 报歧义，
+   要么删掉重复占位条目；**不要**保留"后注册者静默胜出"。改完同步 `:275-278` 与 `:678-689` 的注释。
+**必补测试**：`tests/test_tool_registry_multi_domain.py`（同时修 T34 里那条恒真的 `assert A or B`）
+- `registry_text(domains=["us_stock"])` 里**不含** a_share/crypto 的工具，且含 health；
+- 未知域（`domains=["bogus"]`）→ 只含 health（或空）+ 有 warning，**不**等于全量；
+- `BY_NAME` 无重复键（`len(BY_NAME) == len({t.tool_name for t in ALL_TOOLS})`），或按新语义断言歧义被显式处理。
+**验收**：复现脚本两个断言都成立。
 
-### T25 — 前端：并发请求互相踩计时器 + 单条异常毁掉整份报告
-`app/web/index.html:241`/`:546-600`：`lastErrorTimeout` 是全局单值，调查中回车追问会并发两条 SSE，先结束者的 `finally` 清掉后到者的计时器 → 后到请求失去唯一中止手段；两行 loader 共用 `id="ai-loading"`。`ask()` 没有重入判断。
-`app/web/index.html:391` `a.severity.toUpperCase()`：`anomalies` 是 `list[dict[str, Any]]`（后端无结构约束），`severity` 为数字/布尔时抛 TypeError，被 `ask()` 的 catch 变成"调查失败"，三分钟的成功报告整份丢弃。改法：按请求持有局部 controller/timer、`ask()` 开头防重入、`String(a.severity ?? '')` + 白名单类名、渲染循环单条 try/catch 降级。
+### T25 — 前端：并发请求互踩计时器 + 单条异常毁掉整份报告
+**定位锚点**
+- `app/web/index.html:241` `let lastErrorTimeout = null;`、`:570` `lastErrorTimeout = setTimeout(...)`、`:596` `clearTimeout(lastErrorTimeout)`
+- `app/web/index.html:321` / `:332` / `:349` / `:369` — 多个 loader 共用 `id="ai-loading"`
+- `app/web/index.html:394` — `${a.severity ? `<span class="anomaly-severity ${esc(a.severity)}">${esc(a.severity.toUpperCase())}</span>` : ''}`
+- `app/web/index.html:546-600` — `async function ask()`，无重入判断
+**现象**
+- 调查中回车追问 → 两条 SSE 并发，先结束者的 `finally` 清掉后到者的 `lastErrorTimeout`
+  → 后到请求失去唯一中止手段（只能等服务端超时）。
+- `anomalies` 是 `list[dict[str, Any]]`（后端无结构约束），`severity` 为数字/布尔时
+  `toUpperCase()` 抛 TypeError → 被 `ask()` 的 catch 变成"调查失败" → **三分钟的成功报告整份丢弃**。
+**修改**
+1. 计时器与 `AbortController` 改为**按请求持有**（局部变量 / `Map<requestId, ...>`），
+   `finally` 只清自己的。
+2. `ask()` 开头防重入：若已有进行中的请求，**中止旧的**（或禁用输入并提示），不要并发跑两条。
+3. `id="ai-loading"` 改 class 或加唯一 id，`removeLoading()` 只操作自己那一行。
+4. 渲染健壮化：`String(a.severity ?? '')`、类名白名单（`low/medium/high/critical`，未知 → 默认样式）、
+   渲染循环**单条 try/catch** 降级（一条坏数据不让整份报告消失）。
+5. 后端侧（可选，非本任务必需）：给 `anomalies` 一个 Pydantic 结构约束。
+**必补测试**：`tests/test_web_frontend_contract.py`（新建，纯文本断言）
+- `index.html` 内不再存在全局单值 `lastErrorTimeout`（或断言它按请求作用域出现）；
+- `severity.toUpperCase()` 直接调用不存在，改为 `String(...)`；
+- `anomalies` 渲染处存在白名单函数名。
+  （前端没有 JS 测试环境，这类"文本契约测试"是当前项目可行的最小防线；若你引入 node 测试要单独提交并说明。）
+**验收**：文本契约测试绿；手工在浏览器里发两条并发追问，先结束者不再影响后到者；
+把 `severity` 手工改成 `1` 时界面仍能渲染出报告（不显示徽章即可）。
 
 ### T26 — SSE 端点的错误分支不可达 + 后台任务只 cancel 不 await
-`app/main.py:479-490`：`return StreamingResponse(_stream_research(...))` 在 try 内，但 async generator 体要到响应开始后才执行 → `except ValueError/Exception` 永不触发，图构建失败只得到 200 + SSE error 事件；而前端仅在非 2xx 时回退 `/api/ask`，于是永不回退。改法：在 try 内提前 `graph = _get_orchestrator()._ensure_graph()` 并读 settings，让 400/500 分支真实可达。
-`app/main.py:314`/`:418-420`：pump 任务只 `cancel()` 不 `await`，取消结果无人取回，收尾异常落在无人 retrieve 的 task 上。改法：`finally` 里 `task.cancel()` 后 `await asyncio.gather(task, return_exceptions=True)`。
-（注：审计曾报"`create_task` 不持引用会被 GC 导致落库丢失"，**该条已被对抗性验证驳回**：这两个协程体内没有 `await` 挂起点，创建后同一轮就执行完，不存在可被 GC 的窗口。仅"失败只记 debug"这一点值得改。）
+**定位锚点**
+- `app/main.py:408-424` `ask_stream`：`try:` 里只有 `return StreamingResponse(_stream_research(...))`，
+  async generator 体要到响应开始后才执行 → `except ValueError` / `except Exception` **永不触发**
+- `app/main.py:254-393` `_stream_research`：内部自己 try/except 并把错误作为 SSE `error` 事件 yield
+- `app/main.py:286` `task = asyncio.create_task(_pump())`；`:296` / `:391-393` `finally: if not task.done(): task.cancel()`（**只 cancel，不 await**）
+- 前端 `app/web/index.html` 只在**非 2xx** 时回退 `/api/ask` → 因为永远是 200，所以永不回退
+**修改**
+1. 在 `try` 内**提前**做会失败的事并让分支可达：`_parse_ask_payload`（已验证会抛 ValueError）、
+   `settings = _get_orchestrator().settings`、`graph = _get_orchestrator()._ensure_graph()`
+   —— 图构建失败应当在 HTTP 层就变成 500，而不是 200 + SSE error。
+2. 任务收尾：`finally` 里 `task.cancel()` 后加 `await asyncio.gather(task, return_exceptions=True)`。
+3. 保留 SSE 内部的 per-step error 事件（运行期错误仍要走 200 + event，这是既有契约，不要改成非 2xx）。
+**必补测试**：`tests/test_stream_endpoint.py`（受限会话需附录 A）
+- monkeypatch 让 `_ensure_graph()` 抛异常 → 断言响应是 **500**（旧实现是 200）；
+- monkeypatch 让 `_pump` 抛异常 → 断言收尾后没有 "Task exception was never retrieved" 警告
+  （可用 `caplog` 或 pytest 的 `recwarn`/`asyncio` 日志捕获）。
+**验收**：两条用例在旧实现下必红。
 
 ### T27 — `called_signatures` 的"去重"契约不成立
-`app/graph/tool_runtime.py:160-176`：签名只在**缓存命中**时才登记（`:174`），缓存未命中时从不登记 → 「已执行签名」集合无法阻止重复调用；更糟的是同参数第 3 次调用会因 `signature in called_signatures` 直接 `return None`，**绕过缓存**再打一次真实网关。改法：真实执行成功后立即登记签名，并在 `base._execute_tools` 用 `(tool_name, sorted(args))` 的 seen 集合真正跳过重复。
+**定位锚点**
+- `app/graph/tool_runtime.py:212-229` `_check_cache`：
+  ```python
+  signature = f"{tool_name}:{sorted(arguments.items())}"
+  if signature in called_signatures:
+      return None                      # ← 返回 None 表示"无缓存"，调用方于是真的去打网关
+  ...
+  if cached is not None:
+      called_signatures.add(signature)  # ← 只在缓存命中时才登记
+      return cached
+  return None
+  ```
+- 调用方 `execute()`（`:95-122`）与 `app/graph/nodes/analysts/base.py::_execute_tools`
+**现象**：缓存未命中时签名从不登记 → 「已执行签名」集合阻止不了重复调用；
+更糟的是同参数第 3 次调用会因 `signature in called_signatures` 直接 `return None` →
+**绕过缓存**再打一次真实网关（既慢又浪费，且与"去重"意图相反）。
+**复现**
+```python
+# 同一 (tool, arguments) 连调 3 次，统计真实网关调用次数
+# 期望：1 次（第 2、3 次命中缓存或直接跳过）；旧实现：2 次
+```
+**修改**
+1. `_check_cache` 里"签名已见过"应表达为明确的**跳过**语义（返回一个 `SKIP` 哨兵或让 `execute`
+   直接返回一条 `status="partial"/"error"` 的空结果），不要用 `None` 混同"无缓存"。
+2. 真实执行**成功后立即**登记签名（`execute` 里 `_do_execute` 返回后 `called_signatures.add(signature)`）。
+3. `base._execute_tools` 用 `(tool_name, sorted(args))` 的 seen 集合真正跳过重复的 `tool_calls`（route 里重复时）。
+**必补测试**：新建 `tests/test_tool_runtime_dedup.py` —— 用计数 Gateway stub，
+断言同签名 3 次调用只发生 **1** 次真实调用，且 3 次返回的 `status` 都不是"静默成功"。
+**验收**：计数断言在旧实现下必红（旧实现为 2）。
 
 ---
 
-## 批次 4 — 测试有效性（系统性短板）
+## 4. 批次 4 — 测试有效性（系统性短板）
 
-> **本项目的根本教训**：`MarketAnalystNode.__call__`、`GateNode`、`CriticNode` 都把异常吞成 `errors` 继续跑，于是「节点内部炸了」在测试里可能表现为"通过"。下面每条都是已验证的假阳性，请逐个改成真测试。
+> **本项目的根本教训**：`MarketAnalystNode.__call__`、`GateNode`、`CriticNode` 都把异常吞成 `errors` 继续跑，
+> 于是「节点内部炸了」在测试里可能表现为"通过"。下面每条都是已验证的假阳性，请逐个改成真测试。
+> 建议顺序 T28→T34，最后做 T35 机制性防线。
+> **注意**：T18T（§2）已经给 `tests/test_graph_nodes.py` 加了 `_NoGatewayRuntime` stub，
+> T34 清理同文件其它空转 fixture 时请复用它，不要另造一套。
 
-### T28 — `tests/test_graph_e2e.py:161-178`：断言只查类型，实际从未走到成功分支
-fake 是 `lambda *a, **k: ([])`（不是 awaitable）→ `await` 抛 TypeError 被 `base.py:116` 吞掉、`failed=True`，而断言只有 `isinstance(f["failed"], bool)`，两种结果都通过。改法：`async def _execute_tools(self, state, sigs): return []`，断言 `f["failed"] is False` 且 `f["tools_used"] == []`，并删掉 `:162` 的 skip。
+### T28 — `tests/test_graph_e2e.py` 的 finding 结构用例只查类型，从未走到成功分支
+fake 是 `lambda *a, **k: ([])`（不是 awaitable）→ `await` 抛 TypeError 被 `base.py` 的兜底 `except` 吞掉、
+`failed=True`，而断言只有 `isinstance(f["failed"], bool)`，两种结果都通过。
+改法：`async def _execute_tools(self, state, sigs): return []`，断言 `f["failed"] is False` 且 `f["tools_used"] == []`，
+并删掉 `@pytest.mark.skip(reason="P3 特性 — MarketAnalystNode 依赖 by_category")`。
 
-### T29 — `tests/test_reasoning_parsing.py:207-220`：测试自带一份 `_ensure_lists` 副本，断言与生产相反
-副本把非法 `confidence` 置 `medium`，生产 `app/research/reasoning.py:231-234` 置 `low`。该类 6 个用例从不调用真的 `reason()`。改法：删掉副本，照 `tests/test_data_integrity.py:353-375` 的 `_stub_reasoning` 模式真调 `await ReasoningEngine.reason()`，断言 `confidence == "low"`。
+### T29 — `tests/test_reasoning_parsing.py:207-220` 自带一份 `_ensure_lists` 副本，断言与生产相反
+副本把非法 `confidence` 置 `medium`，生产 `app/research/reasoning.py` 置 `low`。该类 6 个用例从不调用真的 `reason()`。
+改法：删掉副本，照 `tests/test_data_integrity.py:353-375` 的 `_stub_reasoning` 模式真调 `await ReasoningEngine.reason()`，
+断言 `confidence == "low"`。
 
-### T30 — `tests/test_graph_nodes.py:93-99`：`assert node._execute_tools.__code__.co_varnames` 恒真
-budget 守卫（`base.py:180-185`）删掉也不报错。补测：构造 `budget=1` 而 `tool_calls` 有 3 个的 route，断言只执行 1 次 / `len(results) == 1`。顺带修 `base.py:180` 的 `int(mine.get("budget") or len(...))`：显式 `budget=0` 会被 `or` 变成"全部执行"，这本身就是个 bug（见 T31 备注）。
+### T30 — `tests/test_graph_nodes.py` 的 `assert node._execute_tools.__code__.co_varnames` 恒真
+budget 守卫删掉也不报错。补测：构造 `budget=1` 而 `tool_calls` 有 3 个的 route，断言只执行 1 次 / `len(results) == 1`。
+**顺带做 D4**：`base.py` 的 `budget = int(mine.get("budget") or len(mine["tool_calls"]))` 改成
+`raw_budget = mine.get("budget")` + `budget = len(tool_calls) if raw_budget is None else int(raw_budget)`，
+使**显式 `budget=0` 表示不执行**（现在被 `or` 吞成"全部执行"）；并让 `config.max_tool_calls` 成为真实上限
+（在 `_execute_tools` 或 supervisor 侧与 `budget` 取 min，并补 `/health` 之外的真实消费点）。
 
-### T31 — `tests/test_graph_e2e.py:118-136`：唯一的真实全链路 e2e 被 skip，理由已过期
-skip 理由写"P0 图为 supervisor→kernel"，但 `builder.py:111-120` 早已注册三个 analyst。去掉 skip 即可通过。请更新/删除理由让它真跑；确不打算跑就改 `xfail(strict=False)` 并在 `PROJECT_STATUS.md` 标注未覆盖。
+### T31 — `tests/test_graph_e2e.py:118-136` 唯一的真实全链路 e2e 被 skip，理由已过期
+skip 理由写"P0 图为 supervisor→kernel"，但 `app/graph/builder.py` 早已注册三个 analyst。去掉 skip 让它真跑；
+确不打算跑就改 `xfail(strict=False)` 并在本文档 §0.4 标注未覆盖（**不要**创建 `PROJECT_STATUS.md`）。
 
-### T32 — `tests/test_market_memory.py:225-233`：名为"唯一约束"却从不触发约束
-只连插三条并断言 `idx3 == 3`。补测：直接 INSERT 重复 `(conversation_id, turn_index)` 断言 `sqlite3.IntegrityError`；再加两条连接并发 `save_turn` 的用例（`storage.py:276-288` 的 `MAX+1` 存在 TOCTOU）。
+### T32 — `tests/test_market_memory.py` 名为"唯一约束"却从不触发约束
+只连插三条并断言 `idx3 == 3`。补测：直接 INSERT 重复 `(conversation_id, turn_index)` 断言 `sqlite3.IntegrityError`；
+再加两条连接并发 `save_turn` 的用例（`storage.py` 的 `MAX+1` 存在 TOCTOU）。
 
-### T33 — `tests/test_models_multi_domain.py:20-30`：循环体是运行时 no-op
-`_: MarketDomain = val` 不产生任何校验，加个 `"bogus"` 也通过。改成真实例化断言（合法值通过、非法值 `ValidationError`）或对 `get_args(MarketDomain)` 做集合断言。
+### T33 — `tests/test_models_multi_domain.py:20-30` 循环体是运行时 no-op
+`_: MarketDomain = val` 不产生任何校验，加个 `"bogus"` 也通过。改成真实例化断言（合法值通过、非法值 `ValidationError`）
+或对 `get_args(MarketDomain)` 做集合断言。
 
-### T34 — 其余三条低价值假阳性（顺手修）
-- `tests/test_graph_nodes.py:24-41`：`fake_execute` 缺 `self` 参数，永远无法生效（实测 `takes 3 positional arguments but 4 were given`），而用例又用 `FakeRuntime` 覆盖了 `_runtime`，该 fixture 完全空转。补 `self` 并让用例真正依赖它。
+### T34 — 其余低价值假阳性（顺手修）
+- `tests/test_graph_nodes.py` 的 `fake_execute` 缺 `self` 参数 → 永远无法生效；而用例又用 `FakeRuntime` 覆盖了 `_runtime`，
+  该 fixture 完全空转。补 `self` 并让用例真正依赖它（**复用 §2 T18T 的 `_NoGatewayRuntime`**）。
 - `tests/test_graph_routing.py:146-156`：`FakeOpenAI(raise_on=...)` 对任何输入都抛，用例只测了 mock 的行为。补非空 question 的对照断言。
-- `tests/test_tool_registry_multi_domain.py:104-110`：`assert A or B` 应为 `and`（或 `assert not {...} & set(...)`），并补 `registry_text(domains=["us_stock"])` 的用例以暴露 `or ALL_TOOLS` 回退。
-- `tests/test_news_search.py:37-68`：错误路径用例打真实 DDGS 且断言恒真（`if count==0: isinstance(meta.get("error"), str) or meta.get("status")`，而 status 恒存在）。改为 monkeypatch `DDGS` 抛异常/返回空，断言 `meta.error`；顺带补 `news_search.py:56-66` 的空 query 分支。
+- `tests/test_tool_registry_multi_domain.py:104-110`：`assert A or B` 应为 `and`（或 `assert not {...} & set(...)`），
+  并补 `registry_text(domains=["us_stock"])` 的用例以暴露 `or ALL_TOOLS` 回退（与 T24 合并做）。
+- `tests/test_news_search.py:37-68`：错误路径用例打真实 DDGS 且断言恒真
+  （`if count==0: isinstance(meta.get("error"), str) or meta.get("status")`，而 status 恒存在）。
+  改为 monkeypatch `DDGS` 抛异常/返回空，断言 `meta.error`；顺带补 `news_search.py` 的空 query 分支。
 
 ### T35 — 机制性防线（建议在批次 4 一起做）
-1. 在 `tests/conftest.py` 加一个约定/检查：**禁止把被测节点整体替换掉**（monkeypatch `__call__` 只能用于"非本次验证目标"的节点），至少在每个文件顶部写明"本文件 mock 掉了什么、因此没有覆盖什么"。
-2. 给 `MarketAnalystNode.__call__` / `GateNode` / `CriticNode` 的兜底 `except` 分支加统一标记（例如 `errors` 前缀 + `finding.failed=True`），并**在关键测试里断言 `errors == []`**（`tests/test_graph_topology.py` 已开始这么做，请推广到所有 e2e 用例）。
+1. 在 `tests/conftest.py` 加约定/检查：**禁止把被测节点整体替换掉**（monkeypatch `__call__` 只能用于"非本次验证目标"的节点），
+   至少在每个文件顶部写明"本文件 mock 掉了什么、因此没有覆盖什么"。
+2. 给 `MarketAnalystNode.__call__` / `GateNode` / `CriticNode` 的兜底 `except` 分支加统一标记
+   （例如 `errors` 前缀 + `finding.failed=True`），并**在关键测试里断言 `errors == []`**
+   （`tests/test_graph_topology.py` 已开始这么做，请推广到所有 e2e 用例；§2 的 T18T 已经给三条用例加上了）。
 3. 每个新增测试都自问：**"把对应生产代码改坏，它会不会变红？"** 不会就重写。
 
 ---
 
-## 批次 5 — 需要人类决策（不要自行决定）
+## 5. 收尾
 
-| ID | 问题 | 选项 |
-|---|---|---|
-| **D1** | MCP 通道实际用哪种模式？`pyproject.toml:14` 的 `mcp>=1.12` 收成 `>=2,<3` 还是 `<2`？ | A) 以 2.x 为准，补 `initialize()` 并按 v2 API 适配；B) 锁 `<2` 回到 1.x 语义（当时工具确实跑通过）。**注意 `.env` 现在写的是 `MARKET_GATEWAY_MODE=mcp`**，而 `memory.db` 里最后一次成功记录（10-03 08:10）早于 `.env` 改动（10-03 16:05）——建议先手工跑一次 MCP 模式确认现状。 |
-| **D2** | Evidence Gate 要真门控还是降级为提示？ | A) `has_evidence=False` → 短路并返回明确错误；B) 只强制 `confidence=low` + `data_caveats` + errors；C) 删掉 `has_evidence`/`reason` 与文档承诺。 |
-| **D3** | `anomalies` 字段怎么填？ | A) 加进 reasoning prompt 与 `_ensure_list`；B) 用 `app/detector/anomaly.py::detect_anomalies` 在代码里填（需设计调用点，它目前无生产调用）；C) 从前端与模型里删掉该字段。 |
-| **D4** | `budget` / `max_tool_calls` 语义 | `config.py:27` 的 `max_tool_calls` 只出现在 `/health`，graph 路径实际不受它约束；`_execute_tools` 的 `budget` 恒等于 `len(tool_calls)`（恒真守卫）。要不要把两者真正接上？ |
+### T36 — 文档与实现同步
+- `docs/architecture.md` / `README.md`：补 Critic 的内部 `error` 语义（T11）；补 gate 的降级语义（T15/D2）。
+- `app/agent/prompts.py` 的 evidence id 示例仍是 `evidence-001`，实际已是 `{category}-NNN`（T4 之后）。
+- `app/gateway/tool_registry.py` 的域过滤注释与实现相反（T24 修完同步）。
+- 完成后做一次全局检查：**不再存在"文档承诺、代码没有"的项**——重点核对四处：
+  `has_evidence`（T15 已定：降级不短路）、`anomalies`（D3：代码填）、证据条数上限（T6）、MCP 模式与版本区间（D1：`mcp>=2,<3`）。
 
-**已由仓库主人拍板、不要再问的决策**：
-
-| 议题 | 结论 | 落地位置 |
-|---|---|---|
-| Critic「审计失败」的语义 | **不归为 `research_more`**；改为终止（END）+ 保留 report + `critique.verdict="error"` + `errors`；`/api/ask` 仍 200，调用方看 `verdict`/`errors` 区分 | 已实现于 `589cff7`，见 **T11 节**（不要改回） |
-| 简报触发 | **只认 09:15 / 15:30 两个时刻，过点不补**（不要 catch-up） | 待实现，见 **T14b** |
-| `PROJECT_STATUS.md` | 已由主人删除，**不要再创建** | 状态以 §0.4 为准 |
+**完成定义**：批次 3–4 全绿（`ruff check` + `ruff format --check` + `pytest -q`），
+每条修复都带一个「改坏它就会红」的测试，文档与代码实际行为一致。
+`PROJECT_STATUS.md` 已被仓库主人删除，**不要再创建**；状态以本文档 §0.4 为准。
 
 ---
 
 ## 附录 A — 在受限环境跑完整测试
 
-正常情况下 `pytest -q` 即可。
-
-**情况一：会话是「完全访问」(full access)** —— 什么都不用做，`pytest -q` 直接跑全量
-（批次 2 的执行会话就是这种，`tmp_path` 与 `memory/` 均可写，报 `408 passed / 2 skipped`）。
-**不要**在这种会话里套用下面的 stub。
-
-**情况二：会话是 workspace-write 且工作区子目录缺写入授权** —— `memory/` 等子目录无法建文件，
-sqlite 相关模块（`test_ask_endpoint` / `test_stream_endpoint` / `test_market_memory` / `test_conversation` /
-`test_data_integrity` / `test_persistence`）会以 `unable to open database file` 或 `tmp_path` 权限错误失败。
+正常情况下 `pytest -q` 即可。**但主 Agent 复核时实测：workspace-write 会话里 `memory/` 下的 sqlite 打不开**
+（`sqlite3.OperationalError: unable to open database file`；`Get-Acl memory` 能看到沙箱的 deny ACE），
+表现为 `test_ask_endpoint.py` / `test_stream_endpoint.py` **收集期就 error**，
+`test_conversation.py` / `test_market_memory.py` / `test_data_integrity.py` / `test_persistence.py` 大量 error。
 **这是环境问题，不是代码问题，不要为了让它变绿去改产品代码或改测试断言。**
-可用下面的 stub 把默认库重定向到可写根目录后运行（**不要提交这个文件**）：
 
-> 已知副作用（验收时已确认，属正常）：重定向后这几条必然失败，因为它们的语义要求"两条连接打开同一个文件"或断言文件路径：
-> `test_writes_are_visible_to_a_second_connection`、`test_writes_survive_a_restart`、
-> `test_conversation_history_round_trips_across_instances`、`test_db_file_created_on_init`。
-> `tmp_path` 类用例（`test_persistence.py`）在这种会话里仍会 error，属预期。
+**情况一：会话是「完全访问」** —— 什么都不用做，`pytest -q` 直接跑全量
+（批次 2 的执行会话就是这种，报 `408 passed / 2 skipped`）。
 
+**情况二：workspace-write 且 `memory/` 不可写** —— 用下面的 stub 把默认项目库重定向到可写目录
+（**放在 `.tmp/` 下，不要提交**）：
 ```python
-# run_tests_local.py  （放在仓库根，用完删）
+# .tmp/run_tests_local.py
 import os, pathlib, sqlite3, sys
 os.environ.setdefault("TEMP", r"D:\Mosaic\.tmp")
 os.environ.setdefault("TMP", r"D:\Mosaic\.tmp")
+sys.path.insert(0, r"D:\Mosaic")
 import app.memory.storage as storage
 ROOT = pathlib.Path(r"D:\Mosaic")
-
 def factory(path):
     p = pathlib.Path(path)
-    if p.parent.name == "memory":          # 默认项目库 -> 重定向到可写根目录
-        p = ROOT / "__ci_memory.db"
+    if p.parent.name == "memory":        # 默认项目库 -> 重定向到可写目录
+        p = ROOT / ".tmp" / "__ci_memory.db"
     conn = sqlite3.Connection(str(p), isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
-
 storage._sqlite_connection_factory = factory
 import pytest
 sys.exit(pytest.main(sys.argv[1:] or ["-q", "tests/"]))
 ```
 ```bash
-python run_tests_local.py -q                       # 全量
-python run_tests_local.py tests/test_graph_nodes.py -q   # 单文件
+python .tmp/run_tests_local.py -q                                # 全量
+python .tmp/run_tests_local.py tests/test_graph_nodes.py -q      # 单文件
 ```
-注意：使用 `tempfile.mkdtemp()` 的用例在沙箱内仍会失败（新建子目录同样没有写入授权）；这类失败在 CI（ubuntu）上不会出现。`ruff` 同理，用 `--no-cache`。
+> 已知副作用（验收时已确认，属正常）：重定向后这几条必然失败，因为它们的语义要求"两条连接打开同一个文件"
+> 或断言文件路径，而 `tmp_path` 在沙箱里也不可写：
+> `test_writes_are_visible_to_a_second_connection`、`test_writes_survive_a_restart`、
+> `test_conversation_history_round_trips_across_instances`、`test_db_file_created_on_init`、
+> `TestDatabaseSetup` 两条、`test_persistence.py` 两条。
+> 主 Agent 复核时这一类共 36 error + 12 failed，全部归因于此；**判红之前先确认失败是不是这一类**。
 
-## 附录 B — 每条修复的复现命令速查
+**关于 gateway 模式（复核时的重要经验）**：`.env` 里是 `MARKET_GATEWAY_MODE=mcp`，
+而沙箱**禁止 spawn 子进程**（实测 `MCPConnectionError: MCP server startup failed: [WinError 5] 拒绝访问`）。
+所以只想验证 analyst/图逻辑时，可以临时 `$env:MARKET_GATEWAY_MODE="http"` 跑（HTTP 客户端进入时不连网）。
+**但最终验收必须在 `mcp` 模式下也全绿**——这正是 §1.2 P1 的教训。`ruff` 同理，用 `--no-cache`。
+
+---
+
+## 附录 B — 复现命令速查
 
 ```bash
+# ── §2 修红 ────────────────────────────────────────────────
+# T18b：内部工具不该连 gateway（期望 opened = 0）
+# 把 §2 T18b 的复现块原文存成 .tmp/verify_gateway_lazy.py 再跑（主 Agent 已跑过，输出 opened = 1）
+python .tmp/verify_gateway_lazy.py
+# T18b 的连带证据：mcp 模式下这 6 条红，http 模式下全绿
+$env:MARKET_GATEWAY_MODE="mcp";  pytest tests/test_news_no_symbol.py tests/test_graph_topology.py -q
+$env:MARKET_GATEWAY_MODE="http"; pytest tests/test_news_no_symbol.py tests/test_graph_topology.py -q
+
+# T17T：patch 目标错误（真打网络）
+pytest tests/test_tool_runtime_ttl.py -q
+grep -n "_search_news" app/graph/tool_runtime.py
+
+# T18T：stub 缺 gateway_session
+pytest tests/test_graph_nodes.py -q -k "no_matching_tools or skips_non_whitelist"
+
+# ── 批次 3 ────────────────────────────────────────────────
+# T19 缓存
+python -c "from app.cache import Cache; c=Cache(); c.set('k',1,ttl=0); print(c.get('k')); [c.set(f'k{i}',i) for i in range(2000)]; print(c.stats)"
+# T20 必填字段
+python -c "from app.models.response import MarketIntelligence as M; M.model_validate({'title':'t','state_label':'Neutral'})"
+# T22 anomaly 阈值单位（期望不再误报 critical）
+python -c "from app.detector.anomaly import detect_anomalies as d; from app.models.market import NormalizedDatum as D, ToolResult as T; tr=T(tool='derivatives',arguments={},status='success',normalized=[D(metric='openInterest',value=3.2e9,tool='derivatives')]); print([a.to_dict() for a in d([tr],domain='crypto')])"
+# T24 注册表域过滤
+python -c "from app.gateway.tool_registry import registry_text as r, ALL_TOOLS; print(len(r(domains=['us_stock']).splitlines()), len(ALL_TOOLS)); print([l for l in r().splitlines() if 'unknown' in l])"
+
+# ── 历史修复的回归复现（已完成任务的契约，改回必红）─────────
 # T1 空载荷
 python -c "from app.gateway.normalizer import normalize_tool_result as n; [print(repr(r), (lambda x:(x.status,len(x.normalized)))(n('quote_tencent_quote_get',{},r))) for r in ({},[],None,'Server busy',0)]"
-
 # T2 F10 折叠
 python -c "from app.gateway.normalizer import normalize_tool_result as n; r=n('finance_eastmoney_f10_finance_get',{'symbol':'601398'},{'data':{'indicators':{'ROE':{'value':12.5,'unit':'%'},'PE':{'value':15.2,'unit':'x'}}}}); print([(d.metric,d.value) for d in r.normalized])"
-
-# T3 字段层级
-python -c "from app.models.response import ResearchResponse, MarketIntelligence as M; d=ResearchResponse(question='q',report=M.model_validate({'title':'t','market_state':'弱','state_label':'Neutral','what_happened':'跌','confidence':'low'})).model_dump(); print(sorted(d.keys()), d.get('state_label'))"
-
-# T4 evidence id 冲突
-python -c "from app.research.evidence import build_evidence as b; from app.models.market import NormalizedDatum as D, ToolResult as T; mk=lambda t,m,v:T(tool=t,arguments={},status='success',normalized=[D(metric=m,value=v,tool=t)]); print([e.id for e in b([mk('a','x',1)])],[e.id for e in b([mk('b','y',2)])])"
-
+# T4 evidence id 前缀
+python -c "from app.research.evidence import build_evidence as b; from app.models.market import NormalizedDatum as D, ToolResult as T; mk=lambda t,m,v:T(tool=t,arguments={},status='success',normalized=[D(metric=m,value=v,tool=t)]); print([e.id for e in b([mk('a','x',1)],id_prefix='technical')],[e.id for e in b([mk('b','y',2)],id_prefix='fundamental')])"
 # T7 candle_summary
 python -c "from app.research.evidence import build_evidence as b; from app.models.market import NormalizedDatum as D, ToolResult as T; kn=[('candles[0].o',1.0),('candles[0].c',2.0),('candles[1].o',2.0),('candles[1].c',4.0)]; tr=T(tool='klines_market_klines_post',arguments={},status='success',normalized=[D(metric=m,value=v,tool='k') for m,v in kn]+[D(metric='openInterest',value=8.5,tool='k')]); [print(e.metric,e.value) for e in b([tr])]"
-
-# T6/T8 静态检查
-grep -rn "_MAX_EVIDENCE_ITEMS" app/ | grep -v "= 80"
-python -c "from app.graph.nodes.analysts.base import MarketAnalystNode as M; from app.gateway.tool_registry import resolve_tool as r; wl=M.WHITELIST_NO_SYMBOL; [print(k, r(k).tool_name in wl) for k in ('news_search','search','longhu','hk_northbound_daily','hk_index_snapshot')]"
-
 # T11 verdict 归一化
 python -c "from app.graph.builder import critic_route_decision as d; from app.config import Settings; s=Settings(); [print(repr(v), d({'critique':{'verdict':v},'revision_count':0,'report':{'what_happened':'x'}}, s)) for v in ('pass','revise','research_more','PASS','fail','',None)]"
-# 期望（修复前）：'pass'->end  'revise'->reasoning  'research_more'->supervisor
-#                 'PASS'/'fail'/''/None -> end（= 静默当通过，问题所在）
-
-# T12 MCP 握手现状（静态）
-grep -rn "initialize" app/ | grep -v "logging\|schema"
-python -c "import importlib.metadata as m, inspect; from mcp import ClientSession; print(m.version('mcp'), 'initialize in __aenter__:', 'initialize' in inspect.getsource(ClientSession.__aenter__))"
+# T16 reducer（把 state.py 的三个 reducer 改回 operator.add 后必红）
+pytest tests/test_graph_state_reducers.py -q
+# T17 TTL
+pytest tests/test_tool_runtime_ttl.py -q
+# T14b 过点不补
+pytest tests/test_brief_scheduler.py -q
 ```
+
+---
 
 ## 附录 C — 修复顺序速览（可直接当 checklist）
 
 ```
-批次 1（P0）— ✅ 全部完成并验收（735aeaa / b8e114c / f86df07）
-[x] T1 空载荷判失败            + 测试
-[x] T2 F10 折叠 / unit         + 强化 test_normalizer_f10
-[x] T3 SSE 落库字段层级        + 新建 test_persistence
+批次 1（P0）        ✅ 735aeaa / b8e114c / f86df07
+批次 2（P1）        ✅ dc75971 589cff7 a293e44 164c920 8c7c4ab c471dec d9f60fe 432b7ab 50aff98 ff03a2d f4bee89 3454af5
+批次 2 遗留         ✅ 7e87c6c(T14b+T5b 文案) fca2025(T13b) a9732dc(文档) df757a5(T16) 2bf11b7(T17) 44c307f(T18)
+                       —— 但下面这 3 条还没收尾
 
-批次 2（P1）— ✅ 全部完成并验收（dc75971 + 589cff7 a293e44 164c920 8c7c4ab c471dec
-                                  d9f60fe 432b7ab 50aff98 ff03a2d f4bee89 3454af5）
-[x] T4  evidence id 唯一化
-[x] T5  truncate 保留末尾 + partial + 不污染缓存
-[x] T6  evidence 条数上限
-[x] T7  candle_summary 取值 + 混合指标
-[x] T8  symbol 守卫白名单
-[x] T9  CLI report=None
-[x] T10 日志命名空间
-[x] T11 Critic verdict Literal + 失败语义（语义已定，见 T11 节，不要改回）
-[x] T12 MCP 握手 + 失败清理（pyproject 版本区间待 D1）
-[x] T13 evaluation 假验收
-[x] T14 briefs 调度时区与窗口
+批次 3 前置：修红（必须最先做完，全绿才提交）
+[ ] T18b gateway 按需连接（产品，修 T18 的急切连接回归）
+[ ] T17T 修正 T17 测试 patch 目标（测试）
+[ ] T18T 修 2 条 stub 测试（测试，不改产品）
+    验收门槛：mcp 与 http 两种模式下 test_graph_nodes / test_graph_topology / test_news_no_symbol 全绿
 
-批次 2 遗留（先做，再开批次 3）
-[ ] T14b 简报过点不补（GRACE 窗口；方案已定）
-[ ] T13b evaluation 期望值查表兜底
-[ ] T5b  truncate note 文案（可选）
+批次 3（P2）剩余
+[ ] T12 收尾 pyproject 收成 mcp>=2,<3（D1）
+[ ] T19 缓存上限 + ttl=0            [ ] T20 必填字段默认值（+ D4 的 _ensure_list）
+[ ] T21 sqlite 线程 + 写失败 WARNING [ ] T22 anomaly 阈值/单位（D3 前置）
+[ ] T23 重试感知预算                [ ] T24 注册表域过滤 / HK 漂移
+[ ] T25 前端并发与渲染健壮性        [ ] T26 SSE 错误分支可达 + 任务 await
+[ ] T27 called_signatures 真去重
+[ ] T15 Evidence Gate 降级（D2=B）  [ ] T20 后半：anomalies 用 detect_anomalies 填（D3，须在 T22 后）
 
-批次 3（P2）
-[ ] T15 Evidence Gate 门控力（先看 D2）   [ ] T16 回边 reducer
-[ ] T17 news_search TTL                  [ ] T18 复用 Gateway 客户端
-[ ] T19 缓存上限                          [ ] T20 必填字段 / anomalies（先看 D3）
-[ ] T21 sqlite 线程与日志                 [ ] T22 anomaly 阈值单位
-[ ] T23 重试感知预算                      [ ] T24 注册表域过滤 / HK 漂移
-[ ] T25 前端并发与渲染健壮性              [ ] T26 SSE 错误分支与任务收尾
-[ ] T27 called_signatures 去重
-
-批次 4（测试有效性）  T28 T29 T30 T31 T32 T33 T34 + T35 机制性防线
-
-批次 5（决策）  D1 MCP 版本与模式   D2 Gate 是否门控   D3 anomalies   D4 budget/max_tool_calls
-                （T14 的时间窗已定：过点不补 → 见 T14b）
+批次 4（测试有效性）  T28 T29 T30(+D4 budget) T31 T32 T33 T34 + T35 机制性防线
 
 收尾
-[ ] T36 文档与实现同步（architecture/README/prompts/tool_registry）
+[ ] T36 文档与实现同步（architecture / README / prompts / tool_registry）
+[ ] §0.4 更新（每完成一批就更新：任务表打 ✅ + 提交号 + 测试数字）
+
+已拍板、不要再问：D1 mcp>=2,<3 ｜ D2 Gate 降级不短路 ｜ D3 anomalies 代码填 ｜ D4 budget/max_tool_calls 接通
+已拍板、不要改回：Critic error 语义 ｜ 简报过点不补 ｜ evidence id 前缀 ｜ truncate 保留末尾 + partial ｜ 不要重建 PROJECT_STATUS.md
 ```
 
-**完成定义**：批次 1–4 全绿（`ruff check` + `ruff format --check` + `pytest -q`），每条修复都带一个「改坏它就会红」的测试，
-并且文档与代码实际行为一致——重点核对四处：`has_evidence`（T15 定的是真门控还是提示）、`anomalies`（D3）、
-证据条数上限（T6）、MCP 模式与版本区间（D1）。`PROJECT_STATUS.md` 已被仓库主人删除，不要再创建；
-状态以此文档的 §0.4 为准。
+---
+
+## 附录 D — 已完成任务的契约备忘（T1–T18）
+
+> 细节用 `git show <提交号>` 查回。这里只保留**不许改回**的语义与对应的回归测试位置。
+
+| 任务 | 提交 | 不许改回的契约 | 回归测试 |
+|---|---|---|---|
+| T1 空载荷判失败 | `735aeaa` | 空容器 / 裸标量 / `None` 一律 `status="error"`、`normalized=[]`；`normalized` 为空时不许是 `success` | `tests/test_normalizer_empty.py` 等 |
+| T2 F10 多指标 + unit | `b8e114c` | 多子键不折叠（不取第一个）；`metric` 保留可辨识路径；同级 `unit` 写进 datum | `tests/test_normalizer_f10.py` |
+| T3 持久化字段层级 | `f86df07` | 同步 / SSE 共用一套 `persist_research`；一律读 `result.report`；`report=None` 时只存研究记录 | `tests/test_persistence.py` |
+| T4 evidence id 唯一化 | `c471dec` | id 形如 `{category}-NNN`（`build_evidence(..., id_prefix=...)`） | `tests/test_evidence.py` |
+| T5 truncate 保留末尾 | `d9f60fe` | 保留**末尾** 200；切片前取原始条数；置 `partial`；缓存存深拷贝 | `tests/test_truncate.py` |
+| T6 证据条数上限 | `50aff98` | `_MAX_EVIDENCE_ITEMS` 真的生效（按来源保留最新 + note） | `tests/test_evidence.py` |
+| T7 candle_summary 取值 | `432b7ab` | 每根 K 线只取一个收盘价；`price_last` = 最后一根收盘；混合载荷不丢指标 | `tests/test_evidence.py` |
+| T8 symbol 守卫白名单 | `ff03a2d` | `news_search` / `search` / `longhu` / `internal_hk_*` 无 symbol 也必须执行；跳过记 `warning` | `tests/test_news_no_symbol.py` |
+| T9 CLI report=None | `164c920` | dump 前判 `None`，把 `result.errors` 打到 stderr + 非 0 退出码 | — |
+| T10 日志命名空间 | `8c7c4ab` | handler 覆盖 `app.*`；不用 `propagate=True` 掩盖 | `tests/test_ask_endpoint.py` |
+| T11 Critic verdict | `589cff7` | 审计失败 → `verdict="error"` → 安全 END + 保留 report + `errors`；**不得**回 `research_more`；`/api/ask` 仍 200 | `tests/test_critic_verdict.py`（20 项） |
+| T12 MCP 握手 + 清理 | `a293e44` | `connect()` 先 `initialize()`（带超时）；失败先 `close()`；`close()` 无条件 `stack.aclose()` | `tests/test_data_integrity.py`（注入 `FakeSession`，仍绕开 `connect()`） |
+| T13 evaluation 真验收 | `f4bee89` | 空集不得为真；读 `report.used_tools` / `tool_results`；错误按 `case_id` 查表 | `tests/test_evaluation.py` |
+| T14 简报精确触发 | `3454af5` | 精确 sleep 到目标时刻 + 每日去重 + 跨日重置；固定 UTC+8 | `tests/test_brief_scheduler.py` |
+| **T14b 过点不补** | `7e87c6c` | 只在 `[目标时刻, +GRACE(5min)]` 内触发；**不 catch-up**；`GRACE=0` 不可用 | 同文件 3 条 |
+| T13b evaluation 兜底 | `fca2025` | 未知 `case_id` → 按 FAIL，不 KeyError、不跳过 | `tests/test_evaluation.py` |
+| T5b note 文案 | `7e87c6c` | note 写明"保留最新 200 条（另加本说明条）"，与实际 201 条一致 | `tests/test_truncate.py`（追加断言） |
+| **T16 回边 reducer** | `df757a5` | `results` 按 `(tool, arguments)`、`evidence` 按 `id`、`findings` 按 `analyst` 去重（同键保留最新，不同键追加以支持并行 analyst）；`errors` 仍追加；**`state.tool_results` 已删，不要再加回** | `tests/test_graph_state_reducers.py` |
+| **T17 news_search TTL** | `2bf11b7` | `_resolve_ttl(tool, settings=None)`；`news_search` → `settings.news_search_ttl_seconds`（21600），`execute()` 不得把它覆盖成 30s | `tests/test_tool_runtime_ttl.py`（**测试待修，见 T17T**） |
+| **T18 analyst 级复用 Gateway** | `44c307f` | 一次 analyst 运行复用同一个 Gateway 客户端，异常时保证关闭；**但必须按需连接**（见 T18b） | `tests/test_gateway_reuse.py` |
