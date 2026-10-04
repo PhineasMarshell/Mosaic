@@ -50,10 +50,13 @@ class TestNormalizeToolResult:
         assert "SH600519" in combined or "SZ000001" in combined
 
     def test_non_dict_response(self):
+        """T1：裸字符串标量不是数据点，必须判 error（旧行为把它 str() 包成
+        metric="response" 的"成功证据"）。"""
         raw = "simple string response"
         result = normalize_tool_result("foo", {}, raw)
-        assert len(result.normalized) == 1
-        assert result.normalized[0].metric == "response"
+        assert result.status == "error"
+        assert result.normalized == []
+        assert "simple string response" in (result.error or "")
 
 
 class TestExtractMetrics:

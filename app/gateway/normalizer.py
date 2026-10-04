@@ -774,13 +774,14 @@ def normalize_tool_result(
             error=error,
         )
 
-    if raw is None:
-        # 上游既没给数据、也没给错误信息。历史上两条路径会走到这里：
-        #   - HTTP 401/403：http_client 在 last_error 还是 None 时就 return 了
-        #   - MCP 工具级失败：call() 从不检查 result.is_error
-        # 以前这种情况会被归一化成 metric="response", value="None", status="success"，
-        # 于是 evidence gate 报告 has_evidence=True，Reasoning LLM 拿着一堆 "None"
-        # 写出一份自信的市场报告。没有数据就必须是 error。
+    # T1：空载荷 / 裸标量都不是"数据"，必须判失败，而不是被归一化成成功证据。
+    #   - None / {} / []：上游用「200 + 空 body」表示查不到数据。历史上这里只把
+    #     None 当失败（另有两条路径：HTTP 401/403 在 last_error 为 None 时 return、
+    #     MCP 工具级失败从不检查 result.is_error），空容器则走正常路径产出 0 条 datum。
+    #   - str/int/bool/float 标量：通常是上游报错/繁忙文本（如 "Server busy"），
+    #     以前在 else 分支被 str() 包成 metric="response" 的"证据"，Evidence Gate
+    #     于是报 has_evidence=True，Reasoning LLM 在零数据点下撰写报告。
+    if raw is None or raw == [] or (isinstance(raw, dict) and not raw):
         return ToolResult(
             tool=tool,
             arguments=arguments,
@@ -788,7 +789,19 @@ def normalize_tool_result(
             status="error",
             partial=False,
             normalized=[],
-            error="Gateway returned no data (empty response without an error message)",
+            error="Gateway returned no data (empty response)",
+        )
+
+    if not isinstance(raw, (dict, list)):
+        snippet = str(raw)[:200]
+        return ToolResult(
+            tool=tool,
+            arguments=arguments,
+            raw=raw,
+            status="error",
+            partial=False,
+            normalized=[],
+            error=f"Gateway returned a non-data scalar response: {snippet}",
         )
 
     partial = find_partial(raw)
@@ -836,6 +849,20 @@ def normalize_tool_result(
             )
         ]
     )
+
+    # T1 兜底不变式：任何分支只要产出 0 条 datum，就绝不能报 success/partial，
+    # 防止以后新增的分支再把"无数据"当成证据（例如整块 dict 只含元数据键）。
+    if not normalized:
+        return ToolResult(
+            tool=tool,
+            arguments=arguments,
+            raw=raw,
+            status="error",
+            partial=False,
+            note=note,
+            normalized=[],
+            error="Gateway returned no extractable data (normalization produced zero items)",
+        )
 
     return ToolResult(
         tool=tool,

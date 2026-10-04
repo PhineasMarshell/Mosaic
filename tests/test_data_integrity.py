@@ -44,10 +44,13 @@ def test_explicit_error_still_wins():
     assert r.error == "boom"
 
 
-def test_empty_dict_is_not_treated_as_no_data():
-    """{} 是"成功但没有内容"，跟 None（连响应都没有）语义不同，不该混为一谈。"""
+def test_empty_dict_is_treated_as_no_data():
+    """T1：{} 与 None 一样代表"查不到数据"，必须判 error 且产出 0 条数据点，
+    否则空载荷会被当成成功证据通过 Evidence Gate。"""
     r = normalize_tool_result("quote_tencent_quote_get", {}, {})
-    assert r.status == "success"
+    assert r.status == "error"
+    assert r.normalized == []
+    assert r.error
 
 
 # ================================================================== #

@@ -305,21 +305,9 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
                         )
                         counter += 1
 
-        if not result.normalized and result.status in ("success", "partial"):
-            evidence.append(
-                Evidence(
-                    id=f"evidence-{counter:03d}",
-                    source_tool=result.tool,
-                    domain="unknown",
-                    metric="tool_status",
-                    value=result.status,
-                    timestamp=None,
-                    source=None,
-                    status=result.status,
-                    partial=result.partial,
-                    note="",
-                )
-            )
-            counter += 1
+        # T1：normalized 为空的 success/partial 结果，绝不能再伪造一条
+        # metric="tool_status"、value="success" 的"证据"——那会让零数据点的结果
+        # 通过 Evidence Gate。normalizer 现在已保证空结果必为 status=error（在上方
+        # error 分支处理并 continue）；若此处仍遇到直接构造的空结果，按"无证据"跳过。
 
     return evidence
