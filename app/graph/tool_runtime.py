@@ -77,11 +77,12 @@ class ToolRuntime:
         # 执行真实调用
         result = await self._do_execute(tool_name, arguments)
 
-        # 只缓存成功/部分成功的结果
+        # 只缓存成功/部分成功的结果。T5：缓存里存**深拷贝**，使后续 truncate
+        # 对工作对象的原地改写不会污染缓存（旧实现存同一实例，truncate 会改到缓存）。
         if result.status in (STATUS_SUCCESS, STATUS_PARTIAL):
             cache_key = _make_cache_key(tool_name, arguments)
             ttl = _resolve_ttl(tool_name)
-            market_cache.set(cache_key, result, ttl=ttl)
+            market_cache.set(cache_key, result.model_copy(deep=True), ttl=ttl)
 
         return result
 
@@ -89,18 +90,26 @@ class ToolRuntime:
         """截断 result.normalized，防止下游 evaluator/reasoning prompt 失控。"""
         if len(result.normalized) <= 200:
             return
-        overflow_count = len(result.normalized) - 200
-        result.normalized = result.normalized[:200]
-        result.normalized.append(
+        # T5：原始条数必须在切片 / 追加 note **之前**取，note 自身不算进计数。
+        original_count = len(result.normalized)
+        # 保留**末尾** 200：K 线按时间升序，末尾才是最新数据；
+        # 旧实现 [:200] 保留最旧，note 却写"保留最近 200"。
+        kept = result.normalized[-200:]
+        kept.append(
             NormalizedDatum(
                 source="truncation_note",
                 tool=result.tool,
                 metric="_truncated_count",
-                value=f"原始 {overflow_count + 200} 项，已截断至 200（保留最近 200）",
+                value=f"原始 {original_count} 项，已截断至 200（保留最近 200）",
                 status=STATUS_PARTIAL,
                 partial=True,
             )
         )
+        result.normalized = kept
+        # 截断=数据不完整：必须置 partial 并让状态反映出来；
+        # 旧实现不置标志，静默保持 success。
+        result.status = STATUS_PARTIAL
+        result.partial = True
 
     async def inject_hk_context(self, results: list[ToolResult]) -> None:
         """HK 域专属：注入北向资金 + 恒生指数行情（内部直连，不走 Gateway）。"""
@@ -172,7 +181,8 @@ class ToolRuntime:
         cached = market_cache.get(cache_key)
         if cached is not None:
             called_signatures.add(signature)
-            return cached
+            # T5：返回深拷贝，调用方 truncate 的原地改写不影响缓存内实例。
+            return cached.model_copy(deep=True)
         return None
 
     def _gateway_class(self):
