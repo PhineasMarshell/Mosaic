@@ -7,6 +7,7 @@
 """
 
 import json
+import logging
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -18,6 +19,8 @@ from app.llm_json import parse_json_object
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
 from app.models.response import EvidenceItem, MarketIntelligence
+
+logger = logging.getLogger(__name__)
 
 
 def _get_evidence_key(item) -> str:
@@ -52,8 +55,30 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
     """
     items: list[EvidenceItem] = []
 
-    # 建立 evidence_id → Evidence 的查找表
-    id_to_evidence = {e.id: e for e in original_evidence}
+    # 建立 evidence_id → Evidence 的查找表。T4：build_evidence 历史上每次都从
+    # evidence-001 开始编号，多个 analyst 合并后 id 重复、后者静默覆盖前者。
+    # 这里额外建 (id, source_tool) 复合表并检测重复，重复时记 warning 并退化匹配。
+    id_to_evidence: dict[str, Evidence] = {}
+    id_source_to_evidence: dict[tuple[str, str], Evidence] = {}
+    duplicate_ids: set[str] = set()
+    for original in original_evidence:
+        if original.id in id_to_evidence:
+            duplicate_ids.add(original.id)
+            logger.warning(
+                "检测到重复 evidence id %s（source_tool=%s 与 %s），将按 (id, source_tool) 退化匹配以避免证据错配",
+                original.id,
+                id_to_evidence[original.id].source_tool,
+                original.source_tool,
+            )
+        id_to_evidence[original.id] = original
+        id_source_to_evidence[(original.id, original.source_tool)] = original
+
+    def _resolve_evidence(eid: str, source_tool: str | None) -> Evidence | None:
+        if eid in duplicate_ids and source_tool:
+            composite = id_source_to_evidence.get((eid, source_tool))
+            if composite is not None:
+                return composite
+        return id_to_evidence.get(eid)
 
     for raw_item in raw_evidence or []:
         if not isinstance(raw_item, dict):
@@ -70,7 +95,7 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
             # 旧格式：{claim, evidence_ids}
             matched_count = 0
             for eid in ev_ids or []:
-                ev = id_to_evidence.get(eid)
+                ev = _resolve_evidence(eid, None)
                 if ev:
                     matched_count += 1
                     items.append(
@@ -109,7 +134,7 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
             if not item_id:
                 # 没 id 的无法匹配真实数据 → 丢弃而不是生成假 evidence
                 continue
-            original_ev = id_to_evidence.get(item_id)
+            original_ev = _resolve_evidence(item_id, raw_item.get("source_tool"))
             if original_ev is None:
                 # LLM 提到了一个不存在于证据链中的 id → 可能是幻觉
                 # （比如报告说"我的模型能直接看到所有市场数据，不需要调用工具"）

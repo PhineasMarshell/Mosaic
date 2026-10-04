@@ -184,8 +184,14 @@ def _extract_snapshot_summary(response: dict[str, Any], tool: str) -> dict[str, 
     return summary
 
 
-def build_evidence(results: list[ToolResult]) -> list[Evidence]:
+def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> list[Evidence]:
     """从工具调用结果构建用户友好的证据链。
+
+    Args:
+        results: 一个 analyst 产出的工具结果。
+        id_prefix: 证据 id 前缀。各 analyst 必须传入自己的 category（如
+            "technical"），否则多个 analyst 合并后 id 都从 evidence-001 开始、
+            发生跨 analyst 重复（T4）。id 形如 ``f"{id_prefix}-{counter:03d}"``。
 
     过滤规则：
     - 跳过原始工具参数（exchange, symbol, interval 等）
@@ -200,7 +206,7 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
         if result.status == "error":
             evidence.append(
                 Evidence(
-                    id=f"evidence-{counter:03d}",
+                    id=f"{id_prefix}-{counter:03d}",
                     source_tool=result.tool,
                     domain="unknown",
                     metric="tool_status",
@@ -238,7 +244,7 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
                 if summary.get("count", 0) > 0:
                     evidence.append(
                         Evidence(
-                            id=f"evidence-{counter:03d}",
+                            id=f"{id_prefix}-{counter:03d}",
                             source_tool=result.tool,
                             domain="crypto",
                             metric="candle_summary",
@@ -269,7 +275,7 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
 
                 evidence.append(
                     Evidence(
-                        id=f"evidence-{counter:03d}",
+                        id=f"{id_prefix}-{counter:03d}",
                         source_tool=result.tool,
                         domain=result.normalized[0].domain if result.normalized else "unknown",
                         metric=metric,
@@ -291,7 +297,7 @@ def build_evidence(results: list[ToolResult]) -> list[Evidence]:
                     for metric, value in snapshot_summary.items():
                         evidence.append(
                             Evidence(
-                                id=f"evidence-{counter:03d}",
+                                id=f"{id_prefix}-{counter:03d}",
                                 source_tool=result.tool,
                                 domain="crypto",
                                 metric=metric,
