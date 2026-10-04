@@ -57,6 +57,12 @@ class MarketAnalystNode:
             "exchanges_market_exchanges_get",
             "health_health_get",
             "health_market_health_get",
+            # —— T8：搜索 / 新闻 / 龙虎榜 / 港股内部聚合，本就不依赖 A 股 symbol ——
+            "news_search",
+            "search_xueqiu_search_get",
+            "longhu_xueqiu_longhu_get",
+            "internal_hk_northbound",
+            "internal_hk_index",
         ]
     )
 
@@ -196,7 +202,8 @@ class MarketAnalystNode:
                 if stocks:
                     arguments["symbol"] = ";".join(stocks)
                 else:
-                    logger.debug("%s skipping %s (no symbol)", self.category, tool_key)
+                    # T8：跳过必须可见（旧实现是 debug，功能没跑却看不出）。
+                    logger.warning("%s 跳过 %s（缺少 symbol 且问题中无 6 位代码）", self.category, tool_key)
                     continue
 
             results.append(await self._runtime.execute(meta.tool_name, arguments, called_signatures))
