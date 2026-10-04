@@ -89,17 +89,30 @@ def _extract_candle_summary_from_metrics(
 
     candles = sorted(candle_groups.values(), key=lambda c: c.get("t", 0))
 
-    prices = []
+    # T7：每根 K 线只取**一个**收盘价，按 c/close/last/price 优先级取第一个存在的键；
+    # h/l 仅用于区间高低点，不参与 price_last。旧实现把 o/h/l/c 全部 append，
+    # price_last=prices[-1] 会取到开盘价（真实最新收盘被覆盖）。
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
     volumes = []
     timestamps = []
 
     for candle in candles:
-        for price_key in ("c", "close", "price", "last", "h", "l", "o"):
+        close: float | None = None
+        for price_key in ("c", "close", "last", "price"):
             if price_key in candle and candle[price_key] is not None:
                 try:
-                    prices.append(float(candle[price_key]))
+                    close = float(candle[price_key])
+                    break
                 except (ValueError, TypeError):
                     pass
+        if close is None:
+            continue
+        closes.append(close)
+        # 高/低点优先取 h/l，缺失时退化为该根收盘。
+        highs.append(float(candle["h"]) if candle.get("h") is not None else close)
+        lows.append(float(candle["l"]) if candle.get("l") is not None else close)
 
         if "v" in candle and candle["v"] is not None:
             try:
@@ -112,11 +125,12 @@ def _extract_candle_summary_from_metrics(
 
     summary: dict[str, Any] = {"count": len(candles)}
 
-    if prices:
-        summary["price_min"] = min(prices)
-        summary["price_max"] = max(prices)
-        summary["price_last"] = prices[-1]
-        summary["price_range"] = f"{min(prices):.2f} - {max(prices):.2f}"
+    if closes:
+        summary["price_min"] = min(lows)
+        summary["price_max"] = max(highs)
+        # price_last 明确取**最后一根的收盘价**。
+        summary["price_last"] = closes[-1]
+        summary["price_range"] = f"{min(lows):.2f} - {max(highs):.2f}"
 
     if volumes:
         summary["volume_total"] = sum(volumes)
@@ -257,7 +271,9 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                         )
                     )
                     counter += 1
-                continue  # 不再添加单个 candle 指标
+                # T7：不再 continue——混合型 payload 里的非 K 线指标（如
+                # openInterest）必须照常写入；单个 candle 指标已聚合进 summary，
+                # valid_metrics 本就不含 candle 项，不会重复添加。
 
             # 添加其他有效指标
             for metric, value in valid_metrics:
