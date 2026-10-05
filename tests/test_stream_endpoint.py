@@ -271,3 +271,67 @@ def test_stream_converts_toolresult_objects_to_dicts(monkeypatch):
     for tr in final["tool_results"]:
         assert isinstance(tr, dict), f"tool_results 元素应为 dict，实际 {type(tr)}"
     assert final["tool_results"][0]["tool"] == "quote_tencent_quote_get"
+
+
+# ------------------------------------------------------------------ #
+# T26：端点层错误分支可达 + pump 任务收尸
+# ------------------------------------------------------------------ #
+
+
+def test_stream_graph_build_failure_returns_500(monkeypatch):
+    """_ensure_graph 失败必须在 HTTP 层就是 500。
+
+    旧实现 try 里只有 return StreamingResponse(...)，generator 体到响应
+    开始后才执行——图构建失败表现为 200 + SSE error 事件；前端只在非 2xx
+    时回退 /api/ask，于是永远拿不到失败信号。"""
+
+    def boom():
+        raise RuntimeError("graph build failed")
+
+    monkeypatch.setattr(main, "_orchestrator", SimpleNamespace(_ensure_graph=boom))
+    _use_budget(monkeypatch, seconds=30)
+
+    resp = _client().post("/api/ask/stream", json={"question": "q"})
+    assert resp.status_code == 500
+    assert "graph build failed" in resp.json()["detail"]
+
+
+class _PumpBoom(BaseException):
+    """绕过 _pump 的 ``except Exception``（BaseException 不被捕获），
+    制造"pump 任务以异常告终"的场景。"""
+
+
+class BoomFakeGraph:
+    async def astream(self, input_state, stream_mode=None, config=None):
+        raise _PumpBoom("pump exploded")
+        yield "values", {}  # unreachable —— 仅为使本函数成为 async generator
+
+
+def test_stream_pump_crash_does_not_leak_unretrieved_task_warning(monkeypatch, caplog):
+    """pump 任务以异常告终后，finally 必须 await 收尸（T26）。
+
+    场景：pump 已带异常结束，客户端断开连接（generator 被 aclose()）——
+    旧实现 finally 只 ``if not task.done(): task.cancel()``，异常无人检索，
+    任务被 GC 时事件循环打 ``Task exception was never retrieved``。
+
+    注意**不能**走预算超时的全量消费路径：deadline 分支里的
+    ``task.cancel()`` 恰好会清掉 Future 的"未检索"标记、把问题掩盖掉
+    （实测如此），那条路径下新旧实现都不发警告。"""
+    import asyncio
+    import gc
+    import logging
+
+    _use_fake_graph(monkeypatch, BoomFakeGraph())
+    _use_budget(monkeypatch, seconds=0.5, heartbeat=0.1)
+
+    async def consume_one_chunk_then_disconnect():
+        gen = main._stream_research("q", None, conversation_id=None)
+        chunk = await gen.__anext__()  # 第一个心跳 progress 块；此刻 pump 已带异常结束
+        await gen.aclose()  # 客户端断开 → GeneratorExit 直达 finally
+        return chunk
+
+    with caplog.at_level(logging.ERROR, logger="asyncio"):
+        asyncio.run(consume_one_chunk_then_disconnect())
+        gc.collect()  # 未检索异常的 task 在 __del__ 时必然发 ERROR
+
+    assert "Task exception was never retrieved" not in caplog.text

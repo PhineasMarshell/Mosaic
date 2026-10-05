@@ -398,6 +398,10 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
     finally:
         if not task.done():
             task.cancel()
+        # T26：cancel 之后必须 await 收尸——task 若以异常告终而无人检索，
+        # 事件循环会在 GC 时打 "Task exception was never retrieved"；
+        # 顺带保证收尾是确定性的（取消真正落地，而不是留给循环异步处理）。
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def _get_step_message(step: str) -> str:
@@ -415,17 +419,23 @@ def _get_step_message(step: str) -> str:
 @app.post("/api/ask/stream")
 async def ask_stream(request: dict):
     """SSE streaming Ask endpoint — returns real-time research progress."""
+    # T26：_parse_ask_payload 留在 try 外——它抛的是 HTTPException(400)，
+    # 放进 try 会被下面的 except Exception 改写成 500。
     question, domain, conversation_id = _parse_ask_payload(request, "POST /api/ask/stream")
 
     try:
         logger.info("Streaming question: %s domain=%s conv_id=%s", question[:50], domain, conversation_id)
+        # T26：把会失败的工作**提前**到返回 StreamingResponse 之前。以前 try 里
+        # 只有 return StreamingResponse(...)，async generator 体要到响应开始后
+        # 才执行，except 分支永远不可达——图构建失败表现为 200 + SSE error 事件，
+        # 而前端只在非 2xx 时回退 /api/ask，于是永远拿不到失败信号。
+        orchestrator = _get_orchestrator()
+        orchestrator._ensure_graph()
         return StreamingResponse(
             _stream_research(question, domain, conversation_id=conversation_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Internal error during streaming research")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
