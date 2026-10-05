@@ -27,6 +27,19 @@ dev = [
     "ruff>=0.6",
 ]
 
+# T37: 本仓库是 flat-layout 多顶层目录（app 与 memory 都是顶层目录），
+# setuptools 自动发现会因 "Multiple top-level packages" 直接拒绝构建，
+# editable 与 wheel 安装都装不上。显式声明只打包 app*。
+# memory/ 是简报 JSON 数据目录（memory/morning、memory/evening），不是包，不参与打包。
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["memory*", "tests*", "scripts*"]
+
+# app/main.py 的 INDEX（GET / 的 FileResponse）在运行时读 app/web/index.html，
+# 非 editable 安装（wheel）默认只带 .py，必须显式声明这个资源。
+[tool.setuptools.package-data]
+"app.web" = ["index.html"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
