@@ -33,8 +33,8 @@ class _NoGatewayRuntime:
     """
 
     def __init__(self):
-        self.sessions = 0   # 当前并发深度（进出相抵）
-        self.entered = 0    # 累计进入次数（只增，供事后断言）
+        self.sessions = 0  # 当前并发深度（进出相抵）
+        self.entered = 0  # 累计进入次数（只增，供事后断言）
 
     @asynccontextmanager
     async def gateway_session(self):
