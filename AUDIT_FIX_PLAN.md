@@ -1,8 +1,8 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
 > **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
-> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 / S4 / S5 / S6 / S7 均已由执行方完成、主 Agent 已独立验收通过**
-> （S1–S6 见 §0.4 的 "S1–S6 验收复核记录"；S7 见 §0.4 的 "S7 验收复核记录"——含 2 处声明偏差的更正）。
+> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 / S4 / S5 / S6 / S7 / S8 均已由执行方完成、主 Agent 已独立验收通过；审计修复计划全部结束**
+> （S1–S6 见 §0.4 的 "S1–S6 验收复核记录"；S7 见 §0.4 的 "S7 验收复核记录"——含 2 处声明偏差的更正；S8 见 §0.4 的 "S8 验收复核记录"）。
 > S1 验收追加：**T18c**（并发串台，P1；已在 S2 修完）、**T37**（打包/CI flat-layout）、**T12b**（依赖清单漂移）。
 > S2 验收追加：**T19b**（假阳性用例）、**T23b**（预算起算点）—— 已在 S3 修完。
 > S3 验收追加：**T22b**（点分 metric 漏报）、**T22c**（前值跨 symbol 污染）—— 已在 S4 修完。
@@ -12,17 +12,17 @@
 > **S7 执行结论（执行方自记）**：T32 / T33 / T34（不含注册表条目，已并入 S4）/ T35 / T12b 全部完成，双模式 **506 passed + 0 skipped**，无新立任务；T35 的 conftest 约定与 `tests/test_conventions.py` 机械检查自 S7 起对所有新增/修改的测试文件生效。
 > **S7 验收结论：无新立任务**（5 个任务全部通过；T32 反向验证与声明精确一致，T33 的 A 方向实测 3 红、
 > 已在 §0.4 更正，T34② 标注为未改坏复跑；**双模式 506 passed + 0 skipped**，详见 §0.4 "S7 验收复核记录"）。
-> **S8 执行与收尾结论（执行方自记，待主 Agent 验收）**：T37 → T36 → 最终全量验收全部完成，
-> **双模式 520 passed + 0 skipped**（506 → T37 +4 → T36 +10），三道门禁全绿，
-> `pip install -e ".[dev]"` 在最终提交状态实跑成功。**移交主 Agent 裁决 1 条**：T36 查实
-> `MarketMemory.get_context_for_question` 无生产调用方（README 原先承诺"Reasoning 自动注入 7 天
-> Market State"不成立），已把文档改准但**未擅自接线**——见 §0.4 "S8 执行记录"。
+> **S8 验收结论：通过，无新立任务**（T37/T36 全部通过；T37 的 `pip install -e ".[dev]"` 与
+> `pip wheel` 产物由主 Agent 独立实跑复现；T36 的文档真值（40 个工具 / 上限 80 / 无生产调用方）
+> 独立核验；唯一待裁决项 `get_context_for_question` 经仓库主人裁决**删除**（提交 `d6d03c9`），
+> 最终 **517 passed + 0 skipped**，详见 §0.4 "S8 验收复核记录"）。
 > 另把四条"测试假阳性/反向验证"教训汇总进了 **§4 的 T35**（做 conftest 约定时一并落地）。
 > **行号基准**：`44c307f`（S1/S2 的改动未影响未完成任务的锚点；`tool_runtime.py` 的
 > `execute`/`_do_execute`/`_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > 动手时以锚点片段 grep 为准）。若行号漂移，以「定位锚点」里的代码片段为准。
-> **当前 HEAD**：S8 任务提交链 = `19861fd`（T37）、`9ebd6a6`（T36），其后是 S8 收尾 chore；
-> 精确 hash 以 `git log --oneline -3` 为准，见 §0.4 "S8 执行记录"。
+> **当前 HEAD**：审计修复计划已全部结束——S8 任务提交链 = `19861fd`（T37）、`9ebd6a6`（T36），
+> 其后是 S8 收尾 chore（§0.4 定稿）、`d6d03c9`（删除 `get_context_for_question` 能力的验收裁决）
+> 与本条 S8 验收复核记录的 chore；精确 hash 以 `git log --oneline -3` 为准，见 §0.4 "S8 验收复核记录"。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -613,7 +613,7 @@
   另移交 S8/T36 一条线索：`app/agent/prompts.py:78` 与 `:89` 的 evidence id 示例仍是 `evidence-001`，
   与生产实际格式不一致。
 
-**S8 执行记录（打包与收尾，S8 会话自记，2026-10-05；待主 Agent 验收）**
+**S8 执行记录（打包与收尾，S8 会话自记，2026-10-05；已由主 Agent 验收，见下方"验收复核记录"）**
 
 - **开工基线自查**：`git status --porcelain` 为空、`git log --oneline -6` 与 §0.4 "S7 验收复核记录"
   对得上。**基线 HEAD 实为 `d47d398`**（开工指令写的 `2b4ea4a` 是 S7 收尾 chore，其后还有一条
@@ -696,6 +696,58 @@
 - **对 S8 之外的生效项**：`tests/test_conventions.py` 两条机械检查对本次两个新测试文件同样生效
   （两个文件都写了模块 docstring 声明 mock 范围；都没有整体替换节点 `__call__`），已随全量一起跑过。
 
+**S8 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
+
+- **通过**：读了 `19861fd`（T37）/ `9ebd6a6`（T36）/ `723df64`（§0.4 定稿 chore）三个提交的 diff；
+  提交链与 §0.4 记录一致（开工基线 `d47d398` 标注正确），`git status --porcelain` 干净，
+  全仓无 `PROJECT_STATUS.md`（未违反"不要再创建"）。
+- **三道门禁独立重跑（在 S8 三个提交状态）**：`ruff check --no-cache app/ tests/` → All checks passed!；
+  `ruff format --check --no-cache app/ tests/` → **106 files already formatted**；
+  `pytest -q`（默认 mcp）→ **520 passed, 1 warning**（11.50s）；`MARKET_GATEWAY_MODE=http pytest -q`
+  → **520 passed**（10.71s）。0 skipped 独立核查：`git grep -nE "pytest\.skip|pytest\.xfail|
+  @pytest\.mark\.(skip|xfail|skipif)" -- tests/ app/` → 0 命中。数字账 506 + 4（`test_packaging_config.py`）
+  + 10（`test_docs_contract.py`）= 520，收集数实测 14 条（4 + 10），步数与文件对得上。
+- **T37 ✓（不看声明，自己装、自己打 wheel）**：`pip install -e ".[dev]"` 实跑 exit 0
+  （`Successfully installed mosaic-market-intelligence-0.1.0`）；
+  `importlib.metadata.version("mosaic-market-intelligence")` = `0.1.0`；
+  `import app, memory, app.web` 正常，`app.main.INDEX` 指向 `D:\Mosaic\app\web\index.html`。
+  安装产物文件清单：113 条、`top_level.txt` = `app`、含 `app/web/index.html`、**memory 条目 0**。
+  另自跑 `pip wheel . --no-deps --no-cache-dir -w .tmp/wheeltest` → 产物
+  `mosaic_market_intelligence-0.1.0-py3-none-any.whl` **59 个条目、含 `app/web/index.html`、memory 条目 0**
+  —— 与提交声明的「59 个文件」精确一致，`package-data` 的必要性由此坐实（非 editable 场景确实需要）。
+  反向验证（`.tmp/verify_s8_acceptance.py`，逐项变异后立即还原）：
+  删 `[tool.setuptools.packages.find]` 段 → `test_packaging_config.py` **3 红**；
+  删 `[tool.setuptools.package-data]` 段 → **1 红**；新建未纳入 include 的根目录包
+  `probe_toplevel_pkg/__init__.py` → **1 红**（`test_include_covers_every_top_level_package` 真的会拦新增顶层包）；
+  全部还原后全量 520 passed、工作区干净。`.github/workflows/ci.yml` 未改、未拆 `src/` 布局（`git show` 核对）。
+- **T36 ✓（文档真值独立复核，不采信"实测"转述）**：`len(ALL_TOOLS)` = **40**（docstring 声明 40 正确）、
+  `app.research.evidence._MAX_EVIDENCE_ITEMS` = **80**；`get_context_for_question` 全仓只有定义处
+  `app/memory/storage.py` 与 3 条测试调用、**无任何生产调用方**（`app/research/reasoning.py` 无
+  memory/daily_state 引用）——执行方移交属实。反向验证：`app/agent/prompts.py` 的 `technical-001`
+  退回 `evidence-001` → 1 红；`tool_registry.py` docstring `所有 40 个` 退回 `所有 33 个` → 1 红；
+  README 追加 `~/.mosaic/memory/anomalies/` → 1 红。
+  一处**覆盖面细节**（非缺陷）：`test_docs_evidence_cap_matches_constant` 用
+  `re.search(r"硬上限\s*80", DOCS)` 对 architecture+README **拼接文本**搜索，所以只把
+  `docs/architecture.md` 改成 100 时 **0 红**（README 仍留着原话）；补测把**两份文件同时**改成 100
+  → `test_docs_evidence_cap_matches_constant` **1 红**（1 failed, 9 passed）→ 断言有效，
+  语义是"两份文档中至少一处记录该上限"。
+- **验收裁决项（已由仓库主人裁决并落地，非执行方扩权）**：`get_context_for_question` 无生产调用方，
+  仓库主人裁决**直接删除该能力**（而不是"文档注明未接入"或立新任务）。主 Agent 据此落地提交
+  `d6d03c9`（fix）：删 `app/memory/storage.py` 的 `get_context_for_question` 整个方法（含孤立分节头）
+  + `tests/test_market_memory.py` 的 `TestContextGeneration` 3 条用例；`storage.py` 模块 docstring 与
+  `get_memory()` docstring 里过时的「跨日上下文读取」一并更正；README 的 Market Memory 段改为指向
+  真实消费方 `app/scheduler/briefs.py`，并写明该注入从来没有生产调用方、已删除、不要再当成现存能力
+  （要接进 Reasoning 链路属新增运行时行为，需单独立任务）。验证：grep 只剩"记录删除原因"的说明文字、
+  无调用点；`hasattr(MarketMemory, "get_context_for_question")` = False、
+  `hasattr(..., "get_recent_states")` = True；跨日**快照读取**的覆盖未丢（`TestRecentStates` 的 4 条
+  `get_recent_states` 用例仍在）。
+- **最终状态（本次验收后的实测）**：`ruff check` 全绿、`ruff format --check` 106 files、
+  mcp 与 http 双模式 **517 passed + 0 skipped**（520 − 3 条被删用例）；`tests/test_docs_contract.py`
+  10 条无回退（含 mcp 区间、证据上限、四张表、旧路径不得出现等交叉断言）。
+- **S8 验收结论：通过，无新立任务。** 审计修复计划（S1–S8）到此全部完成：T37/T36 均通过独立复核，
+  唯一移交项已按仓库主人裁决收敛为"删除"，不再有待裁决项。剩余可选项（非任务）：
+  若将来要把 7 天 Market State 注入 Reasoning，应作为**新功能**单独立任务（含注入点、token 预算、测试）。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -714,7 +766,7 @@
 | **S5 请求生命周期** | ✅ **已完成并验收**：T24b（一行） → T21 → T26 → T25 | — | 见 §0.4 "S5 验收复核记录"（T25 的**浏览器手工验证已通过**，2026-10-05） | `492 passed + 2 skipped`（双模式）；5 个提交；**无新立任务** |
 | **S6 测试有效性（上）** | ✅ **已完成并验收**：T28 → T29 → T30（含 D4 budget）→ T31 | — | 见 §0.4 "S6 验收复核记录" | `499 passed + 0 skipped`（双模式）；4 个提交；**无新立任务** |
 | **S7 测试有效性（下）** | ✅ **已完成并验收**：T32 → T33 → T34（不含注册表条目，已并入 S4 的 T24）→ T35 → T12b | — | 见 §0.4 "S7 执行记录" + "S7 验收复核记录"（T33 的 A 方向条数已更正） | `506 passed + 0 skipped`（双模式）；5 个任务提交 + 2 个 §0.4 chore；**无新立任务** |
-| **S8 打包与收尾** | ✅ **执行方完成，待主 Agent 验收**：T37 → T36 → 最终全量验收 | — | 见 §0.4 "S8 执行记录"（含 1 条移交主 Agent 裁决项：`get_context_for_question` 无生产调用方） | `520 passed + 0 skipped`（双模式）；`pip install -e ".[dev]"` 最终状态实跑通过；2 个任务提交 + 1 个 §0.4 chore；**1 条待裁决** |
+| **S8 打包与收尾** | ✅ **已完成并验收**：T37 → T36 → 最终全量验收 | — | 见 §0.4 "S8 执行记录" + "S8 验收复核记录"（唯一移交项经仓库主人裁决为**删除** `get_context_for_question`，落地于 `d6d03c9`） | `pip install -e ".[dev]"` 与 `pip wheel` 产物经主 Agent 独立复现；最终 **517 passed + 0 skipped**（双模式）；2 个任务提交 + 1 个 §0.4 定稿 chore + 1 个裁决落地提交 + 1 个验收 chore；**无新立任务** |
 
 **硬性顺序约束（不要打乱）**：
 1. **S1 必须最先**（✅ 已完成并验收）；S2 ✅、S3 ✅、S4 ✅、S5 ✅。
