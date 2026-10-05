@@ -242,9 +242,24 @@ class ReasoningEngine:
         # 裸 ValidationError 是 ValueError 的子类，会被 HTTP 层的 except ValueError
         # 兜成 400「你的请求有问题」—— 把上游模型的毛病甩锅给客户端。
         try:
+            # T20：market_state / what_happened 缺失或为 null → 置空 + 写 data_caveats，
+            # 不允许静默变成一份看似正常的报告（模型层已给默认值，这里是双保险）。
+            data_caveats = _ensure_list(payload.get("data_caveats"))
+            for key in ("market_state", "what_happened"):
+                if not str(payload.get(key) or "").strip():
+                    payload[key] = ""
+                    data_caveats.append(f"模型未给出 {key}，已置空")
+            payload["data_caveats"] = data_caveats
+
             # Ensure arrays are actually lists
-            for key in ("why", "strong_areas", "what_changed", "what_matters", "risks", "data_caveats"):
+            for key in ("why", "strong_areas", "what_changed", "what_matters", "risks"):
                 payload[key] = _ensure_list(payload.get(key))
+
+            # D3/D4：anomalies 最终由 build_response_from_state 用 detect_anomalies 填，
+            # 模型给的条目不会进入最终报告；这里只把形状规范成 list[dict]——
+            # 模型写 anomalies: "文本" / 123 之类的标量会把整份报告炸成 LLMOutputError
+            # （list[dict[str, Any]] 校验不过），重演 T20 的"一个字段毁掉整份报告"。
+            payload["anomalies"] = [a for a in _ensure_list(payload.get("anomalies")) if isinstance(a, dict)]
 
             # Process evidence with backward compatibility
             raw_evidence = payload.get("evidence", [])

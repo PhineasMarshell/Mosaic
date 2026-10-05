@@ -501,3 +501,99 @@ class TestReasoningFindingsInPrompt:
         prompt = captured_prompts[0]
         assert "[失败]" in prompt
         assert "分析失败: timeout" in prompt
+
+
+# ── T20：必填字段缺失不再毁掉整份报告 + D3：anomalies 由代码填 ──────
+
+
+def _stub_reasoning_engine(content):
+    """照 tests/test_data_integrity.py 的 _stub_reasoning 模式：真调 reason()。"""
+    from types import SimpleNamespace
+
+    from app.config import Settings
+    from app.research.reasoning import ReasoningEngine
+
+    engine = ReasoningEngine(Settings())
+
+    async def create(**kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content), finish_reason="stop")]
+        )
+
+    engine.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    return engine
+
+
+@pytest.mark.asyncio
+async def test_missing_required_fields_degrade_with_caveats():
+    """模型 payload 缺 market_state / what_happened → 仍产出 report，
+    字段置空且 data_caveats 说明降级（旧实现：ValidationError → report=None）。"""
+    engine = _stub_reasoning_engine(
+        '{"title":"t","state_label":"sl","why":[],"strong_areas":[],'
+        '"what_changed":[],"what_matters":[],"risks":[],"data_caveats":[],'
+        '"confidence":"low","used_tools":[],"evidence":[]}'
+    )
+    report = await engine.reason("q", [], [])
+
+    assert report is not None
+    assert report.market_state == ""
+    assert report.what_happened == ""
+    assert any("market_state" in c for c in report.data_caveats)
+    assert any("what_happened" in c for c in report.data_caveats)
+
+
+@pytest.mark.asyncio
+async def test_null_required_fields_degrade_with_caveats():
+    """模型写 null 同样要降级，不许静默。"""
+    engine = _stub_reasoning_engine(
+        '{"title":"t","market_state":null,"what_happened":null,"state_label":"sl",'
+        '"why":[],"strong_areas":[],"what_changed":[],"what_matters":[],"risks":[],'
+        '"data_caveats":[],"confidence":"low","used_tools":[],"evidence":[]}'
+    )
+    report = await engine.reason("q", [], [])
+    assert report is not None
+    assert report.market_state == ""
+    assert any("market_state" in c for c in report.data_caveats)
+
+
+@pytest.mark.asyncio
+async def test_model_anomalies_scalar_does_not_crash_report():
+    """模型把 anomalies 写成标量 → 不再炸成 LLMOutputError（D3：代码填，模型条目丢弃）。"""
+    engine = _stub_reasoning_engine(
+        '{"title":"t","market_state":"s","what_happened":"w","state_label":"sl",'
+        '"why":[],"strong_areas":[],"what_changed":[],"what_matters":[],"risks":[],'
+        '"data_caveats":[],"confidence":"low","used_tools":[],"evidence":[],'
+        '"anomalies":"模型作文"}'
+    )
+    report = await engine.reason("q", [], [])
+    assert report is not None
+    assert report.anomalies == []
+
+
+async def test_build_response_fills_anomalies_from_code(monkeypatch):
+    """D3：report.anomalies 由 detect_anomalies 产出（基于 state["results"]），
+    模型给的 anomalies 被覆盖。"""
+    from app.models.market import NormalizedDatum, ToolResult
+    from app.models.response import MarketIntelligence, build_response_from_state
+
+    prev = ToolResult(
+        tool="d", arguments={}, status="success",
+        normalized=[NormalizedDatum(metric="openInterest", value=1e9, tool="d")],
+    )
+    curr = ToolResult(
+        tool="d", arguments={}, status="success",
+        normalized=[NormalizedDatum(metric="openInterest", value=1.2e9, tool="d")],
+    )
+    report = MarketIntelligence(
+        market_state="s",
+        what_happened="w",
+        anomalies=[{"id": "model-made", "severity": 1}],
+    )
+    state = {"report": report, "results": [prev, curr], "domain": "crypto"}
+
+    response = build_response_from_state(state, question="q")
+
+    assert response.report is not None
+    assert response.report.anomalies, "OI +20% 应触发异常，anomalies 不应为空"
+    assert response.report.anomalies[0]["severity"] == "critical"
+    assert all(a["id"] != "model-made" for a in response.report.anomalies)

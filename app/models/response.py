@@ -2,6 +2,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.detector.anomaly import detect_anomalies
+
 
 class EvidenceItem(BaseModel):
     """单条证据。"""
@@ -20,9 +22,12 @@ class EvidenceItem(BaseModel):
 
 class MarketIntelligence(BaseModel):
     title: str = "今日市场情报"
-    market_state: str
+    #: T20：允许为空（旧实现必填）——模型少写一个字段就把整份报告（连同此前
+    #: 所有已付费的工具调用）变成 ValidationError → report=None。缺失时由
+    #: reasoning 归一化写入 data_caveats 说明降级，不允许静默变成正常报告。
+    market_state: str = ""
     state_label: str = "Unknown"
-    what_happened: str
+    what_happened: str = ""
     why: list[str] = Field(default_factory=list)
     evidence: list[EvidenceItem] = Field(default_factory=list)
     strong_areas: list[str] = Field(default_factory=list)  # What's Moving — PRD §26
@@ -75,6 +80,22 @@ def build_response_from_state(
     if report is None and not errors:
         # 保证 report 为空时调用方手里一定有一条可展示的原因，而不是只有空报告。
         errors.append("reasoning produced no report")
+
+    # D3：anomalies 由代码用 detect_anomalies 填（同步 / SSE 双路径共用此组装点），
+    # 不依赖模型输出——模型即使填了也在这里被覆盖，避免双写。
+    if report is not None:
+        try:
+            anomalies = detect_anomalies(
+                state.get("results") or [],
+                domain=state.get("domain") or "unknown",
+            )
+            if isinstance(report, dict):
+                report["anomalies"] = [a.to_dict() for a in anomalies]
+            else:
+                report.anomalies = [a.to_dict() for a in anomalies]
+        except Exception as exc:
+            # 检测失败不能静默：报告照常产出，但错误必须可见（规则 6）
+            errors.append(f"Anomaly detection failed: {exc}")
 
     return ResearchResponse(
         question=question,
