@@ -26,15 +26,36 @@ def _make_state(**overrides) -> ResearchState:
 
 
 class FakeOpenAI:
-    """伪造 AsyncOpenAI —— 返回预设的 JSON 字符串。"""
+    """伪造 AsyncOpenAI —— 返回预设的 JSON 字符串。
 
-    def __init__(self, return_text: str = "", raise_on: Exception | None = None):
+    T34：``raise_on`` 对任何输入都抛（用例只能测到 mock 自己的行为）。
+    需要验证"某个输入真的流经了 planner"时用 ``raise_on_prompt``（仅在
+    user prompt 含指定子串时抛错），并用 ``last_prompt`` 断言 prompt 组装。
+    """
+
+    def __init__(
+        self,
+        return_text: str = "",
+        raise_on: Exception | None = None,
+        raise_on_prompt: str | None = None,
+    ):
         self.return_text = return_text
         self.raise_on = raise_on
+        self.raise_on_prompt = raise_on_prompt
+        self.last_prompt: str | None = None
 
     async def create(self, *args, **kwargs):
+        messages = kwargs.get("messages")
+        if messages is None and args:
+            messages = args[0]
+        if isinstance(messages, list):
+            self.last_prompt = "\n".join(
+                m.get("content", "") for m in messages if isinstance(m, dict) and m.get("role") == "user"
+            )
         if self.raise_on:
             raise self.raise_on
+        if self.raise_on_prompt and self.last_prompt and self.raise_on_prompt in self.last_prompt:
+            raise LLMOutputError(f"prompt contains {self.raise_on_prompt!r}")
         msg = types.SimpleNamespace(content=self.return_text)
         choice = types.SimpleNamespace(message=msg)
         return types.SimpleNamespace(choices=[choice])
@@ -145,15 +166,36 @@ async def test_supervisor_step_limit():
 
 @pytest.mark.asyncio
 async def test_supervisor_empty_question_errors():
-    """空 question 仍会调用 planner → errors 记录。"""
-    openai = FakeOpenAI(raise_on=ValueError("empty question"))
+    """空 question 仍会调用 planner（问题真的进入 prompt）→ LLM 失败记 errors。
+
+    T34：旧版 FakeOpenAI(raise_on=...) 对任何输入都抛 —— "planner 是否被
+    调用"无从区分（探针实测：把生产改成"空问题跳过 planner 直接写 errors"，
+    旧用例照样绿）。改为按 prompt 条件抛错 + 非空 question 对照。
+    """
+    plan_json = """{
+        "intent": {"domain": "a_share", "task": "market_summary", "time_scope": "today", "question": "q"},
+        "steps": []
+    }"""
+    # "用户问题：\n\n" 只在 question 为空时出现在 prompt 里（模板为"用户问题：\n{question}\n"）
+    openai = FakeOpenAI(return_text=plan_json, raise_on_prompt="用户问题：\n\n")
 
     settings = Settings()
     node = SupervisorNode(settings)
     _patch_client(node, openai)
 
+    # 空 question：planner 真的被调用（问题段为空 → fake 抛错）→ errors 记录，不炸图
     result = await node(_make_state(question=""))
     assert "errors" in result
+    assert "routing failed" in result["errors"][0].lower()
+    assert openai.last_prompt is not None, "空 question 也必须真的流经 planner（prompt 组装）"
+
+    # 对照（非空 question）：同一个 fake 不抛 → 正常产出 intent、无 errors，且问题进入 prompt
+    openai.last_prompt = None
+    result2 = await node(_make_state(question="今天A股发生了什么？"))
+    assert "intent" in result2
+    assert result2["intent"].domain == "a_share"
+    assert "今天A股发生了什么？" in (openai.last_prompt or "")
+    assert not result2.get("errors")
 
 
 # ------------------------------------------------------------------ #

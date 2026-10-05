@@ -51,21 +51,33 @@ class _NoGatewayRuntime:
 
 @pytest.fixture()
 def mock_runtime(monkeypatch):
-    """用同步调用伪造 ToolRuntime.execute，避免真实网络请求。"""
+    """用类补丁伪造 ToolRuntime.execute / truncate，避免真实网络请求。
+
+    T34：旧 fake_execute 缺 ``self`` —— 类补丁一旦真被触发，tool_name 收到的
+    是 runtime 实例（静默错位成垃圾记录，探针实测）；且当时仅有的两个消费
+    用例一个不执行任何工具、一个用本地 FakeRuntime 整体替换了 ``_runtime``，
+    fixture 完全空转。现在补上 self、补齐生产消费的属性集（build_evidence /
+    _make_digest / _cache_info），并让 test_execute_skips_non_whitelist_no_stock
+    真正以本 fixture 的记录为断言来源（不再被实例替换架空）。
+    """
     results = []
 
-    async def fake_execute(tool_name, arguments, called_signatures, deadline=None):
+    async def fake_execute(self, tool_name, arguments, called_signatures, deadline=None):
         result = types.SimpleNamespace(
             tool=tool_name,
             arguments=arguments,
             status="success",
             normalized=[],
             error=None,
+            _cache_info=None,
+            raw=None,
+            partial=False,
         )
         results.append(result)
         return result
 
     monkeypatch.setattr("app.graph.nodes.analysts.base.ToolRuntime.execute", fake_execute)
+    monkeypatch.setattr("app.graph.nodes.analysts.base.ToolRuntime.truncate", lambda self, r: None)
     return results
 
 
@@ -103,8 +115,12 @@ def test_by_category_tools_have_required_attributes():
 
 
 @pytest.mark.asyncio
-async def test_analyst_with_no_matching_tools_returns_empty(node: MarketAnalystNode, mock_runtime):
-    """category 未匹配 → 不执行任何工具 → results=[]，findings 标记 failed=False。"""
+async def test_analyst_with_no_matching_tools_returns_empty(node: MarketAnalystNode):
+    """category 未匹配 → 不执行任何工具 → results=[]，findings 标记 failed=False。
+
+    T34：旧版多带了个 mock_runtime 参数，但本用例按构造不执行任何工具，
+    该 fixture 从未被触到（空转参数），已移除。
+    """
     result = await node({})
     assert isinstance(result["results"], list)
     assert result["results"] == []
@@ -342,37 +358,17 @@ def test_build_arguments_no_symbol_for_whitelist_tools():
     assert args == {}
 
 
-async def test_execute_skips_non_whitelist_no_stock(mock_runtime, monkeypatch):
-    """白名单外的工具 + 无 stock codes → 应被跳过不执行。"""
-    import types
+async def test_execute_skips_non_whitelist_no_stock(mock_runtime):
+    """白名单外的工具 + 无 stock codes → 应被跳过不执行。
 
-    from app.config import Settings
-
+    T34：旧版请求了 mock_runtime fixture 却又用本地 FakeRuntime 整体替换
+    ``node._runtime`` —— 类补丁从未被触到，fixture 完全空转（探针实测：
+    把类补丁换成"一触即炸"两个用例都不炸）。现在不再替换实例：走真实
+    ToolRuntime 实例（__init__ 创建）+ fixture 的类补丁 execute/truncate，
+    断言直接消费 fixture 的记录 —— 白名单跳过逻辑回归或打桩失联都会红。
+    """
     settings = Settings()
     node = _TestAnalyst(settings)
-    executed_tools: list[str] = []
-
-    # Mock at instance level — __init__ already set self._runtime = ToolRuntime(settings),
-    # so we replace the instance attribute rather than trying to patch the global class.
-    class FakeRuntime(_NoGatewayRuntime):
-        async def execute(self, tool_name, arguments, sig, deadline=None):
-            executed_tools.append(tool_name)
-            return types.SimpleNamespace(
-                tool=tool_name,
-                arguments=arguments,
-                status="success",
-                normalized=[],
-                error=None,
-                _cache_info=None,
-                raw=None,
-                partial=False,
-            )
-
-        @staticmethod
-        def truncate(r):
-            pass
-
-    node._runtime = FakeRuntime()
 
     # route 分配 technical 类工具：sentiment / limit_up_count（白名单）+ detail / quote（非白名单）
     state = {
@@ -394,16 +390,14 @@ async def test_execute_skips_non_whitelist_no_stock(mock_runtime, monkeypatch):
     result = await node(state)
 
     assert isinstance(result["results"], list)
-    executed_set = set(executed_tools)
+    executed = [r.tool for r in mock_runtime]
     # sentiment / limit_up 系列是白名单工具 → 应被执行（不依赖 symbol）
-    assert any("sentiment" in t for t in executed_tools), f"预期执行 sentiment，但执行了: {executed_tools}"
-    assert any("limit_up_count" in t for t in executed_tools), f"预期执行 limit_up_count，但执行了: {executed_tools}"
+    assert any("sentiment" in t for t in executed), f"预期执行 sentiment，但执行了: {executed}"
+    assert any("limit_up_count" in t for t in executed), f"预期执行 limit_up_count，但执行了: {executed}"
     # detail / quote / overview 不是白名单，且问题中无股票代码 → 应被跳过
-    assert "detail_eastmoney_detail_get" not in executed_set, f"预期跳过 detail，但执行了: {executed_tools}"
-    assert "overview_eastmoney_overview_get" not in executed_set, (
-        f"预期跳过 overview（数据量过大），但执行了: {executed_tools}"
-    )
-    assert "quote_tencent_quote_get" not in executed_set, f"预期跳过 quote，但执行了: {executed_tools}"
+    assert not any("detail" in t for t in executed), f"预期跳过 detail，但执行了: {executed}"
+    assert not any("overview" in t for t in executed), f"预期跳过 overview（数据量过大），但执行了: {executed}"
+    assert not any("quote" in t for t in executed), f"预期跳过 quote，但执行了: {executed}"
     # T18T：显式断言无错误 —— 将来任何"被兜底 except 吞掉"的回归都会以此变红，
     # 而不是变成难懂的 KeyError: 'results'
     assert result.get("errors") == []
