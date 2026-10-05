@@ -58,35 +58,62 @@ class ToolRuntime:
         # 子进程 + 握手 + list_tools，一轮 12 个工具就是 12 次。
         self._gateway = None
         self._available_tools: set[str] | None = None
+        # T18b：gateway_session 只标记"会话打开"，连接由 _ensure_gateway 按需建立。
+        # 旧实现在会话进入时就连接——只用内部工具（news_search / hk）的 analyst
+        # 也会白付一次 spawn + 握手，且网关不可用时整个 analyst 直接失败。
+        self._in_session = False
 
     @asynccontextmanager
     async def gateway_session(self):
         """在 analyst 一次运行（一个节点调用）内复用同一个 Gateway 客户端。
 
         用法：``async with runtime.gateway_session(): ... execute(...) ...``。
-        首次进入时创建并连接客户端、解析可用工具集；退出（含异常）时关闭。
+        进入时**只标记会话**、不连接；首个需要 Gateway 的工具调用触发
+        ``_ensure_gateway`` 建连并解析可用工具集。只执行内部工具的 analyst
+        因此完全不碰 Gateway。退出（含异常）时若已建连则关闭。可重入。
         未在会话内直接调 execute() 仍走旧的逐次新建路径（兼容单工具调用方）。
         """
-        if self._gateway is not None:
+        if self._in_session:  # 可重入
             yield self._gateway
             return
-
-        gateway = self._gateway_class()(self.settings)
-        self._gateway = gateway
+        self._in_session = True
         try:
-            await gateway.__aenter__()
+            yield self._gateway  # 进入时是 None，由 _ensure_gateway 按需建立
+        finally:
+            self._in_session = False
+            await self._close_gateway()
+
+    async def _ensure_gateway(self):
+        """按需创建并连接 Gateway 客户端，解析可用工具集。
+
+        ``__aenter__`` 失败时把 ``self._gateway`` 复位为 None 并把异常抛出去，
+        不吞成默认值；失败路径由 T12 的 ``mcp_client.close()`` 自清理。
+        """
+        if self._gateway is None:
+            gateway = self._gateway_class()(self.settings)
+            self._gateway = gateway
+            try:
+                await gateway.__aenter__()
+            except Exception:
+                self._gateway = None
+                raise
             if self.settings.market_gateway_mode.lower() == "mcp":
                 self._available_tools = {tool.name for tool in gateway.tools}
             else:
                 self._available_tools = {t.tool_name for t in self._http_allowed_tools()}
-            yield gateway
-        finally:
-            self._gateway = None
-            self._available_tools = None
-            try:
-                await gateway.__aexit__(None, None, None)
-            except Exception as exc:
-                logger.warning("Gateway client close failed: %s", exc)
+        return self._gateway
+
+    async def _close_gateway(self):
+        """关闭按需建立的 Gateway 客户端（未建连则无事发生）。"""
+        gateway = self._gateway
+        self._gateway = None
+        self._available_tools = None
+        if gateway is None:
+            return
+        try:
+            await gateway.__aexit__(None, None, None)
+        except Exception as exc:
+            logger.warning("Gateway client close failed: %s", exc)
 
     # ------------------------------------------------------------------ #
     # 公共 API                                                            #
@@ -176,16 +203,18 @@ class ToolRuntime:
 
     async def _do_execute(self, tool_name: str, arguments: dict) -> ToolResult:
         """单次工具调用的核心逻辑。"""
-        # 内部工具直连（不走 Gateway）
+        # 内部工具直连（不走 Gateway）—— 必须在会话分支之前 return，
+        # 只用内部工具的 analyst 不得触发建连（T18b）
         meta = resolve_tool_by_name(tool_name)
         if getattr(meta, "http_method", None) == "INTERNAL":
             return await self._execute_internal(tool_name, arguments)
 
-        # T18：gateway_session 打开期间复用已连接的客户端
-        if self._gateway is not None:
-            return await self._call_gateway(self._gateway, self._available_tools or set(), tool_name, arguments)
+        # T18：gateway_session 打开期间复用同一个客户端；T18b：按需建连
+        if self._in_session:
+            gateway = await self._ensure_gateway()
+            return await self._call_gateway(gateway, self._available_tools, tool_name, arguments)
 
-        gateway_cls = self._gateway_class()
+        gateway_cls = self._gateway_class()  # 会话外：保持旧的逐次新建路径
         async with gateway_cls(self.settings) as gateway:
             return await self._call_gateway(gateway, None, tool_name, arguments)
 

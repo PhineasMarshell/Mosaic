@@ -101,3 +101,116 @@ async def test_gateway_closed_on_tool_exception():
     assert FakeGateway.exited == 1
     assert out["findings"][0]["failed"] is True
     assert any("technical analysis failed" in e for e in out["errors"])
+
+
+# ------------------------------------------------------------------ #
+# T18b 回归：gateway_session 按需连接                                   #
+# ------------------------------------------------------------------ #
+
+
+def _news_only_state():
+    return {
+        "question": "最近有什么新闻",
+        "route": [
+            {
+                "analyst": "technical",
+                "budget": 1,
+                "tool_calls": [
+                    {"tool_key": "news_search", "arguments": {"query": "q"}},
+                ],
+            }
+        ],
+    }
+
+
+def _mixed_state():
+    return {
+        "question": "贵州茅台600519怎么样",
+        "route": [
+            {
+                "analyst": "technical",
+                "budget": 2,
+                "tool_calls": [
+                    {"tool_key": "news_search", "arguments": {"query": "q"}},
+                    {"tool_key": "quote", "arguments": {"symbol": "600519"}},
+                ],
+            }
+        ],
+    }
+
+
+class _BoomOnEnterGateway:
+    """__aenter__ 立即抛错 —— 防止有人把建连挪回会话进入点（T18b 反向防线）。"""
+
+    constructed = 0
+
+    def __init__(self, settings):
+        _BoomOnEnterGateway.constructed += 1
+
+    async def __aenter__(self):
+        raise RuntimeError("eager connection must not happen")
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def call(self, name, args):  # pragma: no cover - 不应被走到
+        raise AssertionError("gateway should never be called")
+
+
+async def test_internal_only_route_never_touches_gateway(monkeypatch):
+    """只用内部工具（news_search）的 analyst 不得创建/连接 Gateway。"""
+    from app.graph.nodes.analysts.technical import TechnicalAnalystNode
+
+    async def fake_search_news(query, *, max_results=5, time_limit="d"):
+        return {"news": [{"date": "d", "title": "t", "body": "b", "url": "u"}], "meta": {"status": "ok"}}
+
+    monkeypatch.setattr("app.graph.tool_runtime._search_news", fake_search_news)
+
+    node = TechnicalAnalystNode(Settings())
+    node._runtime._gateway_class = lambda: FakeGateway
+    out = await node(_news_only_state())
+
+    # 旧实现（T18 的急切连接）：这里 instances == ["FakeGateway"]，必红
+    assert FakeGateway.instances == []
+    assert out["findings"][0]["failed"] is False
+    assert "news_search" in out["findings"][0]["tools_used"]
+    assert out["errors"] == []
+
+
+async def test_mixed_route_lazy_connects_exactly_once(monkeypatch):
+    """混合 route（内部 + gateway 工具）：按需建连后仍复用同一客户端。"""
+    from app.graph.nodes.analysts.technical import TechnicalAnalystNode
+
+    async def fake_search_news(query, *, max_results=5, time_limit="d"):
+        return {"news": [{"date": "d", "title": "t", "body": "b", "url": "u"}], "meta": {"status": "ok"}}
+
+    monkeypatch.setattr("app.graph.tool_runtime._search_news", fake_search_news)
+
+    node = TechnicalAnalystNode(Settings())
+    node._runtime._gateway_class = lambda: FakeGateway
+    out = await node(_mixed_state())
+
+    assert len(FakeGateway.instances) == 1
+    assert FakeGateway.entered == 1
+    assert FakeGateway.exited == 1
+    assert len(out["results"]) == 2
+    assert out["findings"][0]["failed"] is False
+    assert out["errors"] == []
+
+
+async def test_exploding_gateway_not_constructed_for_internal_route(monkeypatch):
+    """网关必炸 + route 只用内部工具 → 构造次数 0，analyst 照常成功。"""
+    from app.graph.nodes.analysts.technical import TechnicalAnalystNode
+
+    async def fake_search_news(query, *, max_results=5, time_limit="d"):
+        return {"news": [{"date": "d", "title": "t", "body": "b", "url": "u"}], "meta": {"status": "ok"}}
+
+    monkeypatch.setattr("app.graph.tool_runtime._search_news", fake_search_news)
+
+    node = TechnicalAnalystNode(Settings())
+    node._runtime._gateway_class = lambda: _BoomOnEnterGateway
+    out = await node(_news_only_state())
+
+    assert _BoomOnEnterGateway.constructed == 0
+    assert out["findings"][0]["failed"] is False
+    assert out["errors"] == []
