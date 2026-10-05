@@ -20,8 +20,11 @@
         market_cache.set(key, data, ttl=30)
 """
 
+import logging
 import time
 from typing import Any, Generic, TypeVar
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -29,11 +32,13 @@ T = TypeVar("T")
 class _Entry(Generic[T]):
     """带 TTL 的单条缓存条目。"""
 
-    __slots__ = ("value", "expires_at")
+    __slots__ = ("value", "expires_at", "last_access")
 
     def __init__(self, value: T, ttl_seconds: float) -> None:
         self.value = value
         self.expires_at = time.monotonic() + ttl_seconds
+        # T19：LRU 淘汰依据——get 命中时刷新
+        self.last_access = time.monotonic()
 
     @property
     def is_expired(self) -> bool:
@@ -41,13 +46,18 @@ class _Entry(Generic[T]):
 
 
 class Cache:
-    """简单内存 TTL 缓存。线程安全按需扩展。"""
+    """简单内存 TTL 缓存。
 
-    def __init__(self, default_ttl: float = 30.0) -> None:
+    T19：容量有上限（LRU 淘汰），长期运行的进程里 ``_store`` 不再只增不减。
+    """
+
+    def __init__(self, default_ttl: float = 30.0, max_entries: int = 512) -> None:
         self._default_ttl = default_ttl
+        self._max_entries = max(1, int(max_entries))
         self._store: dict[str, _Entry[Any]] = {}
         self._hits = 0
         self._misses = 0
+        self._evictions = 0
 
     def get(self, key: str) -> Any | None:
         entry = self._store.get(key)
@@ -59,10 +69,16 @@ class Cache:
             self._misses += 1
             return None
         self._hits += 1
+        entry.last_access = time.monotonic()
         return entry.value
 
     def set(self, key: str, value: Any, ttl: float | None = None) -> None:
-        self._store[key] = _Entry(value, ttl or self._default_ttl)
+        # T19：ttl=0（调用方想关缓存）不得被 ``or`` 当成 falsy 落回默认 TTL；
+        # ttl=None 才表示"用默认值"。
+        effective_ttl = ttl if ttl is not None else self._default_ttl
+        self._purge_expired()
+        self._store[key] = _Entry(value, effective_ttl)
+        self._evict_over_capacity()
 
     def invalidate(self, key: str) -> bool:
         return self._store.pop(key, None) is not None
@@ -71,6 +87,30 @@ class Cache:
         self._store.clear()
         self._hits = 0
         self._misses = 0
+        self._evictions = 0
+
+    def _purge_expired(self) -> None:
+        """set 时顺带清理已过期条目（旧实现只在读到同键时才删）。"""
+        now = time.monotonic()
+        expired = [k for k, e in self._store.items() if e.expires_at <= now]
+        for k in expired:
+            del self._store[k]
+
+    def _evict_over_capacity(self) -> None:
+        """超过 max_entries 时按 last_access 淘汰最久未访问的条目（LRU）。"""
+        overflow = len(self._store) - self._max_entries
+        if overflow <= 0:
+            return
+        by_lru = sorted(self._store.items(), key=lambda kv: kv[1].last_access)
+        for k, _ in by_lru[:overflow]:
+            del self._store[k]
+        self._evictions += overflow
+        logger.debug(
+            "Cache evicted %d entries (size=%d, max_entries=%d)",
+            overflow,
+            len(self._store),
+            self._max_entries,
+        )
 
     @property
     def stats(self) -> dict[str, int]:
@@ -81,6 +121,8 @@ class Cache:
             "hits": self._hits,
             "misses": self._misses,
             "hit_rate_pct": int(rate),
+            "max_entries": self._max_entries,
+            "evictions": self._evictions,
         }
 
 
