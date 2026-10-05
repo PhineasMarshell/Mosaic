@@ -577,11 +577,15 @@ async def test_build_response_fills_anomalies_from_code(monkeypatch):
     from app.models.response import MarketIntelligence, build_response_from_state
 
     prev = ToolResult(
-        tool="d", arguments={}, status="success",
+        tool="d",
+        arguments={},
+        status="success",
         normalized=[NormalizedDatum(metric="openInterest", value=1e9, tool="d")],
     )
     curr = ToolResult(
-        tool="d", arguments={}, status="success",
+        tool="d",
+        arguments={},
+        status="success",
         normalized=[NormalizedDatum(metric="openInterest", value=1.2e9, tool="d")],
     )
     report = MarketIntelligence(

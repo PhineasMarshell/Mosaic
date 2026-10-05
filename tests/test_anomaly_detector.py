@@ -121,7 +121,9 @@ def _result(*datums: NormalizedDatum) -> ToolResult:
 class TestDetectCryptoAnomalies:
     def test_real_magnitude_oi_without_prev_never_triggers(self):
         """真实量级 OI（3.2e9）无前值 → 不触发（旧实现报 critical + high）。"""
-        anomalies = detect_anomalies([_result(NormalizedDatum(metric="openInterest", value=3.2e9, tool="d"))], domain="crypto")
+        anomalies = detect_anomalies(
+            [_result(NormalizedDatum(metric="openInterest", value=3.2e9, tool="d"))], domain="crypto"
+        )
         assert anomalies == []
 
     def test_oi_same_as_prev_does_not_trigger(self):
@@ -150,21 +152,29 @@ class TestDetectCryptoAnomalies:
 
     def test_funding_rate_percent_semantics(self):
         """fundingRate 0.002（0.2%）→ high；0.0001（0.01%）→ 不触发。"""
-        high = detect_anomalies([_result(NormalizedDatum(metric="fundingRate", value=0.002, tool="d"))], domain="crypto")
+        high = detect_anomalies(
+            [_result(NormalizedDatum(metric="fundingRate", value=0.002, tool="d"))], domain="crypto"
+        )
         assert [a.severity for a in high] == ["high"]
         assert "0.2000%" in high[0].description
 
-        quiet = detect_anomalies([_result(NormalizedDatum(metric="fundingRate", value=0.0001, tool="d"))], domain="crypto")
+        quiet = detect_anomalies(
+            [_result(NormalizedDatum(metric="fundingRate", value=0.0001, tool="d"))], domain="crypto"
+        )
         assert quiet == []
 
     def test_funding_rate_critical(self):
         """0.006（0.6% > 0.5%）→ critical（单条，去重）。"""
-        anomalies = detect_anomalies([_result(NormalizedDatum(metric="fundingRate", value=0.006, tool="d"))], domain="crypto")
+        anomalies = detect_anomalies(
+            [_result(NormalizedDatum(metric="fundingRate", value=0.006, tool="d"))], domain="crypto"
+        )
         assert [a.severity for a in anomalies] == ["critical"]
 
     def test_liquidation_absolute_semantics_unchanged(self):
         """清算金额是绝对量：$6M → high（语义本来就正确，回归保护）。"""
-        anomalies = detect_anomalies([_result(NormalizedDatum(metric="totalLiqValue", value=6_000_000, tool="d"))], domain="crypto")
+        anomalies = detect_anomalies(
+            [_result(NormalizedDatum(metric="totalLiqValue", value=6_000_000, tool="d"))], domain="crypto"
+        )
         assert [a.severity for a in anomalies] == ["high"]
 
     def test_noise_metric_never_triggers(self):

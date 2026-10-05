@@ -130,9 +130,7 @@ def _reasoning_node_with_stubbed_llm(report_confidence="high"):
         )
 
     node = ReasoningNode(Settings())
-    node._engine.client = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
-    )
+    node._engine.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     return node
 
 
