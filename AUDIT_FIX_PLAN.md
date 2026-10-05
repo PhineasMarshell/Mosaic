@@ -1,15 +1,16 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
 > **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
-> **最近一次更新**：2026-10-05 —— **S1 与 S2 均已由执行方完成、主 Agent 已独立验收通过**
-> （见 §0.4 的 "S1 验收复核记录" 与 "S2 验收复核记录"）。
+> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 均已由执行方完成、主 Agent 已独立验收通过**
+> （见 §0.4 的 "S1/S2/S3 验收复核记录"）。
 > S1 验收追加：**T18c**（并发请求会话串台，P1；已在 S2 修完）、**T37**（打包/CI flat-layout 失败）、**T12b**（依赖清单漂移）。
-> S2 验收追加：**T19b**（`test_expired_entries_purged_on_set` 是假阳性：停用 purge 仍然全绿）、
-> **T23b**（deadline 只按节点内起算，`research_more` 第二轮会重置预算）。这两个排在 **S3 最前面**。
+> S2 验收追加：**T19b**（假阳性用例）、**T23b**（预算起算点）—— 已在 S3 修完。
+> S3 验收追加：**T22b**（精确匹配漏掉点分 metric → 异常检测在生产里等于关闭）、
+> **T22c**（前值只按 metric 存 → 不同 symbol 互相污染，报出假的 `OI 剧烈增长 200.0%`）。这两个排在 **S4 最前面**。
 > **行号基准**：`44c307f`（S1/S2 的改动未影响未完成任务的锚点；`tool_runtime.py` 的
 > `execute`/`_do_execute`/`_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > 动手时以锚点片段 grep 为准）。若行号漂移，以「定位锚点」里的代码片段为准。
-> **当前 HEAD**：`32bdc43`（S2 的 §0.4 提交；见 §0.4）。
+> **当前 HEAD**：`c436844`（S3 的 §0.4 提交；见 §0.4 的表）。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -94,15 +95,17 @@
 | **T17 news_search TTL** | ✅ 产品修复 + 测试已修（T17T） | `2bf11b7` / `b1b06fa` | patch 目标改为模块全局 `_search_news`，离线可跑；反向验证（改回无 settings 版 TTL 解析）必红 |
 | **T18 analyst 级复用 Gateway** | ✅ 完成并验收（T18b 按需连接 + T18T stub + **T18c 每请求会话**） | `44c307f` / `5647a4a` / `f2e4da1` / `f3b76e4` | 会话状态在模块级 `ContextVar _session`；并发复现脚本 `实例数 1→2`、B 的在途调用不再被关；反向验证（换回实例属性实现）①②必红 |
 | **T12 收尾（D1）** | ✅ 完成（但漏了 `requirements.txt`，见 **T12b**） | `0965da6` | `mcp>=2,<3`；已装 2.1.1；pip install -e . 的 flat-layout 失败是既有问题（见 **T37**） |
-| **T19 缓存** | ✅ 完成并验收（假阳性已由 T19b 修掉） | `bc4849d` / `61c48e9` | `ttl=0` 立即过期（`ttl or` 反向验证必红）；`max_entries=512` + LRU 淘汰 + set 顺带清理过期 + stats 加 `max_entries`/`evictions`；**`test_expired_entries_purged_on_set` 停用 purge 仍绿 = 未覆盖该行为** |
+| **T19 缓存** | ✅ 完成并验收（假阳性已由 T19b 修掉） | `bc4849d` / `61c48e9` | `ttl=0` 立即过期（`ttl or` 反向验证必红）；`max_entries=512` + LRU 淘汰 + set 顺带清理过期 + stats 加 `max_entries`/`evictions` |
 | **T27 去重** | ✅ 完成 | `e6a04e5` | 同签名 3 次调用真实网关 2→1 次；重复调用返回 `partial` + note；route 层 seen 集合提前跳过；stash 旧实现 3 条全红 |
 | **T23 重试预算** | ✅ 完成并验收（起算点已由 T23b 修为整次调查） | `f119f51` + `7dce255` / `661be64` | deadline 全链路下发（base 均分 → execute → gateway.call）；忽略 deadline 反向验证 3/4 条红；测试 stub 的 call/execute 签名已补 `deadline=None` |
 | **T19b 假阳性** | ✅ 完成 | `61c48e9` | 断言前不再先 get；读路径覆盖拆独立用例；停用 purge 必红（已反向验证）；其余 4 条自检过 |
 | **T23b 调查级预算** | ✅ 完成 | `661be64` | orchestrator/SSE 写入 state["budget_deadline"]，analyst 按剩余调查预算均分；缺失时退回旧行为 + warning；反向验证（回退本节点起算）2 条必红 |
-| **T22 异常检测** | ✅ 完成 | `17b0782` | OI 规则改对前值的 % 变化（无前值不触发）、fundingRate 比率→百分比、metric 精确别名匹配、同 datum 同类型去重；旧实现下 9 failed |
-| **T20 必填字段 + D3** | ✅ 完成 | `a9d6a89` | market_state/what_happened 置空 + data_caveats；anomalies 归一化 list[dict]；build_response_from_state 用 detect_anomalies 代码填充；旧实现下 4 failed |
-| **T15 Evidence Gate（D2）** | ✅ 完成 | `7d66ad2` | Reasoning 消费 state["gate"]：has_evidence=False → 强制 confidence=low + caveats + errors，报告仍产出；文档同步（evidence_gate/architecture/README）；停用降级 2 条必红 |
-| **T24–T26、T21** | ⬜ 未开始 | — | 下一段 S4（T24）→ S5（T21 → T26 → T25） |
+| **T22 异常检测** | 🔶 主体完成，**两个缺陷待修（T22b/T22c）** | `17b0782` | ✅ 语义与阈值（`value_semantics`）、同 datum 同类型去重；❌ 精确匹配漏掉点分 metric（`data.openInterest`）→ 检测在生产里等于关闭；❌ 前值只按 metric 存 → 不同 symbol 互污染，报出「OI 剧烈增长 200.0%」这类错误结论 |
+| **T20 必填字段 + D3** | ✅ 完成并**验收通过**（前提是 T22b/T22c 修好才真正生效） | `a9d6a89` | market_state/what_happened 置空 + data_caveats；anomalies 归一化 list[dict]；build_response_from_state 用 detect_anomalies 代码填充；旧实现下 4 failed |
+| **T15 Evidence Gate（D2）** | ✅ 完成并**验收通过** | `7d66ad2` | Reasoning 消费 state["gate"]：has_evidence=False → 强制 confidence=low + caveats + errors，报告仍产出；文档同步（evidence_gate/architecture/README）；停用降级 2 条必红（我复跑确认） |
+| **T22b metric 名归一化** | ⬜ **待做（S4 最前面）** | — | 嵌套载荷 → `data.openInterest` / `data.涨停家数` 一条规则都不命中 |
+| **T22c 前值按 symbol 隔离** | ⬜ **待做（S4）** | — | BTC 1e9 → ETH 3e9 被报成「OI 剧烈增长 200.0%」（用户可见的错误结论） |
+| **T24–T26、T21** | ⬜ 未开始 | — | S4（T24）→ S5（T21 → T26 → T25） |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
@@ -165,6 +168,53 @@
      会重新获得一整份预算，而 `main.py` 的 `wait_for(research_budget_seconds)` 才是整次调查的硬上限。
      单轮内的降级目标已达成，但"第二轮烧完再 504"这条路径仍然存在。→ **T23b**（下一段）。
 
+**S3 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
+
+- **通过**：逐条读了 7 个提交的 diff；测试数增量对得上（438 → 456 收集 = **+18**，逐文件核对：
+  T19b +1、T23b +4（新文件 `test_budget_deadline.py`）、T22 +7（`test_anomaly_detector.py` 重写后 38 条）、
+  T20 +4、T15 +2；`test_evidence_gate.py` 现 9 条）；历史干净（无 `.tmp/`/`*.db`/`.bak`/`.env`）；两个文档提交独立。
+- **全量测试**：`pytest -q` → **`454 passed, 2 skipped`**（`mcp` 与 `http` 双模式），与报告逐字相符；
+  `ruff check` + `ruff format --check` 全绿。
+- **反向验证（我自己重跑的 3 条）**：
+  1. **T19b**：把 `set()` 的 `_purge_expired()` 换回 `pass` → `test_expired_entries_purged_on_set`
+     **变红**（`assert 'old' not in {...}`），其余 5 条（含新的读路径用例）仍绿 → 假阳性已真正修好。
+  2. **T15**：把 `if gate_has_evidence is False:` 改成 `if False and ...`（停用降级）→
+     `test_evidence_gate.py` **2 failed**（`assert 'high' == 'low'`），`has_evidence=True` 的对照用例保持绿。
+  3. **T23b / T20**：读用例 + 复核断言判据（T23b 用 `issued < now + research_budget_seconds/2` 区分
+     "调查级"与"节点级"；T20 的 4 条含 `anomalies` 标量不再炸 schema 的变体）。
+- 代码复核要点：`budget_deadline` 是标量字段（无 reducer → 回环覆盖，正是要的语义），
+  orchestrator 与 SSE 两条路径都写入（`main.py:263` 的 `budget` 就是 `research_budget_seconds`）；
+  `_execute_tools` 缺失该字段时退回旧行为并 **warning**（没把"没有预算信息"静默当成"预算无限"）；
+  T20 的 `market_state`/`what_happened` 双保险（模型层默认值 + reasoning 归一化写 `data_caveats`）；
+  `build_response_from_state` 用 `detect_anomalies` 覆盖模型条目、失败时写 `errors`（规则 6）；
+  `anomalies` 归一化成 `list[dict]` 确实多挡了一种崩溃；T15 的降级不短路、文档三处同步。
+
+- **⚠️ 未采信：T22 有两个独立缺陷（已实测复现，均另立任务）**
+
+  1. **精确别名匹配把"嵌套载荷产生的点分 metric"全部漏掉 → 异常检测在生产里等于关闭（T22b）**。
+     normalizer 对嵌套载荷产出的 metric 是**路径**：我实测
+     ```python
+     normalize_tool_result("derivatives_history_market_derivatives_history_post", {}, {"data": {"openInterest": 3.2e9}})
+     # -> metric = 'data.openInterest'（数组载荷则是 'data[0].openInterest' / 'result.list[0].openInterest'）
+     ```
+     而新 `_matches_metric` 是**精确**匹配：`_matches_metric(rule, "data.openInterest")` → **False**
+     （旧子串实现是 True）。端到端后果：
+     ```
+     嵌套载荷 OI 1e9 → 1.2e9（+20%，应报 critical/high）→ detect_anomalies 返回 []
+     扁平载荷同样 +20%                                       → 返回 ['oi_spike'] ✓
+     ```
+     A 股同理：`涨停家数` → True，`data.涨停家数` → **False**（`limitUpCount` / `data.limitUpCount` 同）。
+     **这正是本项目反复出现的假阳性模式**：新用例用 `NormalizedDatum(metric="openInterest")` 手工构造，
+     没走 normalizer，所以看不到真实 metric 名。→ **T22b**，并且新测试必须**经过 `normalize_tool_result`**。
+  2. **前值只按 metric 名存放 → 不同 symbol 互相污染，报出错误异常（T22c）**。
+     `_prev_key()` 只用 metric，`result.arguments` 里的 `symbol` 完全没用上。实测三次独立调查：
+     ```
+     BTCUSDT OI=1,000,000,000  -> []                                        （无前值，正确）
+     ETHUSDT OI=3,000,000,000  -> [('oi_spike','critical','OI 剧烈增长 200.0%')]   ← 拿 BTC 当前值
+     SOLUSDT OI=3,300,000,000  -> [('oi_spike','high','OI 短时间内快速增加 10.0%')] ← 拿 ETH 当前值
+     ```
+     后两条是**用户可见的错误结论**（D3 已把 anomalies 写进报告与 `daily_states`）。→ **T22c**。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -178,16 +228,17 @@
 |---|---|---|---|---|
 | **S1 修红**（独占一段，阻塞一切） | T18b → T17T → T18T → T12 收尾 | §0 全部 + §1 全部 + §2 全部 + 附录 A | T18b（产品）与 T18T（测试）互相牵制，必须在同一会话里把基线跑绿；T12 只是一行 `pyproject`，顺手 | **`mcp` 与 `http` 双模式全绿**；4 个提交 |
 | **S2 运行时 / 缓存 / 成本** | ✅ **已完成并验收**：T18c → T19 → T27 → T23 | — | 见 §0.4 "S2 验收复核记录" | `436 passed + 2 skipped`（双模式）；6 个提交；但 S3 需先补 **T19b / T23b** |
-| **S3 检测与报告契约** | **T19b** → **T23b** → T22 → T20（含 anomalies）→ T15 | §0 + §1.4 + 附录 A/B + §3 的 T19b/T23b/T22/T20/T15 | T19b/T23b 是上一段验收留下的两个小尾巴，先清掉；**T22 必须先于 T20 的 anomalies 半条**（否则误报，D3 已定） | 全绿；5 个提交 |
-| **S4 注册表** | T24（**把 T34 里 `test_tool_registry_multi_domain.py` 的断言并入本条**） | §0 + 附录 A/B + §3 的 T24 + §4 的 T34 | 它牵动全量 `tool_registry`，单独一段便于跑 normalizer / analyst 相关回归 | 全绿；1 个提交 |
+| **S3 检测与报告契约** | ✅ **已完成并验收**：T19b → T23b → T22 → T20 → T15 | — | 见 §0.4 "S3 验收复核记录" | `454 passed + 2 skipped`（双模式）；7 个提交；但 S4 需先补 **T22b / T22c** |
+| **S4 注册表 + 异常检测尾巴** | **T22b** → **T22c** → T24（**把 T34 里 `test_tool_registry_multi_domain.py` 的断言并入 T24**） | §0 + §1.4 + 附录 A/B + §3 的 T22b/T22c/T24 + §4 的 T34 | T22b/T22c 是上一段验收发现的**正确性缺陷**（异常检测漏报 / 误报），必须先清掉；T24 牵动全量 `tool_registry` | 全绿；3 个提交 |
 | **S5 请求生命周期** | T21 → T26 → T25 | §0 + 附录 A/B + §3 的 T21/T26/T25 | sqlite 跨线程、SSE 收尾、前端并发，都是"一次请求从进到出"；T25 是前端，放最后 | 全绿 + 手工看一眼界面；3 个提交 |
 | **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
 | **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
 | **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
 
 **硬性顺序约束（不要打乱）**：
-1. **S1 必须最先**（✅ 已完成并验收），S2 的 **T18c 是 P1 级并发缺陷，必须先于 S2 其它任务**。
-2. S3 内 **T22 早于 T20 的 anomalies 半条**。
+1. **S1 必须最先**（✅ 已完成并验收）；S2 ✅、S3 ✅。
+2. **S4 的 T22b / T22c 最优先**：它们是"异常检测漏报 / 误报"的正确性缺陷，且 D3 已经把 anomalies
+   接进报告与 `daily_states`——不修就等于对外输出错误结论。
 3. S5 内 **T21 早于 T26**（SSE 的落库断言需要可写的 sqlite 路径）。
 4. S6/S7 建议在 S1 之后：T31 解 skip 后会真跑到 analyst 节点，依赖 T18b 已修。
 5. **S8 必须最后**：T37 会改 `pyproject.toml` 的打包配置，改完要重跑一次全量。
@@ -625,10 +676,11 @@ async def test_news_search_cache_ttl_survives_execute(monkeypatch):
 ## 3. 批次 3 剩余任务
 
 > **已完成（保留原文作回归依据）**：T12 收尾（`0965da6`）、T18c（`f3b76e4`）、T19（`bc4849d`）、
-> T23（`f119f51`+`7dce255`）、T27（`e6a04e5`）——各自小节里都标了 ✅。
-> **未完成**：T12b、T15、T20–T22、T24–T26，以及验收追加的 **T19b / T23b**（物理位置在本节末尾，
-> 按 §0.5 的段顺序执行即可，不必被小节摆放位置误导）。
-> 顺序以 **§0.5 的分段表**为准：S3 = **T19b → T23b** → T22 → T20（含 anomalies）→ T15。
+> T23（`f119f51`+`7dce255`）、T27（`e6a04e5`）、T19b（`61c48e9`）、T23b（`661be64`）、T22 主体（`17b0782`）、
+> T20（`a9d6a89`）、T15（`7d66ad2`）——各自小节里都标了 ✅。
+> **未完成**：T12b、T21、T24–T26，以及验收追加的 **T22b / T22c**（异常检测的两个正确性缺陷，物理位置
+> 在 T22 小节里，务必先做）与 **T19b / T23b 已完成**（小节末尾那两段已标 ✅）。
+> 顺序以 **§0.5 的分段表**为准：S4 = **T22b → T22c** → T24。
 > 每条仍然要求「改完补一个能失败的测试」。
 
 ### T12 收尾（D1=A）— 依赖区间收口 → ✅ `pyproject.toml` 已完成（`0965da6`），**`requirements.txt` 漏改，见 T12b**
@@ -761,7 +813,7 @@ print(err)   # 期望：ProgrammingError（证明跨线程不可用）
 **风险 / 牵连**：`storage.py` 的 WAL 逻辑**不要动**（规则 4）；改连接策略后 `test_persistence.py`、
 `test_data_integrity.py` 里"两条连接看同一文件"的用例必须仍然绿。
 
-### T22 — 异常检测阈值按百分比设定，但输入是绝对值（**D3 的前置**）
+### T22 — 异常检测阈值按百分比设定，但输入是绝对值 → ✅ 主体完成（`17b0782`），**但有两个缺陷：T22b / T22c**
 **定位锚点**
 - `app/detector/anomaly.py:96-140` — 规则阈值 `5.0` / `10.0`（OI，"日变化 %"）、`0.15` / `0.5`（fundingRate，"%")
 - `app/detector/anomaly.py:235-241` `_matches_metric`（`any(p in metric_lower for p in rule.metric_pattern.split("|"))`，子串匹配）
@@ -794,6 +846,95 @@ print([a.to_dict() for a in detect_anomalies([tr], domain="crypto")])
 **验收**：复现脚本不再输出 critical；用例在旧实现下必红。
 **风险 / 牵连**：`detect_anomalies` 目前**无生产调用点**（T20/D3 会接上），所以改动只影响测试；
 接上之后 `memory` 里的 `anomalies` 表会开始有记录，前端 "What's Unusual" 会亮 —— 属预期。
+
+**✅ 已完成（`17b0782`）**：`value_semantics`（absolute / pct_change / ratio_to_percent）+ 精确别名表 +
+同 datum 同 rule_type 只留最高严重级 + 前值经 `market_cache` 跨调查。**但验收发现两个缺陷 → T22b / T22c。**
+
+### T22b — 精确匹配漏掉"点分 metric"，异常检测在生产里等于关闭（**S4 最前面做；验收者实测复现**）
+
+**定位锚点**
+- `app/detector/anomaly.py` 的 `_matches_metric`（`metric.strip().lower() in aliases`）
+- 别名表 `_CRYPTO_RULES` / `_ASHARE_RULES` 的 `metric_pattern`
+- metric 的来源：`app/gateway/normalizer.py` 的 `_make_datum`（metric 是 **JSON 路径**，不是裸键名）
+
+**现象**：normalizer 对**嵌套载荷**产出的 metric 是点分路径；精确匹配全部漏掉 → 该 metric 一条规则都不命中。
+D3 刚把 anomalies 接进报告，于是这个功能在生产里大概率**永远输出空列表**（而且没有任何报错）。
+
+**复现（验收者已跑）**
+```python
+from app.gateway.normalizer import normalize_tool_result
+from app.detector.anomaly import ALL_RULES, _matches_metric, detect_anomalies
+from app.cache import market_cache
+
+# metric 名随载荷形状变化
+normalize_tool_result("derivatives_history_market_derivatives_history_post", {}, {"openInterest": 3.2e9})
+#   -> metric = 'openInterest'
+normalize_tool_result("derivatives_history_market_derivatives_history_post", {}, {"data": {"openInterest": 3.2e9}})
+#   -> metric = 'data.openInterest'      （数组载荷：'data[0].openInterest'、'result.list[0].openInterest'）
+
+rule = next(r for r in ALL_RULES if r.rule_id == "oi_spike_high")
+_matches_metric(rule, "openInterest")        # True
+_matches_metric(rule, "data.openInterest")   # False ← 旧子串实现本来是 True
+
+# 端到端：嵌套载荷 OI 1e9 → 1.2e9（+20%，应报 high/critical）
+#   detect_anomalies([...]) -> []            ← 什么都不报
+# 扁平载荷同样 +20% -> ['oi_spike']           ← 正常
+```
+A 股同理：`涨停家数` → True，`data.涨停家数` → **False**；`limitUpCount` → True，`data.limitUpCount` → **False**。
+
+**根因**：`_matches_metric` 拿**整条路径**去比别名表。
+
+**修改（推荐 A）**
+- **A（最小、够用）**：匹配前把 metric 归一到"末段基名"——去掉数组下标、取最后一个 `.` 之后的部分：
+  ```python
+  def _metric_basename(metric: str) -> str:
+      # 'data[0].openInterest' -> 'openinterest' ; 'data.涨停家数' -> '涨停家数'
+      tail = re.sub(r"\[\d+\]", "", metric.strip()).split(".")[-1]
+      return tail.strip().lower()
+  ```
+  `_matches_metric` 用 basename 与别名表精确比对。**这样仍然不会**让 `noise` / `openInterestRate`
+  误命中（`openinterestrate` ≠ `openinterest`），保住了 T22 想要的"不做子串匹配"。
+- **B（更彻底，但范围大）**：让 normalizer 直接产出规范指标名——它里面那两个
+  `_CRYPTO_METRICS` / `_ASHARE_METRICS` 集合目前**只被文档字符串提到、没有任何调用方**，
+  看起来本来就是为此准备的。选 B 会影响 evidence / 报告里所有 metric 的展示名，
+  **必须单独提交并说明影响面**，且要跑 `test_normalizer*` / `test_evidence*` / `test_candle_summary` 全部。
+
+**必补测试（关键：必须经过 `normalize_tool_result`，不许手工造 `NormalizedDatum`）**
+- 参数化载荷形状 `{"openInterest": ...}` / `{"data": {"openInterest": ...}}` / `{"data": [{"openInterest": ...}]}`
+  → 归一化后喂 `detect_anomalies`，**三种形状都必须报出同一条 `oi_spike`**；
+- 同形状再来一遍 A 股 `涨停家数`（含 `data.` 前缀）；
+- 反向对照：`metric="noise"`、`metric="data.openInterestRate"` → 仍然**不触发**。
+**验收**：上面的复现脚本在嵌套载荷下也输出 `['oi_spike']`；把 `_metric_basename` 换回恒等函数 → 新用例必红。
+**风险 / 牵连**：`value_semantics` 的比对值不受影响（只改"匹配哪条规则"）；改完顺手确认
+`tests/test_anomaly_detector.py` 原有的 38 条仍绿。
+
+### T22c — 前值只按 metric 名存放，不同 symbol 互相污染（**S4；验收者实测复现**）
+
+**定位锚点**：`app/detector/anomaly.py` 的 `_prev_key` / `_load_prev_value` / `_store_prev_value`
+与 `detect_anomalies` 里的 `_store_prev_value(metric, num_value)` 调用点。
+**现象**：前值的 key 只有 metric 名，**`result.arguments` 里的 `symbol` 完全没用上** → 用户的两次独立调查
+（不同币种 / 不同股票）会互相当成"前值"，报出**用户可见的错误异常**。D3 之后这些错误异常会写进
+报告与 `daily_states`。
+**复现（验收者已跑，三次独立调查）**
+```
+BTCUSDT OI=1,000,000,000  -> []                                              （无前值，正确）
+ETHUSDT OI=3,000,000,000  -> [('oi_spike','critical','OI 剧烈增长 200.0%')]   ← 拿 BTC 的值当前值
+SOLUSDT OI=3,300,000,000  -> [('oi_spike','high','OI 短时间内快速增加 10.0%')] ← 拿 ETH 的值当前值
+```
+**修改**
+1. 前值 key 必须带**作用域**：至少 `(metric_basename, symbol)`，其中 symbol 取
+   `getattr(result, "arguments", {}).get("symbol")`（拿不到就用 `domain`，再拿不到用 `"unknown"`）。
+   注意符号可能在 `arguments` 里是 `"BTCUSDT"` 这种，也可能是 `";".join(stocks)`，按原样用即可。
+2. 跨**同 symbol**的调查保留"与上次快照比"的能力（这是 T22 想要的）；跨 symbol 必须隔离。
+3. 顺便明确这个前值存储是**有状态的业务数据**却借用了 `market_cache`（会被 T19 的 LRU 淘汰、
+   也会被任何 `market_cache.clear()` 清掉）。**若保留现方案**，在注释里写明这个权衡并
+   让"拿不到前值 → 不触发"保持可见（可选：命中不到前值时 `logger.debug` 一条）；
+   **若改成独立的小字典/持久化**，要说明为什么（本任务不强制，但必须选一个并写下来）。
+**必补测试**：`tests/test_anomaly_detector.py` —— 三次不同 symbol 的检测，断言后两次**不产生** anomalies；
+再补一条同 symbol 两次（1e9 → 1.2e9）→ 必须报 `oi_spike`（防"隔离过头把正常检测也关了"）。
+**验收**：复现脚本三次输出依次为 `[]`、`[]`、`[]`；同 symbol 的对照用例仍报 anomaly。
+**风险 / 牵连**：`detect_anomalies` 的签名可能需要在内部从 `tool_results` 里取 symbol——
+它已经拿到 `result` 对象，不需要改签名；改完确认 T20 的 `build_response_from_state` 调用无需变动。
 
 ### T23 — HTTP 重试不感知总预算
 **定位锚点**
@@ -1221,17 +1362,26 @@ S2 运行时 / 缓存 / 成本 — ✅ 完成并双模式全绿（f3b76e4 / bc48
     记录见 §0.4 "S2 验收复核记录"；**留下两个尾巴 T19b / T23b**
 
 S3 检测与报告契约 — ✅ 完成并双模式全绿（61c48e9 / 661be64 / 17b0782 / a9d6a89 / 7d66ad2）
-[x] T19b 修 test_expired_entries_purged_on_set 假阳性（停用 purge 必红，已反向验证）
+[x] T19b 修 test_expired_entries_purged_on_set 假阳性（停用 purge 必红，验收者复跑确认）
 [x] T23b 预算按整次调查起算（state["budget_deadline"]；反向验证 2 条必红）
 [x] T22 anomaly 阈值/单位（D3 前置）  → [x] T20 必填字段默认值（+ anomalies 归一化）
 [x] T20 后半：anomalies 用 detect_anomalies 填（D3，代码填、模型条目被覆盖）
 [x] T15 Evidence Gate 降级（D2=B：降级不短路）
+    验收已过：454 passed + 2 skipped（双模式）；T19b / T15 反向验证验收者复跑过；
+    记录见 §0.4 "S3 验收复核记录"；**T22 留下两个正确性缺陷 → T22b / T22c**
 
-S2 之后（批次 3 其余）
-[ ] T12b requirements.txt 同步 mcp>=2,<3（S7，一行）
+S4 注册表 + 异常检测尾巴（先把上一段验收发现的缺陷清掉）
+[ ] T22b metric 名归一化（点分路径取末段；新测试必须经过 normalize_tool_result）  ← 验收者实测
+[ ] T22c 前值按 symbol 隔离（否则不同币种互当前值、报出假的 +200%）              ← 验收者实测
+[ ] T24 注册表域过滤 / HK 漂移（含并入 T34 的 multi_domain 断言）
+
+S5 请求生命周期
 [ ] T21 sqlite 线程跨线程
-[ ] T24 注册表域过滤 / HK 漂移
-[ ] T25 前端并发与渲染健壮性        [ ] T26 SSE 错误分支可达 + 任务 await
+[ ] T26 SSE 错误分支可达 + 任务 await
+[ ] T25 前端并发与渲染健壮性
+
+其余
+[ ] T12b requirements.txt 同步 mcp>=2,<3（S7，一行）
 
 批次 4（测试有效性）  T28 T29 T30(+D4 budget，含"跳过是否消耗预算"的语义决定) T31 T32 T33 T34 + T35 机制性防线
 
