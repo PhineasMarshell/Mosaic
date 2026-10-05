@@ -10,9 +10,12 @@
 后续 Tool 名变化时，优先修改这里，而不是 Planner。
 """
 
+import logging
 from typing import Any, Literal
 
 from app.models.research import MarketDomain
+
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
 # 工具元数据                                                          #
@@ -276,11 +279,14 @@ _HK_STOCK_PLACEHOLDERS = [
     # TODO: 接入独立港股数据源（如 Wind、Bloomberg、Yahoo Finance API）
     # 当前通过 quote_tencent_quote_get 传入 HK 股票代码（如 HK00700）获取行情
     # 后续专用工具: hk_quote, hk_realtime, hk_flow_southbound 等
+    # T24：domain 修为 hk_stock —— 旧值 a_share 让港股工具被算进 A 股域、
+    # 分派给错误的 analyst。注意这两个条目与 A 股 quote/search 复用同一
+    # operationId：BY_NAME 的规范条目仍是 A 股原生的 quote/search（见索引区）。
     ToolMeta(
         "hk_quote",
         "quote_tencent_quote_get",
         "港股实时行情（腾讯 API，传入 HK 代码如 HK03400/00700）",
-        domain="a_share",
+        domain="hk_stock",
         priority="high",
         http_method="GET",
         http_path="/tencent/quote",
@@ -290,11 +296,12 @@ _HK_STOCK_PLACEHOLDERS = [
         "hk_search",
         "search_xueqiu_search_get",
         "港股证券搜索（雪球，支持 HK 股票代码和名称）",
-        domain="a_share",
+        domain="hk_stock",
         priority="medium",
         http_method="GET",
         http_path="/xueqiu/search",
-        category="moneyflow",
+        # 与 A 股同名工具（search → technical）对齐；旧值 moneyflow 漂移
+        category="technical",
     ),
     # ── 北向资金流入（香港通） — 内部直连 Eastmoney KLineJSAPI ──
     # ⚠️ 这些工具不走 Market Gateway，由 app/research/hk_northbound.fetch_all_hk_context() 直接获取。
@@ -595,8 +602,26 @@ ALL_TOOLS: list[ToolMeta] = (
 #: key → ToolMeta 索引（业务层面使用）
 BY_KEY: dict[str, ToolMeta] = {x.key: x for x in ALL_TOOLS}
 
-#: operationId → ToolMeta 索引（底层调用使用）
-BY_NAME: dict[str, ToolMeta] = {x.tool_name: x for x in ALL_TOOLS}
+#: operationId → ToolMeta 索引（底层调用使用）。
+#: T24：同一 operationId 可被多个域的条目复用（quote/search 被 hk 占位复用、
+#: klines/snapshot 被 commodities 占位复用）。规范条目的选取是**显式规则**：
+#: 跨域（cross）条目优先（klines/snapshot 是任意域可用的通用端点），
+#: 否则取先注册者（quote/search 的规范条目是 A 股原生的 quote/search）；
+#: 其余条目进 ``SHARED_BY_NAME``——不再让"后注册者静默胜出"。
+BY_NAME: dict[str, ToolMeta] = {}
+
+#: operationId → 复用同一 operationId 的**非规范（占位）条目**列表（T24）。
+SHARED_BY_NAME: dict[str, list[ToolMeta]] = {}
+
+for _t in ALL_TOOLS:
+    _canonical = BY_NAME.get(_t.tool_name)
+    if _canonical is None or (_t.domain == "cross" and _canonical.domain != "cross"):
+        if _canonical is not None:
+            # 规范条目被 cross 条目取代，旧条目降级为共享占位
+            SHARED_BY_NAME.setdefault(_t.tool_name, []).append(_canonical)
+        BY_NAME[_t.tool_name] = _t
+    else:
+        SHARED_BY_NAME.setdefault(_t.tool_name, []).append(_t)
 
 # 保留向后兼容别名
 BY_KEY_CORE = BY_KEY
@@ -631,10 +656,17 @@ def registry_text(domains: list[MarketDomain] | None = None) -> str:
     if domains is None:
         tools = ALL_TOOLS
     else:
-        filtered = [t for t in ALL_TOOLS if t.domain in domains]
-        # 同时始终包含 health 工具（不受域名限制）
-        filtered = [t for t in filtered if t.domain != "unknown"] or ALL_TOOLS
-        tools = filtered
+        # T24：按注释的承诺实现——unknown（health 工具）**始终附加**，不受域名限制；
+        # 删掉旧的 `or ALL_TOOLS`：域过滤为空时静默回退成全量注册表，
+        # us_stock（尚未接入工具）域拿到的是全部 40 个工具。
+        filtered = [t for t in ALL_TOOLS if t.domain in domains and t.domain != "unknown"]
+        health = [t for t in ALL_TOOLS if t.domain == "unknown"]
+        if not filtered:
+            logger.warning(
+                "registry_text: no tools for domains=%s — returning health tools only",
+                domains,
+            )
+        tools = filtered + health
 
     return "\n".join(f"- {x.key}: {x.tool_name} [{x.domain}] — {x.purpose} [{x.priority}]" for x in tools)
 

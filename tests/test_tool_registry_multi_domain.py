@@ -1,4 +1,16 @@
-"""tests/test_tool_registry_multi_domain.py — 多域注册表测试。"""
+"""tests/test_tool_registry_multi_domain.py — 多域注册表测试。
+
+T24 契约（本文件同时吸收 §4/T34 里归属注册表的断言修复）：
+- ``registry_text(domains=...)`` 按 domain 过滤、**始终附加** health 工具
+  （domain="unknown"），域过滤为空时**只返回 health**（不再 ``or ALL_TOOLS``
+  静默回退全量，且必须留 warning）；
+- hk_quote / hk_search 的 domain 是 ``hk_stock``、category 与 A 股同类工具对齐；
+- BY_NAME 每个 operationId 只有一个**规范条目**（cross 优先，否则先注册者），
+  复用同一 operationId 的占位条目显式暴露在 ``SHARED_BY_NAME``，
+  不再"后注册者静默胜出"。
+"""
+
+import logging
 
 import pytest
 
@@ -6,6 +18,7 @@ from app.gateway.tool_registry import (
     ALL_TOOLS,
     BY_KEY,
     BY_NAME,
+    SHARED_BY_NAME,
     get_enabled_domains,
     registry_text,
     resolve_tool,
@@ -33,9 +46,33 @@ class TestAllToolsCompleteness:
     def test_index_consistency(self):
         # BY_KEY is keyed by business key (unique per tool)
         assert len(BY_KEY) == len(ALL_TOOLS), "BY_KEY 应与 ALL_TOOLS 等长"
-        # BY_NAME is keyed by operationId —同一 operationId 可被多个域复用（如 quote_tencent_quote_get 同时服务 a_share 和 hk_stock）
-        # 所以 BY_NAME 数量 <= ALL_TOOLS 是预期的
-        assert len(BY_NAME) <= len(ALL_TOOLS), f"BY_NAME 不应超过 ALL_TOOLS，实际 {len(BY_NAME)} vs {len(ALL_TOOLS)}"
+        # T24：同一 operationId 可被多个域复用（hk/commodities 占位复用 quote/search/
+        # klines/snapshot），复用条目显式进 SHARED_BY_NAME；BY_NAME 本身无重复键，
+        # 且 规范条目 + 共享条目 必须恰好覆盖全部注册条目（不丢也不重）
+        assert len(BY_NAME) == len({t.tool_name for t in ALL_TOOLS}), (
+            "BY_NAME 不应有重复键（后注册者静默胜出已被 T24 废除）"
+        )
+        shared_total = sum(len(v) for v in SHARED_BY_NAME.values())
+        assert len(BY_NAME) + shared_total == len(ALL_TOOLS), (
+            f"BY_NAME({len(BY_NAME)}) + SHARED({shared_total}) 应等于 ALL_TOOLS({len(ALL_TOOLS)})"
+        )
+
+    def test_shared_by_name_canonical_resolution(self):
+        """规范条目选取：cross 优先，否则先注册者（A 股原生工具）。"""
+        # hk 占位复用 A 股 quote/search 的 operationId —— 规范条目是 A 股原生工具
+        assert BY_NAME["quote_tencent_quote_get"].key == "quote"
+        assert BY_NAME["quote_tencent_quote_get"].domain == "a_share"
+        assert BY_NAME["search_xueqiu_search_get"].key == "search"
+        # commodities 占位复用 cross 的 klines/snapshot —— 规范条目是 cross 通用工具
+        assert BY_NAME["klines_market_klines_post"].key == "klines"
+        assert BY_NAME["klines_market_klines_post"].domain == "cross"
+        assert BY_NAME["snapshot_market_snapshot_post"].domain == "cross"
+        # 占位条目在 SHARED_BY_NAME 里可查
+        assert {m.key for m in SHARED_BY_NAME["quote_tencent_quote_get"]} == {"hk_quote"}
+        assert {m.key for m in SHARED_BY_NAME["snapshot_market_snapshot_post"]} == {
+            "commodity_silver",
+            "commodity_platinum",
+        }
 
 
 class TestDomainDistribution:
@@ -106,8 +143,9 @@ class TestRegistryTextFiltering:
         crypto_text = registry_text(domains=["crypto"])
         # 应该包含 derivatives_history, funding_rate 等原生 crypto 工具
         assert "derivatives_history" in crypto_text or "funding_rate" in crypto_text
-        # snapshot/klines 现在是跨域通用 (domain="cross")，不在 crypto 域
-        assert "snapshot" not in crypto_text or "klines" not in crypto_text
+        # T34：旧断言 `A or B` 恒真——snapshot 与 klines 都不在 crypto 域，
+        # 两个条件必须**同时**成立才说明 cross 工具确实没漏进来
+        assert "snapshot" not in crypto_text and "klines" not in crypto_text
 
     def test_registry_ashare_domain_only(self):
         ashare_text = registry_text(domains=["a_share"])
@@ -119,6 +157,47 @@ class TestRegistryTextFiltering:
         cross_text = registry_text(domains=["cross"])
         assert "snapshot" in cross_text
         assert "klines" in cross_text
+
+    def test_us_stock_excludes_other_domains_and_includes_health(self):
+        """T24：us_stock 尚未接入工具——旧实现 `or ALL_TOOLS` 静默回退成全量 40 个；
+        现在必须只返回 health 工具（domain=unknown），绝不混入其它域。"""
+        us_text = registry_text(domains=["us_stock"])
+        lines = us_text.splitlines()
+        assert lines, "us_stock 域不应返回空文本"
+        assert not any("[a_share]" in line or "[crypto]" in line or "[hk_stock]" in line for line in lines)
+        assert any("[unknown]" in line for line in lines), "health 工具应始终包含"
+
+    def test_unknown_domain_returns_health_only_with_warning(self, caplog):
+        """T24：未知域 → 只有 health + warning，绝不等于全量。"""
+        with caplog.at_level(logging.WARNING, logger="app.gateway.tool_registry"):
+            text = registry_text(domains=["bogus"])
+        lines = text.splitlines()
+        assert lines and all("[unknown]" in line for line in lines)
+        assert "no tools for domains" in caplog.text
+
+    def test_hk_stock_includes_hk_tools_and_health(self):
+        """T24：hk 域包含 hk 工具（修完 domain 漂移后）且 health 始终在场。"""
+        hk_text = registry_text(domains=["hk_stock"])
+        assert "hk_northbound_daily" in hk_text
+        assert "hk_quote" in hk_text and "[hk_stock]" in hk_text
+        assert any("[unknown]" in line for line in hk_text.splitlines())
+
+
+class TestHkToolDomain:
+    """T24：HK 工具的 domain/category 漂移修复。"""
+
+    def test_hk_quote_and_search_domain_is_hk_stock(self):
+        assert resolve_tool("hk_quote").domain == "hk_stock"
+        assert resolve_tool("hk_search").domain == "hk_stock"
+
+    def test_hk_search_category_aligned_with_ashare_search(self):
+        assert resolve_tool("hk_search").category == resolve_tool("search").category
+        assert resolve_tool("hk_quote").category == resolve_tool("quote").category
+
+    def test_hk_tools_not_leaked_into_ashare_domain(self):
+        ashare_keys = {t.key for t in tools_by_domain("a_share")}
+        assert "hk_quote" not in ashare_keys
+        assert "hk_search" not in ashare_keys
 
 
 class TestEnabledDomains:
