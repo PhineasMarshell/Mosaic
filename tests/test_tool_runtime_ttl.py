@@ -28,13 +28,15 @@ def test_resolve_ttl_uses_settings_for_news_search():
     assert _resolve_ttl("nonexistent_tool_xyz") == 30.0
 
 
-async def test_news_search_cache_ttl_survives_execute():
+async def test_news_search_cache_ttl_survives_execute(monkeypatch):
+    """离线可跑：patch 的是模块全局 _search_news（生产代码 tool_runtime.py 读全局，
+    不读 self._search_news —— 旧写法打实例属性无效，测试实际打真实 DDGS 网络）。"""
     runtime = ToolRuntime(Settings())
 
-    async def fake_search(query, max_results=5, time_limit="d"):
+    async def fake_search(query, *, max_results=5, time_limit="d"):
         return {"news": [{"title": "t", "body": "b", "url": "u", "date": "2026-10-04"}], "meta": {"status": "ok"}}
 
-    runtime._search_news = fake_search
+    monkeypatch.setattr("app.graph.tool_runtime._search_news", fake_search)
     result = await runtime.execute("news_search", {"query": "A股"}, set())
     assert result.status == "success"
 
