@@ -75,10 +75,11 @@
 
 ### 0.4 当前进展
 
-> **当前 HEAD：`4a9ca07`（S3 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）均已完成：
-> **454 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S3 会话实测）。
-> ruff check / ruff format --check 全绿。
-> 行号基准 = `44c307f`（S1/S2 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
+> **当前 HEAD：`3bef4f4`（S4 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）
+> + S4（T22b/T22c/T24，含 T34 的注册表断言）均已完成：
+> **479 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S4 会话实测）。
+> ruff check / ruff format --check 全绿。三个任务各做了「改坏必红」反向验证（详见 §0.4 表格备注与 S4 执行记录）。
+> 行号基准 = `44c307f`（S1–S4 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
 > `execute` / `_do_execute` / `_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > T20/T15 等动手时仍以锚点片段 grep 为准）。
 > 备注：S1/S2 执行会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在这些会话不出现；
@@ -100,16 +101,17 @@
 | **T23 重试预算** | ✅ 完成并验收（起算点已由 T23b 修为整次调查） | `f119f51` + `7dce255` / `661be64` | deadline 全链路下发（base 均分 → execute → gateway.call）；忽略 deadline 反向验证 3/4 条红；测试 stub 的 call/execute 签名已补 `deadline=None` |
 | **T19b 假阳性** | ✅ 完成 | `61c48e9` | 断言前不再先 get；读路径覆盖拆独立用例；停用 purge 必红（已反向验证）；其余 4 条自检过 |
 | **T23b 调查级预算** | ✅ 完成 | `661be64` | orchestrator/SSE 写入 state["budget_deadline"]，analyst 按剩余调查预算均分；缺失时退回旧行为 + warning；反向验证（回退本节点起算）2 条必红 |
-| **T22 异常检测** | 🔶 主体完成，**两个缺陷待修（T22b/T22c）** | `17b0782` | ✅ 语义与阈值（`value_semantics`）、同 datum 同类型去重；❌ 精确匹配漏掉点分 metric（`data.openInterest`）→ 检测在生产里等于关闭；❌ 前值只按 metric 存 → 不同 symbol 互污染，报出「OI 剧烈增长 200.0%」这类错误结论 |
+| **T22 异常检测** | ✅ 完成并验收（T22b/T22c 缺陷已由 S4 修掉，见下两行） | `17b0782` / `e7c2272` / `08c3656` | ✅ 语义与阈值（`value_semantics`）、同 datum 同类型去重；✅ 基名归一化后嵌套载荷（`data.openInterest` / `data[0].openInterest`）不再漏报；✅ 前值按 (metric 基名, symbol) 隔离，跨 symbol 不再互相污染 |
 | **T20 必填字段 + D3** | ✅ 完成并**验收通过**（前提是 T22b/T22c 修好才真正生效） | `a9d6a89` | market_state/what_happened 置空 + data_caveats；anomalies 归一化 list[dict]；build_response_from_state 用 detect_anomalies 代码填充；旧实现下 4 failed |
 | **T15 Evidence Gate（D2）** | ✅ 完成并**验收通过** | `7d66ad2` | Reasoning 消费 state["gate"]：has_evidence=False → 强制 confidence=low + caveats + errors，报告仍产出；文档同步（evidence_gate/architecture/README）；停用降级 2 条必红（我复跑确认） |
-| **T22b metric 名归一化** | ⬜ **待做（S4 最前面）** | — | 嵌套载荷 → `data.openInterest` / `data.涨停家数` 一条规则都不命中 |
-| **T22c 前值按 symbol 隔离** | ⬜ **待做（S4）** | — | BTC 1e9 → ETH 3e9 被报成「OI 剧烈增长 200.0%」（用户可见的错误结论） |
-| **T24–T26、T21** | ⬜ 未开始 | — | S4（T24）→ S5（T21 → T26 → T25） |
+| **T22b metric 名归一化** | ✅ 完成并验收（S4） | `e7c2272` | `_metric_basename`：去掉数组下标、取末段基名后与别名表精确比对（保住 T22 的"不做子串匹配"裁决，noise/openInterestRate 仍不误命中）；12 条新用例**全部经过 `normalize_tool_result`**（三种载荷形状 + A 股 `data.涨停家数` + 反向对照）；反向验证：恒等函数 → 7 条必红 |
+| **T22c 前值按 symbol 隔离** | ✅ 完成并验收（S4） | `08c3656` | 前值 key = `(metric_basename, symbol)`（symbol 取 `arguments.symbol` → domain → "unknown"）；同一次调用内混入多 symbol 也隔离；market_cache 存储取舍已写入注释（TTL/LRU 淘汰与"前值过期不可比"一致，丢前值=少报不误报）+ 拿不到前值留 debug；6 条新用例；反向验证：停用 symbol 作用域 → 5 条必红（含"三次独立调查"复现用例——初版 parametrize 写法被反向验证抓出是假阳性，已改为单用例内顺序执行） |
+| **T24 注册表** | ✅ 完成并验收（S4，**并入 T34 的注册表断言**） | `3bef4f4` | ①`registry_text` 删 `or ALL_TOOLS` 静默回退、health 始终附加、空域 warning；②hk_quote/hk_search domain→`hk_stock`、hk_search category 对齐 technical；③BY_NAME 重复 operationId：cross 优先→先注册者为规范条目（保住 F10 钉死的 quote/search→a_share 与 snapshot→cross），占位条目显式进 `SHARED_BY_NAME`；T34 的 `assert A or B` 恒真改 `and`；7 条新用例，三处改动逐项反向验证必红 |
+| **T21、T25、T26** | ⬜ 未开始 | — | S5（T21 → T26 → T25） |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
-| **T28–T35** | ⬜ 未做 | — | §4 |
+| **T28–T33、T34 剩余、T35** | ⬜ 未做 | — | §4（T34 的注册表条目已完成，见 T24 行） |
 
 **S1 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
 
@@ -215,6 +217,39 @@
      ```
      后两条是**用户可见的错误结论**（D3 已把 anomalies 写进报告与 `daily_states`）。→ **T22c**。
 
+**S4 执行记录（S4 会话自记，2026-10-05；**待主 Agent 验收**）**
+
+- **T22b（`e7c2272`）**：`_metric_basename` 去数组下标、取末段基名，`_matches_metric` 用基名比对别名表；
+  只改"匹配哪条规则"，`value_semantics` 比对值不动。12 条新用例全部经过 `normalize_tool_result`
+  （`{"openInterest":...}` / `{"data":{"openInterest":...}}` / `{"data":[{"openInterest":...}]}` 三种形状
+  → 都报 `oi_spike`；A 股 `data.涨停家数` → 报 `limit_up_surge`；`data.noise` / `data.openInterestRate`
+  反向对照 → 不触发）。反向验证：`_metric_basename` 换恒等函数 → **7 failed**（嵌套/数组/A 股形状全红，扁平对照仍绿）。
+- **T22c（`08c3656`）**：前值 key 从 metric 改为 `(metric_basename, symbol)`；`_prev_scope` 取
+  `arguments.symbol` → domain → `"unknown"`；`prev_in_call` 同步按 (基名, symbol) 隔离（同一次调用
+  混入多 symbol 也不互相当前值）。前值仍存 `market_cache`（取舍已写注释：TTL/LRU 淘汰与
+  "前值过期不可比"语义一致，丢前值=少报不误报）+ 拿不到前值留 `logger.debug`。
+  6 条新用例（三次独立调查 `[]/[]/[]`、同 symbol 1e9→1.2e9 仍报 critical、同调用多 symbol 隔离、
+  缺 symbol 退回 domain 的三种变体）。反向验证：symbol 作用域停用 → **5 failed**。
+  ⚠️ 过程发现：初版把"三次调查"写成 `@parametrize` 三条独立用例——autouse fixture 每条清缓存，
+  污染根本不会发生，**反向验证时那 3 条没红**，据此改成了单用例内顺序执行后才红。
+  又是一次"假阳性测试"教训，已写进用例 docstring。
+- **T24（`3bef4f4`）**：①`registry_text` 按"始终附加 unknown/health"实现，删 `or ALL_TOOLS`
+  （us_stock 空域旧实现返回全量 40 个工具），空域 `logger.warning`；②`hk_quote`/`hk_search`
+  domain→`hk_stock`，`hk_search` category→`technical`（与 A 股 search 对齐）；
+  ③`BY_NAME` 重复 operationId 不再"后注册者静默胜出"：显式规则 = cross 条目优先
+  （klines/snapshot），否则先注册者为规范条目（quote/search）——保住了
+  `test_normalizer_f10.py` 钉死的 `quote/search → a_share` 与既有 `snapshot → cross` 语义，
+  占位条目进新暴露的 `SHARED_BY_NAME`（规范 35 + 共享 5 = 40，不丢不重）。
+  T34 里注册表那条恒真 `assert A or B` 改 `and`，并按其要求补了
+  `registry_text(domains=["us_stock"])` 用例。7 条新用例；反向验证：三处改动逐项改坏 → **5 failed**。
+- **三道门禁（每个提交前均独立跑过）**：`ruff check` + `ruff format --check` 全绿；
+  `pytest -q` → `466`（T22b 后）→ `472`（T22c 后）→ **`479 passed + 2 skipped`**（T24 后），
+  `mcp` 与 `http` 双模式各跑一次全量，数字一致。
+- 测试数增量：456 → 481 收集 = +25（T22b +12、T22c +6、T24 +7）；`test_anomaly_detector.py` 现 56 条、
+  `test_tool_registry_multi_domain.py` 现 27 条。
+- 遗留：§1.3 的复现脚本在 `.tmp/`（`verify_t22_metric_names.py` / `verify_t22_prev_scope.py`），
+  未提交；S4 修完后两个脚本输出已符合预期（嵌套载荷 `['oi_spike']`、三次调查 `[]/[]/[]`）。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -229,7 +264,7 @@
 | **S1 修红**（独占一段，阻塞一切） | T18b → T17T → T18T → T12 收尾 | §0 全部 + §1 全部 + §2 全部 + 附录 A | T18b（产品）与 T18T（测试）互相牵制，必须在同一会话里把基线跑绿；T12 只是一行 `pyproject`，顺手 | **`mcp` 与 `http` 双模式全绿**；4 个提交 |
 | **S2 运行时 / 缓存 / 成本** | ✅ **已完成并验收**：T18c → T19 → T27 → T23 | — | 见 §0.4 "S2 验收复核记录" | `436 passed + 2 skipped`（双模式）；6 个提交；但 S3 需先补 **T19b / T23b** |
 | **S3 检测与报告契约** | ✅ **已完成并验收**：T19b → T23b → T22 → T20 → T15 | — | 见 §0.4 "S3 验收复核记录" | `454 passed + 2 skipped`（双模式）；7 个提交；但 S4 需先补 **T22b / T22c** |
-| **S4 注册表 + 异常检测尾巴** | **T22b** → **T22c** → T24（**把 T34 里 `test_tool_registry_multi_domain.py` 的断言并入 T24**） | §0 + §1.4 + 附录 A/B + §3 的 T22b/T22c/T24 + §4 的 T34 | T22b/T22c 是上一段验收发现的**正确性缺陷**（异常检测漏报 / 误报），必须先清掉；T24 牵动全量 `tool_registry` | 全绿；3 个提交 |
+| **S4 注册表 + 异常检测尾巴** | ✅ **已完成**：T22b → T22c → T24（T34 的注册表断言已并入） | — | 见 §0.4 表格与下方"S4 执行记录" | `479 passed + 2 skipped`（双模式）；3 个提交；**待主 Agent 验收** |
 | **S5 请求生命周期** | T21 → T26 → T25 | §0 + 附录 A/B + §3 的 T21/T26/T25 | sqlite 跨线程、SSE 收尾、前端并发，都是"一次请求从进到出"；T25 是前端，放最后 | 全绿 + 手工看一眼界面；3 个提交 |
 | **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
 | **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
