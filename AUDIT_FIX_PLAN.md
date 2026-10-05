@@ -77,11 +77,11 @@
 
 ### 0.4 当前进展
 
-> **当前 HEAD：`3bef4f4`（S4 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）
-> + S4（T22b/T22c/T24，含 T34 的注册表断言）均已完成：
-> **479 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S4 会话实测）。
-> ruff check / ruff format --check 全绿。三个任务各做了「改坏必红」反向验证（详见 §0.4 表格备注与 S4 执行记录）。
-> 行号基准 = `44c307f`（S1–S4 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
+> **当前 HEAD：`fe837b1`（S5 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）
+> + S4（T22b/T22c/T24，含 T34 的注册表断言）+ S5（T24b/T21/T26/T25）均已完成：
+> **492 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S5 会话实测）。
+> ruff check / ruff format --check 全绿。T21/T26/T25 各做了「改坏必红」反向验证（详见 §0.4 表格备注与 S5 执行记录）。
+> 行号基准 = `44c307f`（S1–S5 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
 > `execute` / `_do_execute` / `_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > T20/T15 等动手时仍以锚点片段 grep 为准）。
 > 备注：S1/S2 执行会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在这些会话不出现；
@@ -109,8 +109,10 @@
 | **T22b metric 名归一化** | ✅ 完成并验收（S4） | `e7c2272` | `_metric_basename`：去掉数组下标、取末段基名后与别名表精确比对（保住 T22 的"不做子串匹配"裁决，noise/openInterestRate 仍不误命中）；12 条新用例**全部经过 `normalize_tool_result`**（三种载荷形状 + A 股 `data.涨停家数` + 反向对照）；反向验证：恒等函数 → 7 条必红 |
 | **T22c 前值按 symbol 隔离** | ✅ 完成并验收（S4） | `08c3656` | 前值 key = `(metric_basename, symbol)`（symbol 取 `arguments.symbol` → domain → "unknown"）；同一次调用内混入多 symbol 也隔离；market_cache 存储取舍已写入注释（TTL/LRU 淘汰与"前值过期不可比"一致，丢前值=少报不误报）+ 拿不到前值留 debug；6 条新用例；反向验证：停用 symbol 作用域 → 5 条必红（含"三次独立调查"复现用例——初版 parametrize 写法被反向验证抓出是假阳性，已改为单用例内顺序执行） |
 | **T24 注册表** | ✅ 完成并验收（S4，**并入 T34 的注册表断言**） | `3bef4f4` | ①`registry_text` 删 `or ALL_TOOLS` 静默回退、health 始终附加、空域 warning；②hk_quote/hk_search domain→`hk_stock`、hk_search category 对齐 technical；③BY_NAME 重复 operationId：cross 优先→先注册者为规范条目（保住 F10 钉死的 quote/search→a_share 与 snapshot→cross），占位条目显式进 `SHARED_BY_NAME`；T34 的 `assert A or B` 恒真改 `and`；7 条新用例，三处改动逐项反向验证必红 |
-| **T21、T25、T26** | ⬜ 未开始 | — | S5（**先 T24b** → T21 → T26 → T25） |
-| **T24b** `.gitignore` 临时目录写错 | ⬜ **待做（S5 最前面，一行）** | — | `ceea711` 加的是 `.temp` 而不是 `.tmp/`（`git check-ignore` 证实未生效），且丢了行尾换行；`.tmp/` 里还有 3 个 `.py.bak` 生产源码备份 |
+| **T24b** `.gitignore` 临时目录写错 | ✅ 完成（S5） | `6c045cd` | `.temp` → `.tmp/` + 补行尾换行；删除 .tmp/ 里 4 个回退备份（3 个 .py.bak + tool_registry.t24.py，源码已确认干净全量绿）；`git check-ignore` 已生效、`git status` 不再出现 `.tmp/` |
+| **T21 sqlite 跨线程** | ✅ 完成并验收（S5） | `e026f0b` | 连接改 `threading.local()` 每线程一条 + 连接登记表（`close()` 覆盖所有线程）+ 代数计数（close 后旧线程句柄按代数重建）；WAL/autocommit 工厂与落库 warning 日志未动（T3/规则 4）；复现脚本 ProgrammingError 实测 → 修后 4 线程并发落库全成功；新增 tests/test_memory_thread_safety.py 4 条 + test_persistence 落库失败 WARNING 防回归 1 条；反向验证（退回共享单连接 / warning 降 debug）3+1 条必红 |
+| **T26 SSE 错误分支** | ✅ 完成并验收（S5） | `7f635ff` | ①ask_stream 在返回 StreamingResponse 前 eager `_get_orchestrator()`+`_ensure_graph()` → 图构建失败 HTTP 层 500（死分支 except ValueError 删除；_parse_ask_payload 留 try 外以免 400 被改写 500）；②finally 在 cancel 后 `await gather(task, return_exceptions=True)` 收尸；运行期错误走 200+SSE 事件的契约保留；新增 2 条用例旧实现下均必红（**教训**：预算超时路径的 task.cancel() 会清掉 Future 未检索标记、掩盖 warning——测试必须用客户端断开 aclose 场景才暴露） |
+| **T25 前端健壮化** | ✅ 完成并验收（S5） | `fe837b1` | ①计时器/AbortController 按请求持有（局部变量），finally 只清自己的；②ask() 防重入：追问 → superseded+abort 静默接管旧请求，不并发两条，接管期不解锁按钮；③addAILoader 返回行、removeLoader(row) 只删自己的；④severity 白名单渲染（low/medium/high/critical，未知不显示徽章），异常卡逐条 try/catch 降级；补 .critical 样式；新建 tests/test_web_frontend_contract.py 6 条文本契约，退回旧 index.html 全红；node --check 语法校验过 |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
@@ -290,6 +292,57 @@
 不是本项目实际用的 **`.tmp/`** —— `git check-ignore -v .tmp/...` 返回"未忽略"，`git status` 仍显示 `?? .tmp/`。
 `.tmp/` 里现在有 8 个文件（含 3 个 `.py.bak` 生产源码备份），正好是规则 3"不要 `git add -A`"要防的东西。→ **T24b**。
 
+**S5 执行记录（S5 会话自记，2026-10-05；**待主 Agent 验收**）**
+
+- **T24b（`6c045cd`）**：`.gitignore` 的 `.temp` → `.tmp/` 并补行尾换行；删除 `.tmp/` 里 4 个回退备份
+  （`base_t23b.py.bak` / `cache_t19.py.bak` / `reasoning_node_t15.py.bak` / `tool_registry.t24.py`，
+  源码已确认干净：`git diff -- app/ tests/` 为空、全量绿）。验收：`git check-ignore -v` 命中、
+  `git status --porcelain` 不再出现 `.tmp/`。纯仓库卫生，无测试。
+- **T21（`e026f0b`）**：复现脚本实测跨线程 `save_turn` 抛 `ProgrammingError`（计划里的复现块）。
+  修法取方案 1：`threading.local()` 每线程一条连接 + **连接登记表**（`close()` 借此关闭所有线程的连接）
+  + 代数计数（close 后其它线程手里缓存的旧句柄在下一次 `conn` 访问时按代数检测重建，不悬空）。
+  WAL/autocommit 工厂、落库失败 warning 日志都未动（T3 / 规则 4）。
+  新增 `tests/test_memory_thread_safety.py` 4 条（双线程落库、同线程连接复用不回退、
+  close 覆盖其它线程的连接、close 后重建）+ `test_persistence.py` 落库失败 WARNING 防回归 1 条。
+  反向验证：①`conn` 退回共享单连接 → 3 条必红；②persistence 的 warning 降 debug → 1 条必红。
+  `test_persistence` / `test_data_integrity` / `test_market_memory` / `test_conversation` 全部保持绿。
+- **T26（`7f635ff`）**：①`ask_stream` 在返回 `StreamingResponse` **之前** eager 调
+  `_get_orchestrator()` + `_ensure_graph()`——图构建失败现在 HTTP 层就是 500；
+  死分支 `except ValueError` 删除；`_parse_ask_payload` 留在 try 外（它抛 HTTPException(400)，
+  放进 try 会被 except Exception 改写成 500）。②`finally` 在 cancel 后补
+  `await asyncio.gather(task, return_exceptions=True)` 收尸。
+  新增 2 条用例：`_ensure_graph` 抛异常 → 500（旧实现 200）；pump 带异常结束 → 不触发
+  "Task exception was never retrieved"。旧实现下两条均红。
+  **教训（写用例时实测两次）**：a) TestClient 的 portal 循环常开，task 何时被 GC 不可控——
+  warning 断言必须自己在 `asyncio.run` 里把 generator 消费到结束、**关闭循环**后再 gc；
+  b) 预算超时全量消费路径**测不出**这个缺陷：deadline 分支的 `task.cancel()` 恰好清掉 Future
+  的未检索标记，把问题掩盖掉——必须用"客户端断开（`aclose()`）且 pump 已带异常结束"的场景。
+- **T25（`fe837b1`）**：①兜底计时器/AbortController 改为 ask() 局部变量，finally 只 clearTimeout 自己的；
+  ②`ask()` 防重入：`activeRequest` 单飞——追问时 superseded+abort 静默接管旧请求
+  （旧请求收场不弹错误气泡、不留 loader），接管期间不解锁按钮；
+  ③`addAILoader` 返回行元素、`removeLoader(row)` 只删自己的行；④`severityBadge` 白名单渲染
+  （low/medium/high/critical，未知值不显示徽章），异常卡**逐条 try/catch** 降级，
+  补了缺失的 `.anomaly-severity.critical` 样式。
+  新建 `tests/test_web_frontend_contract.py` 6 条文本契约（计划要求的三条全覆盖 + loader 行作用域 +
+  防重入 + 逐条降级）；反向验证：`git checkout HEAD -- app/web/index.html` 退回旧实现 → **6 条全红**。
+  另用本机 node v24 `--check` 对内联 JS 做了语法校验（非提交内容，纯自检）。
+- **三道门禁（每个提交前均独立跑过）**：`ruff check` + `ruff format --check` 全绿；
+  `pytest -q` → 486（T21 后）→ **492 passed + 2 skipped**（T26 后 +2、T25 后 +6），
+  `mcp` 与 `http` 双模式各跑一次全量，数字一致。T24b 为 .gitignore 一行，同样跑了全量才提交。
+- 测试数增量：481 → 494 收集 = **+13**（T21 +5：`test_memory_thread_safety.py` 新建 4 条 +
+  `test_persistence.py` 落库失败 WARNING 1 条；T26 +2；T25 +6：`test_web_frontend_contract.py` 新建）；
+  passed 479 → 492 = +13，对得上。
+- **T25 手工验证步骤**（前端无自动化环境，交验收者执行）：
+  1. `uvicorn app.main:app`（或 `python -m app.main`）起服务，浏览器开 `http://127.0.0.1:8000`；
+  2. **并发互踩**：发一个问题，趁 loader 还在时再回车追问一次 → 应看到旧请求静默消失
+     （无"调查失败"气泡、无残留 loader 行）、新请求正常出报告；连发三次追问不再出现
+     "先结束的请求让后到的失去中止手段"现象（旧实现：后到请求必须干等服务端超时）；
+  3. **severity 健壮化**：临时把后端 `build_response_from_state` 产出的 anomalies 里塞一条
+     `{"severity": 1}`（或在浏览器 console 里拦截 renderResult 改数据）→ 报告仍完整渲染，
+     该条只是不显示徽章，页面不再整体变成"调查失败"；
+  4. **正常路径回归**：正常提问/追问/重试按钮、loading 行的逐节点进度与消失时机与改前一致。
+- 遗留：无新立任务。`.tmp/` 里的 `verify_*` 复现脚本未提交（已被 `.tmp/` ignore 覆盖）。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -305,7 +358,7 @@
 | **S2 运行时 / 缓存 / 成本** | ✅ **已完成并验收**：T18c → T19 → T27 → T23 | — | 见 §0.4 "S2 验收复核记录" | `436 passed + 2 skipped`（双模式）；6 个提交；但 S3 需先补 **T19b / T23b** |
 | **S3 检测与报告契约** | ✅ **已完成并验收**：T19b → T23b → T22 → T20 → T15 | — | 见 §0.4 "S3 验收复核记录" | `454 passed + 2 skipped`（双模式）；7 个提交；但 S4 需先补 **T22b / T22c** |
 | **S4 注册表 + 异常检测尾巴** | ✅ **已完成并验收**：T22b → T22c → T24（T34 的注册表断言已并入） | — | 见 §0.4 "S4 验收复核记录" | `479 passed + 2 skipped`（双模式）；4 个提交；但 S5 需先补 **T24b** |
-| **S5 请求生命周期** | **T24b**（一行） → T21 → T26 → T25 | §0 + 附录 A/B + §3 的 T24b/T21/T26/T25 | T24b 是仓库卫生一行，先清掉；sqlite 跨线程、SSE 收尾、前端并发都是"一次请求从进到出"；T25 是前端，放最后 | 全绿 + 手工看一眼界面；4 个提交 |
+| **S5 请求生命周期** | ✅ **已完成**：T24b（一行） → T21 → T26 → T25 | — | 见 §0.4 表格与下方"S5 执行记录"（含 T25 手工验证步骤） | `492 passed + 2 skipped`（双模式）；4 个提交；**待主 Agent 验收**（T25 手工看一眼界面） |
 | **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
 | **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
 | **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
