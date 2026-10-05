@@ -162,12 +162,30 @@ async def test_stream_emits_node_events(graph):
 @pytest.mark.skip(reason="P3 特性 — MarketAnalystNode 依赖 by_category")
 async def test_analysis_finding_structure():
     """finding 的结构应符合 spec：{analyst, digest, tools_used, failed}。"""
+    from contextlib import asynccontextmanager
+
     from app.graph.nodes.analysts.base import MarketAnalystNode
+
+    # T18T：_runtime 不能是 None —— __call__ 现在无条件进入 gateway_session()
+    class _NoGatewayRuntime:
+        def __init__(self):
+            self.sessions = 0
+
+        @asynccontextmanager
+        async def gateway_session(self):
+            self.sessions += 1
+            try:
+                yield None
+            finally:
+                self.sessions -= 1
+
+        def truncate(self, result):
+            pass
 
     node = object.__new__(MarketAnalystNode)
     node.category = "test"
     node.settings = Settings()
-    node._runtime = None
+    node._runtime = _NoGatewayRuntime()
     node._execute_tools = lambda *a, **k: ([])
 
     result = await node({})

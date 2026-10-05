@@ -9,6 +9,7 @@
 """
 
 import types
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -19,6 +20,33 @@ from app.graph.nodes.analysts.base import MarketAnalystNode
 # ------------------------------------------------------------------ #
 # Fixtures                                                            #
 # ------------------------------------------------------------------ #
+
+
+class _NoGatewayRuntime:
+    """T18T：只提供 analyst 骨架需要的接口 —— 会话（空实现）+ truncate。
+
+    背景：T18 之后 MarketAnalystNode.__call__ 无条件进入
+    ``self._runtime.gateway_session()``，旧 fixture 把 ``_runtime`` 设成 None
+    （或用缺 ``gateway_session`` 的 FakeRuntime 整体替换），AttributeError 被
+    base.py 的兜底 except 吞成 ``failed=True``，用例再取 ``result["results"]``
+    变成难懂的 KeyError。本 stub 只模拟会话边界，不模拟工具执行。
+    """
+
+    def __init__(self):
+        self.sessions = 0   # 当前并发深度（进出相抵）
+        self.entered = 0    # 累计进入次数（只增，供事后断言）
+
+    @asynccontextmanager
+    async def gateway_session(self):
+        self.sessions += 1
+        self.entered += 1
+        try:
+            yield None
+        finally:
+            self.sessions -= 1
+
+    def truncate(self, result):
+        pass
 
 
 @pytest.fixture()
@@ -48,7 +76,7 @@ def base_node():
     node = object.__new__(MarketAnalystNode)
     node.settings = settings
     node.category = "nonexistent"  # 不匹配任何注册类别
-    node._runtime = None
+    node._runtime = _NoGatewayRuntime()
     return node
 
 
@@ -83,6 +111,8 @@ async def test_analyst_with_no_matching_tools_returns_empty(node: MarketAnalystN
     assert len(result["findings"]) == 1
     assert result["findings"][0]["failed"] is False
     assert result["errors"] == []
+    # 走的仍是生产 __call__ 骨架：会话确实被进入过（T18T）
+    assert node._runtime.entered >= 1
 
 
 # ------------------------------------------------------------------ #
@@ -142,7 +172,7 @@ def node(monkeypatch):
     n = object.__new__(MarketAnalystNode)
     n.settings = settings
     n.category = "nonexistent"
-    n._runtime = None
+    n._runtime = _NoGatewayRuntime()
     return n
 
 
@@ -202,7 +232,7 @@ async def test_execute_skips_non_whitelist_no_stock(mock_runtime, monkeypatch):
 
     # Mock at instance level — __init__ already set self._runtime = ToolRuntime(settings),
     # so we replace the instance attribute rather than trying to patch the global class.
-    class FakeRuntime:
+    class FakeRuntime(_NoGatewayRuntime):
         async def execute(self, tool_name, arguments, sig):
             executed_tools.append(tool_name)
             return types.SimpleNamespace(
@@ -252,6 +282,9 @@ async def test_execute_skips_non_whitelist_no_stock(mock_runtime, monkeypatch):
         f"预期跳过 overview（数据量过大），但执行了: {executed_tools}"
     )
     assert "quote_tencent_quote_get" not in executed_set, f"预期跳过 quote，但执行了: {executed_tools}"
+    # T18T：显式断言无错误 —— 将来任何"被兜底 except 吞掉"的回归都会以此变红，
+    # 而不是变成难懂的 KeyError: 'results'
+    assert result.get("errors") == []
 
 
 def test_domain_default_symbol_per_category():
