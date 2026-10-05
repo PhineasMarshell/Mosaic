@@ -77,11 +77,11 @@
 
 ### 0.4 当前进展
 
-> **当前 HEAD：`fe837b1`（S5 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）
-> + S4（T22b/T22c/T24，含 T34 的注册表断言）+ S5（T24b/T21/T26/T25）均已完成：
-> **492 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S5 会话实测）。
-> ruff check / ruff format --check 全绿。T21/T26/T25 各做了「改坏必红」反向验证（详见 §0.4 表格备注与 S5 执行记录）。
-> 行号基准 = `44c307f`（S1–S5 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
+> **当前 HEAD：`1840f6b`（S6 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）
+> + S4（T22b/T22c/T24）+ S5（T24b/T21/T26/T25）+ S6（T28/T29/T30+D4/T31）均已完成：
+> **499 passed + 0 skipped（全量再无 skip），`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S6 会话实测）。
+> ruff check / ruff format --check 全绿。T28–T31 每条都先探针证实假阳性、改后做「改坏必红」反向验证（详见 §0.4 表格与 S6 执行记录）。
+> 行号基准 = `44c307f`（S1–S6 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
 > `execute` / `_do_execute` / `_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > T20/T15 等动手时仍以锚点片段 grep 为准）。
 > 备注：S1/S2 执行会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在这些会话不出现；
@@ -116,7 +116,11 @@
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
-| **T28–T33、T34 剩余、T35** | ⬜ 未做 | — | §4（T34 的注册表条目已完成，见 T24 行） |
+| **T28 finding 结构用例** | ✅ 完成（S6） | `efef499` | 旧 fake 是非 awaitable 的 lambda → 走异常降级分支 failed=True，isinstance 断言照过（探针证实）；改 MethodType 绑定 async fake，断言 `failed is False` / `tools_used == []` / `errors == []`，去 skip；反向验证（fake 改回 lambda）必红 |
+| **T29 reasoning 副本** | ✅ 完成（S6） | `5495702` | 删 `_ensure_lists` 副本（把非法 confidence 置 medium、与生产置 low 相反），复用 `_stub_reasoning_engine` 真调 `reason()`，6 条用例全部走生产后处理；`defaults_to_low` 断言 low；反向验证（生产兜底改回 medium）必红 |
+| **T30 budget 守卫 + D4** | ✅ 完成（S6） | `3a890a1` | ①显式 budget 优先（None 才回退 len），budget=0 = 不执行；②`max_tool_calls` 与 budget 取 min 成为真实上限（此前只有 /health 消费点）；③**语义裁决：budget 计真实执行次数**——`budget -= 1` 移到 execute 之前，跳过的调用（unknown key/缺 symbol/T27 重复）不消耗预算（探针实测旧实现 budget=n 可能只执行 1 次）；删恒真 co_varnames 断言，新增 6 条走真实 `_execute_tools` 的用例（实例级 RecordingRuntime），旧实现下 4 条必红 |
+| **T31 e2e 解封** | ✅ 完成（S6） | `1840f6b` | `test_full_flow_produces_report` 去掉过期 skip（"P0 图为 supervisor→kernel"），真跑且绿（mock LLM + mock tools，断言 report 非空 + 三 analyst finding）；反向验证：builder 退回不注册 analyst 的旧拓扑 → 用例报错。全量从此 **0 skipped** |
+| **T32、T33、T34 剩余、T35** | ⬜ 未做 | — | §4（S7） |
 
 **S1 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
 
@@ -376,6 +380,44 @@
   2. 既有测试仍用 `mem.conn.close()` 直连句柄关闭；新引入的 `close()` 才会按代数重建。
      将来若有测试"关掉 `mem.conn` 后继续用同一个 `mem`"，会拿到已关闭的句柄 —— 记得用 `memory.close()`。
 
+**S6 执行记录（S6 会话自记，2026-10-05；**待主 Agent 验收**）**
+
+- 每条都先按要求证明"现有测试在（被改坏的）旧行为下不会红"，再改，再反向验证。
+- **T28（`efef499`）**：探针实测——非 awaitable 的 lambda fake 使 `await` 抛 TypeError、
+  被 base.py 兜底 except 吞掉，finding 落在**异常降级分支**（failed=True、
+  digest="分析失败: …"），而 4 条 isinstance 断言全部通过 → 假阳性坐实。
+  改法：`types.MethodType` 绑定的 async fake（返回 []），断言 `failed is False`、
+  `tools_used == []`、`errors == []`（防再次静默滑进降级分支），去 skip。
+  反向验证：fake 改回 lambda → 必红。
+- **T29（`5495702`）**：探针实测——真 `reason()` 对非法 confidence 返回 **low**，
+  而副本断言 medium（与生产相反）且从不调 reason()。删副本，复用本文件
+  `_stub_reasoning_engine`（照 test_data_integrity._stub_reasoning 模式），
+  6 条用例全部真调 `reason()`；`test_validate_invalid_confidence_defaults_to_medium`
+  改名 `…_defaults_to_low` 并断言 low。反向验证：生产兜底改回 medium → 必红。
+  顺带清了 ruff F401/F811（顶层 MarketIntelligence 导入已无消费点）。
+- **T30 + D4（`3a890a1`）**：探针实测三个缺陷——①显式 `budget=0` 被 `or` 吞成"全部执行"
+  （2 个调用执行了 2 个）；②`max_tool_calls=2`、3 个不同工具执行了 3 个（无消费点）；
+  ③budget=3、[未知,未知,有效,有效] 只执行 1 个（顶部扣减，被跳过的调用照样扣）。
+  修复：`raw_budget is None` 才回退 len(tool_calls)；`max_tool_calls` 与 budget 取 min
+  （生效时打 info 日志）；`budget -= 1` 移到**真正 execute 之前**——语义裁决为
+  **"budget 计真实执行次数"**（方案①），已写进 base.py 注释与测试 docstring。
+  删掉恒真 `co_varnames` 断言，新增 6 条用例（`_make_budget_node` 用实例级
+  `_RecordingRuntime` 记录真实执行——`mock_runtime` 打的类补丁在实例 runtime 被替换后
+  根本不会触到，这也是旧用例恒真的原因之一）。反向验证：base.py 整体退回旧实现
+  → 4 条必红（budget_limits / defaults_to_all 两条两种实现都过，属预期）。
+  连带确认：supervisor 的 route 一直带 `budget=len(steps)`，D4 的 None 分支与
+  max_tool_calls 上限不影响现有 planner 流程。
+- **T31（`1840f6b`）**：`test_full_flow_produces_report` 去掉过期 skip，真跑且绿
+  （该文件 mock LLM + mock tools，断言 report 非空 + technical/fundamental/moneyflow 三个 finding）。
+  反向验证：builder 临时退回"不注册 analyst"→ 用例**报错**（对图拓扑不再失明）；还原后 3 passed。
+  全量测试从此 **0 skipped**（T28/T31 解封了仅剩的两个 skip）。
+- **三道门禁（每个提交前均独立跑过）**：`ruff check` + `ruff format --check` 全绿；
+  `pytest -q` → 493+1skip（T28 后）→ 493+1skip（T29 后）→ 498+1skip（T30 后）→
+  **499 passed + 0 skipped**（T31 后），`mcp` 与 `http` 双模式各跑一次全量，数字一致。
+- 测试数增量：494 → 499 收集（净 +5：T30 净 +5——删 1 恒真、加 6 条；T28/T31 是 skip→run，
+  不改收集数）；passed 492 → 499，skipped 2 → 0。
+- 遗留：无新立任务。探针脚本在 `.tmp/`（`probe_t28.py` / `probe_t30.py`），未提交。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -392,7 +434,7 @@
 | **S3 检测与报告契约** | ✅ **已完成并验收**：T19b → T23b → T22 → T20 → T15 | — | 见 §0.4 "S3 验收复核记录" | `454 passed + 2 skipped`（双模式）；7 个提交；但 S4 需先补 **T22b / T22c** |
 | **S4 注册表 + 异常检测尾巴** | ✅ **已完成并验收**：T22b → T22c → T24（T34 的注册表断言已并入） | — | 见 §0.4 "S4 验收复核记录" | `479 passed + 2 skipped`（双模式）；4 个提交；但 S5 需先补 **T24b** |
 | **S5 请求生命周期** | ✅ **已完成并验收**：T24b（一行） → T21 → T26 → T25 | — | 见 §0.4 "S5 验收复核记录"（T25 的**浏览器手工步骤仍未做**，见该节末尾） | `492 passed + 2 skipped`（双模式）；5 个提交；**无新立任务** |
-| **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
+| **S6 测试有效性（上）** | ✅ **已完成**：T28 → T29 → T30（含 D4 budget）→ T31 | — | 见 §0.4 表格与下方"S6 执行记录" | `499 passed + 0 skipped`（双模式）；4 个提交；**待主 Agent 验收** |
 | **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
 | **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
 
