@@ -116,9 +116,12 @@ def graph():
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="P3 特性 — 三 analyst Send 并行，P0 图为 supervisor→kernel")
 async def test_full_flow_produces_report(graph):
-    """全链路：supervisor → [analysts] → gate → reasoning → critic → END。"""
+    """全链路：supervisor → [analysts] → gate → reasoning → critic → END。
+
+    T31：旧的 skip 理由（"P3 特性 — 三 analyst Send 并行，P0 图为 supervisor→kernel"）
+    已过期——app/graph/builder.py 早已注册三个 analyst，这是全文件唯一一条
+    真全链路用例，不该躺在 skip 里。"""
     result = await graph.ainvoke(
         {
             "question": "今天A股行情如何？",
