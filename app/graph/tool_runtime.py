@@ -126,6 +126,11 @@ class ToolRuntime:
     # 公共 API                                                            #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _signature(tool_name: str, arguments: dict) -> str:
+        """同一次运行内的去重签名：tool_name + 排序后的参数。"""
+        return f"{tool_name}:{sorted(arguments.items())}"
+
     async def execute(self, tool_name: str, arguments: dict, called_signatures: set[str]) -> ToolResult:
         """执行单个工具调用。
 
@@ -137,8 +142,24 @@ class ToolRuntime:
         Returns:
             ToolResult — 包含 normalized 数据、状态、错误信息
         """
+        signature = self._signature(tool_name, arguments)
+
+        # T27：同一次运行里同签名已真实执行过 → 明确跳过（partial + note）。
+        # 旧实现这里 return None 被调用方当成"无缓存"，同签名第 3 次调用
+        # 会**绕过缓存**再打一次真实网关——与"去重"意图相反。
+        if signature in called_signatures:
+            logger.info("Skipping duplicate call %s (already executed this run)", tool_name)
+            return ToolResult(
+                tool=tool_name,
+                arguments=arguments,
+                status=STATUS_PARTIAL,
+                partial=True,
+                note="重复调用已跳过：同签名工具本次运行已执行过，结果已在 state 中",
+                normalized=[],
+            )
+
         # 检查缓存命中
-        cached = self._check_cache(tool_name, arguments, called_signatures)
+        cached = self._check_cache(tool_name, arguments, called_signatures, signature)
         if cached is not None:
             logger.info("Cache hit for %s", tool_name)
             return cached
@@ -149,6 +170,9 @@ class ToolRuntime:
         # 只缓存成功/部分成功的结果。T5：缓存里存**深拷贝**，使后续 truncate
         # 对工作对象的原地改写不会污染缓存（旧实现存同一实例，truncate 会改到缓存）。
         if result.status in (STATUS_SUCCESS, STATUS_PARTIAL):
+            # T27：真实执行成功后**立即**登记签名（旧实现只在缓存命中时登记，
+            # 导致 called_signatures 阻止不了重复调用）。
+            called_signatures.add(signature)
             cache_key = _make_cache_key(tool_name, arguments)
             ttl = _resolve_ttl(tool_name, self.settings)
             market_cache.set(cache_key, result.model_copy(deep=True), ttl=ttl)
@@ -252,12 +276,9 @@ class ToolRuntime:
         tool_name: str,
         arguments: dict,
         called_signatures: set[str],
+        signature: str,
     ) -> ToolResult | None:
-        """检查缓存是否命中。"""
-        signature = f"{tool_name}:{sorted(arguments.items())}"
-        if signature in called_signatures:
-            return None
-
+        """检查缓存是否命中；命中时登记签名（本次运行内不再重复执行）。"""
         cache_key = _make_cache_key(tool_name, arguments)
         cached = market_cache.get(cache_key)
         if cached is not None:

@@ -186,6 +186,9 @@ class MarketAnalystNode:
         stocks = self._extract_stocks(state)
         results: list[ToolResult] = []
         budget = int(mine.get("budget") or len(mine["tool_calls"]))
+        # T27：route 里重复的 (tool, arguments) 在这里真正跳过，
+        # 不再依赖下游 execute 的签名集合（那只挡得住"已成功执行过"的）。
+        seen: set[tuple[str, tuple]] = set()
 
         for tc in mine["tool_calls"]:
             if budget <= 0:
@@ -207,6 +210,12 @@ class MarketAnalystNode:
                     # T8：跳过必须可见（旧实现是 debug，功能没跑却看不出）。
                     logger.warning("%s 跳过 %s（缺少 symbol 且问题中无 6 位代码）", self.category, tool_key)
                     continue
+
+            dedup_key = (meta.tool_name, tuple(sorted(arguments.items())))
+            if dedup_key in seen:
+                logger.warning("%s 跳过重复 tool_call %s（同签名已在本次 route 中出现）", self.category, tool_key)
+                continue
+            seen.add(dedup_key)
 
             results.append(await self._runtime.execute(meta.tool_name, arguments, called_signatures))
 
