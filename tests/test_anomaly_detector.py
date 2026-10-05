@@ -19,8 +19,10 @@ from app.detector.anomaly import (
     AnomalyRecord,
     _extract_numeric,
     _matches_metric,
+    _metric_basename,
     detect_anomalies,
 )
+from app.gateway.normalizer import normalize_tool_result
 from app.models.market import NormalizedDatum, ToolResult
 
 
@@ -242,3 +244,73 @@ class TestRuleCount:
         ashare_rules = [r for r in ALL_RULES if r.domain == "a_share"]
         assert len(crypto_rules) > 0, "No crypto rules defined"
         assert len(ashare_rules) > 0, "No A-share rules defined"
+
+
+# ── T22b：metric 是 normalizer 产出的 JSON 路径 —— 基名归一化 ──────────
+#
+# normalizer 对嵌套载荷产出的 metric 是 'data.openInterest' / 'data[0].openInterest'
+# 这类点分路径；T22b 之前的精确匹配拿整条路径比对别名表 → 一条规则都不命中，
+# 异常检测在生产里等于关闭（且无任何报错）。
+# 关键纪律：用例必须经过 normalize_tool_result —— 手工造 NormalizedDatum 看不到
+# 真实 metric 名，正是这批假阳性让 T22b 漏网的原因。
+
+_CRYPTO_OI_TOOL = "derivatives_history_market_derivatives_history_post"
+_ASHARE_LIMIT_UP_TOOL = "public_limit_up_count_ashare_master_limit_up_count_get"
+
+
+def _oi_payload(shape: str, value: float) -> dict:
+    if shape == "flat":
+        return {"openInterest": value}
+    if shape == "nested":
+        return {"data": {"openInterest": value}}
+    return {"data": [{"openInterest": value}]}
+
+
+class TestMetricPathNormalization:
+    @pytest.mark.parametrize(
+        "metric,expected",
+        [
+            ("openInterest", "openinterest"),
+            ("data.openInterest", "openinterest"),
+            ("data[0].openInterest", "openinterest"),
+            ("result.list[0].openInterest", "openinterest"),
+            ("data.涨停家数", "涨停家数"),
+            ("OpenInterest", "openinterest"),
+        ],
+    )
+    def test_metric_basename(self, metric, expected):
+        assert _metric_basename(metric) == expected
+
+    @pytest.mark.parametrize("shape", ["flat", "nested", "list"])
+    def test_all_payload_shapes_report_oi_spike(self, shape):
+        """三种载荷形状：第一次快照建立前值不触发，第二次 +20% 必须报 critical。"""
+        for value, expect_trigger in ((1e9, False), (1.2e9, True)):
+            result = normalize_tool_result(_CRYPTO_OI_TOOL, {"symbol": "BTCUSDT"}, _oi_payload(shape, value))
+            anomalies = detect_anomalies([result], domain="crypto")
+            types = [a.type for a in anomalies]
+            if expect_trigger:
+                assert types == ["oi_spike"], (
+                    f"shape={shape} metrics={[d.metric for d in result.normalized]} -> {types}"
+                )
+                assert anomalies[0].severity == "critical"
+            else:
+                assert types == [], f"shape={shape} 无前值不该触发，却报了 {types}"
+
+    def test_ashare_nested_metric_still_triggers(self):
+        """A 股同理：'data.涨停家数' 的基名 '涨停家数' 必须命中涨停规则。"""
+        result = normalize_tool_result(_ASHARE_LIMIT_UP_TOOL, {}, {"data": {"涨停家数": 85}})
+        assert [d.metric for d in result.normalized] == ["data.涨停家数"]
+        anomalies = detect_anomalies([result], domain="a_share")
+        assert [a.type for a in anomalies] == ["limit_up_surge"]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"data": {"noise": 3.2e9}},  # 基名 noise ≠ openInterest
+            {"data": {"openInterestRate": 3.2e9}},  # 基名 openInterestRate ≠ openInterest（保住 T22 裁决）
+        ],
+    )
+    def test_dot_prefixed_lookalikes_still_do_not_trigger(self, payload):
+        """基名归一化不是子串匹配：长得像的指标名依然不命中。"""
+        result = normalize_tool_result(_CRYPTO_OI_TOOL, {}, payload)
+        assert detect_anomalies([result], domain="crypto") == []

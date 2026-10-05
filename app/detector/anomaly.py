@@ -16,6 +16,7 @@
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -251,13 +252,27 @@ def _next_id() -> str:
     return f"anomaly-{_counter:03d}"
 
 
+def _metric_basename(metric: str) -> str:
+    """把 normalizer 产出的 JSON 路径 metric 归一到**末段基名**（T22b）。
+
+    normalizer 对嵌套载荷产出的 metric 是路径（``data.openInterest``、
+    ``data[0].openInterest``、``result.list[0].openInterest``），而规则的
+    别名表是裸指标名——拿整条路径精确比对会全部漏掉。去掉数组下标、取最后
+    一个 ``.`` 之后再比对：基名仍然是**精确**匹配，``noise`` /
+    ``openInterestRate`` 不会因此误命中（保住 T22 的"不做子串匹配"裁决）。
+    """
+    tail = re.sub(r"\[\d+\]", "", metric.strip()).split(".")[-1]
+    return tail.strip().lower()
+
+
 def _matches_metric(rule: _Rule, metric: str) -> bool:
     """检查指标名是否命中规则的**精确别名表**（T22：不再做子串匹配——
-    旧的 `'oi' in metric` 会把 noise、openInterestRate 之类全命中）。"""
+    旧的 `'oi' in metric` 会把 noise、openInterestRate 之类全命中；
+    T22b：比对前先归一到末段基名，嵌套载荷的点分路径不再漏报）。"""
     if not metric:
         return False
     aliases = {p.strip().lower() for p in rule.metric_pattern.split("|")}
-    return metric.strip().lower() in aliases
+    return _metric_basename(metric) in aliases
 
 
 def _prev_key(metric: str) -> str:
