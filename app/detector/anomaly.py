@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from app.cache import market_cache
+
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
@@ -65,20 +67,29 @@ class AnomalyRecord:
 
 
 class _Rule:
-    """单个检测规则。"""
+    """单个检测规则。
+
+    ``value_semantics``（T22）：
+    - ``absolute``：``value`` 本身就是要比较的量（清算金额、家数）；
+    - ``pct_change``：``value`` 是绝对量，必须与同一 metric 的**前值**算 % 变化再比阈值；
+      拿不到前值就不触发（宁可不报不要误报——真实 OI ≥1e9，直接比百分比阈值每条都误报）；
+    - ``ratio_to_percent``：``value`` 是小数形式的比率（fundingRate 0.002 = 0.2%），
+      先 ×100 转成百分比再比阈值。
+    """
 
     def __init__(
         self,
         rule_id: str,
         rule_type: str,
         domain: str,
-        metric_pattern: str,  # 用于匹配的指标名关键词
-        threshold: float,  # 触发阈值
+        metric_pattern: str,  # 精确匹配的指标名别名表（| 分隔，大小写不敏感）
+        threshold: float,  # 触发阈值（与 value_semantics 对应的单位）
         direction: str,  # "gt" (大于) | "lt" (小于)
         severity: str,
         description_template: str,
         possible_meaning: str,
         normal_range: str,
+        value_semantics: str = "absolute",
     ):
         self.rule_id = rule_id
         self.rule_type = rule_type
@@ -90,63 +101,71 @@ class _Rule:
         self.description_template = description_template
         self.possible_meaning = possible_meaning
         self.normal_range = normal_range
+        self.value_semantics = value_semantics
 
 
 # Crypto 衍生品异常检测规则
+# T22：metric_pattern 是**精确别名表**（旧实现的 'oi' 子串匹配会把 noise、
+# openInterestRate 之类全命中）；OI 规则语义改为**对前值的 % 变化**；
+# fundingRate 语义是"小数比率 → 百分比"（0.002 = 0.2%）。
 _CRYPTO_RULES: list[_Rule] = [
     _Rule(
         "oi_spike_high",
         "oi_spike",
         "crypto",
-        "openInterest|open_interest|oi",
-        5.0,  # > 5% 日变化 → High
+        "openInterest|open_interest|totalOi|openInterestCurrent",
+        5.0,  # 日变化 > 5% → High
         "gt",
         "high",
         "OI 短时间内快速增加 {:.1f}%",
         "杠杆多头/空头资金快速增加，市场预期加剧",
         "OI 日变化 < ±5%",
+        value_semantics="pct_change",
     ),
     _Rule(
         "oi_spike_critical",
         "oi_spike",
         "crypto",
-        "openInterest|open_interest|oi",
-        10.0,  # > 10% → Critical
+        "openInterest|open_interest|totalOi|openInterestCurrent",
+        10.0,  # 日变化 > 10% → Critical
         "gt",
         "critical",
         "OI 剧烈增长 {:.1f}% — 可能出现大幅波动",
         "大规模新增杠杆头寸，随时可能引发连锁清算",
         "OI 日变化 < ±5%",
+        value_semantics="pct_change",
     ),
     _Rule(
         "funding_rate_high",
         "funding_rate_anomaly",
         "crypto",
-        "fundingRate|funding_rate|funding",
+        "fundingRate|funding_rate",
         0.15,  # > 0.15% → High
         "gt",
         "high",
         "资金费率大幅走高 {:.4f}%",
         "多头支付高额溢价，市场过度拥挤在多头方向",
-        "资金费率 |daily annualized| < 0.1%",
+        "资金费率 < 0.1%",
+        value_semantics="ratio_to_percent",
     ),
     _Rule(
         "funding_rate_critical",
         "funding_rate_anomaly",
         "crypto",
-        "fundingRate|funding_rate|funding",
+        "fundingRate|funding_rate",
         0.5,  # > 0.5% → Critical
         "gt",
         "critical",
         "资金费率极端高位 {:.4f}% — 极度拥挤",
         "市场严重单边化，潜在清算风险极高",
-        "资金费率 |daily annualized| < 0.1%",
+        "资金费率 < 0.1%",
+        value_semantics="ratio_to_percent",
     ),
     _Rule(
         "liquidation_spike",
         "liquidation_event",
         "crypto",
-        "liquidation|totalLiq|liqValue|liquidated",
+        "liquidation|totalLiq|totalLiqValue|liqValue|liquidated",
         5_000_000,  # > $5M → High
         "gt",
         "high",
@@ -158,7 +177,7 @@ _CRYPTO_RULES: list[_Rule] = [
         "liquidation_massive",
         "liquidation_event",
         "crypto",
-        "liquidation|totalLiq|liqValue|liquidated",
+        "liquidation|totalLiq|totalLiqValue|liqValue|liquidated",
         20_000_000,  # > $20M → Critical
         "gt",
         "critical",
@@ -168,13 +187,13 @@ _CRYPTO_RULES: list[_Rule] = [
     ),
 ]
 
-# A 股情绪异常检测规则
+# A 股情绪异常检测规则（家数类是绝对量，阈值本来就是绝对值——语义一致）
 _ASHARE_RULES: list[_Rule] = [
     _Rule(
         "limit_up_extreme_expand",
         "limit_up_surge",
         "a_share",
-        "涨停|limitUp|limit_up|上涨家数",
+        "涨停家数|涨停|limitUpCount|limitUp|limit_up_count",
         80,  # > 80 家涨停 → High
         "gt",
         "high",
@@ -186,7 +205,7 @@ _ASHARE_RULES: list[_Rule] = [
         "limit_up_extreme_squeeze",
         "limit_up_collapse",
         "a_share",
-        "涨停|跌停|limitUp|limit_down|下跌家数",
+        "涨停家数|涨停|跌停|limitUpCount|limitUp|limit_down",
         20,  # < 20 涨停 → High (inverted)
         "lt",
         "high",
@@ -210,7 +229,7 @@ _ASHARE_RULES: list[_Rule] = [
         "market_breadth_wide_decline",
         "sentiment_change",
         "a_share",
-        "下跌家数|downCount|declining|下跌",
+        "下跌家数|下跌|downCount|declining",
         3000,  # > 3000 只下跌 → High
         "gt",
         "high",
@@ -233,12 +252,29 @@ def _next_id() -> str:
 
 
 def _matches_metric(rule: _Rule, metric: str) -> bool:
-    """检查指标名是否匹配规则模式。"""
+    """检查指标名是否命中规则的**精确别名表**（T22：不再做子串匹配——
+    旧的 `'oi' in metric` 会把 noise、openInterestRate 之类全命中）。"""
     if not metric:
         return False
-    pattern_lower = rule.metric_pattern.lower()
-    metric_lower = metric.lower()
-    return any(p in metric_lower for p in pattern_lower.split("|"))
+    aliases = {p.strip().lower() for p in rule.metric_pattern.split("|")}
+    return metric.strip().lower() in aliases
+
+
+def _prev_key(metric: str) -> str:
+    return f"__anomaly_prev__:{metric.strip().lower()}"
+
+
+def _load_prev_value(metric: str) -> float | None:
+    """取同一 metric 上一次快照的值（存放在 market_cache，跨调查可用）。"""
+    prev = market_cache.get(_prev_key(metric))
+    if isinstance(prev, (int, float)):
+        return float(prev)
+    return None
+
+
+def _store_prev_value(metric: str, value: float) -> None:
+    # 1 小时：足够覆盖"下次调查拿到上次快照"的场景，又不至于拿太旧的数据算变化率
+    market_cache.set(_prev_key(metric), float(value), ttl=3600.0)
 
 
 def _extract_numeric(value: Any) -> float | None:
@@ -276,6 +312,10 @@ def detect_anomalies(
     results: list[AnomalyRecord] = []
 
     rules = [r for r in ALL_RULES if r.domain == domain or r.domain == "cross"]
+    # T22：pct_change 规则的前值——优先用同一次调用里更早出现的同 metric datum
+    # （前后两个快照），否则取 market_cache 里上一次调查留下的值；都没有就不触发。
+    prev_in_call: dict[str, float] = {}
+    tracked_metrics: set[str] = set()
 
     for result in tool_results:
         normalized = getattr(result, "normalized", [])
@@ -290,41 +330,72 @@ def detect_anomalies(
             if num_value is None:
                 continue
 
+            # 同一 datum 同一 rule_type 只保留最高严重级（旧实现 OI 一条 datum
+            # 同时过 high 和 critical 两条规则 → 报两条重复）
+            best_by_type: dict[str, tuple[int, AnomalyRecord, _Rule]] = {}
+            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
             for rule in rules:
                 if not _matches_metric(rule, metric):
                     continue
+                if rule.value_semantics == "pct_change":
+                    tracked_metrics.add(metric.strip().lower())
+                    prev = prev_in_call.get(metric)
+                    if prev is None:
+                        prev = _load_prev_value(metric)
+                    if prev is None or prev == 0:
+                        # 拿不到前值就不触发：宁可不报不要误报
+                        continue
+                    compare_value = (num_value - prev) / abs(prev) * 100.0
+                elif rule.value_semantics == "ratio_to_percent":
+                    compare_value = num_value * 100.0
+                else:
+                    compare_value = num_value
 
                 triggered = False
-                if rule.direction == "gt" and num_value > rule.threshold:
+                if rule.direction == "gt" and compare_value > rule.threshold:
                     triggered = True
-                elif rule.direction == "lt" and num_value < rule.threshold:
+                elif rule.direction == "lt" and compare_value < rule.threshold:
                     triggered = True
 
-                if triggered:
-                    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
-                    record = AnomalyRecord(
-                        id=_next_id(),
-                        type=rule.rule_type,
-                        domain=getattr(datum, "domain", domain),
-                        severity=rule.severity,
-                        description=rule.description_template.format(num_value),
-                        metric=metric,
-                        value=num_value,
-                        normal_range=rule.normal_range,
-                        possible_meaning=rule.possible_meaning,
-                        timestamp=ts,
-                        status="investigating",
-                    )
-                    results.append(record)
-                    logger.info(
-                        "Anomaly detected: %s [%s] %s=%.2f threshold=%s %s",
-                        rule.rule_id,
-                        rule.severity,
-                        metric,
-                        num_value,
-                        rule.threshold,
-                        rule.possible_meaning,
-                    )
+                if not triggered:
+                    continue
+
+                ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+                record = AnomalyRecord(
+                    id=_next_id(),
+                    type=rule.rule_type,
+                    domain=getattr(datum, "domain", domain),
+                    severity=rule.severity,
+                    description=rule.description_template.format(compare_value),
+                    metric=metric,
+                    value=num_value,
+                    normal_range=rule.normal_range,
+                    possible_meaning=rule.possible_meaning,
+                    timestamp=ts,
+                    status="investigating",
+                )
+                rank = severity_order.get(rule.severity, 99)
+                current = best_by_type.get(rule.rule_type)
+                if current is None or rank < current[0]:
+                    best_by_type[rule.rule_type] = (rank, record, rule)
+
+            for _rank, record, _rule in best_by_type.values():
+                results.append(record)
+                logger.info(
+                    "Anomaly detected: %s [%s] %s=%.2f threshold=%s %s",
+                    record.type,
+                    record.severity,
+                    metric,
+                    record.value,
+                    _rule.threshold,
+                    record.possible_meaning,
+                )
+
+            # 更新前值：本调用内后续同 metric 的 datum 与它配对，并存入 market_cache
+            if metric.strip().lower() in tracked_metrics:
+                prev_in_call[metric] = num_value
+                _store_prev_value(metric, num_value)
 
     # Sort by severity: critical > high > medium > low
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}

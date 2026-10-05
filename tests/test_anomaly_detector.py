@@ -1,16 +1,19 @@
 """Tests for Anomaly Detection System.
 
-Coverage:
-- Rule matching (metric pattern)
-- Numeric extraction from various formats
-- Crypto anomaly detection rules
-- A-share anomaly detection rules
-- Severity sorting
-- AnomalyRecord serialization
+T22 契约：
+- 规则按 **精确别名表** 匹配 metric（'oi' 这类子串不再命中 noise / openInterestRate）；
+- OI 规则语义是 **对前值的 % 变化**：拿不到前值（或前值相同）就不触发——
+  真实 OI ≥1e9，旧实现直接拿绝对值比百分比阈值，每条快照都误报 critical；
+- fundingRate 语义是 **小数比率 → 百分比**（0.002 = 0.2%），0.0001（0.01%）不触发；
+- 同一 datum 同一 rule_type 只报最高严重级（不再 high + critical 报两条）。
+
+fixture 一律使用 normalizer 会产出的**真实量级**值（OI 1e9 级、fundingRate 小数、
+清算金额美元），不再手搓百分比假值。
 """
 
 import pytest
 
+from app.cache import market_cache
 from app.detector.anomaly import (
     ALL_RULES,
     AnomalyRecord,
@@ -18,6 +21,16 @@ from app.detector.anomaly import (
     _matches_metric,
     detect_anomalies,
 )
+from app.models.market import NormalizedDatum, ToolResult
+
+
+@pytest.fixture(autouse=True)
+def _clear_anomaly_prev_cache():
+    """OI 前值存放在全局 market_cache —— 不清会跨用例泄漏，导致触发与否取决于用例顺序。"""
+    market_cache.clear()
+    yield
+    market_cache.clear()
+
 
 # ── _extract_numeric Tests ────────────────
 
@@ -46,29 +59,23 @@ class TestExtractNumeric:
         assert _extract_numeric([1, 2, 3]) is None
 
 
-# ── _matches_metric Tests ─────────────────
+# ── _matches_metric Tests（T22：精确别名匹配）─────────────
 
 
 class TestMatchesMetric:
     def setup_method(self):
-        # Create a mock rule for testing
         class MockRule:
-            metric_pattern = "openInterest|open_interest|oi"
+            metric_pattern = "openInterest|open_interest|totalOi"
 
         self.rule = MockRule()
 
-    @pytest.mark.parametrize(
-        "metric",
-        ["openInterest", "open_interest", "oi", "totalOi"],
-    )
-    def test_matches_crypto_oi_patterns(self, metric):
+    @pytest.mark.parametrize("metric", ["openInterest", "open_interest", "OpenInterest", "totalOi"])
+    def test_exact_alias_matches(self, metric):
         assert _matches_metric(self.rule, metric) is True
 
-    @pytest.mark.parametrize(
-        "metric",
-        ["price", "fundingRate", "volume"],
-    )
-    def test_no_match_wrong_metric(self, metric):
+    @pytest.mark.parametrize("metric", ["noise", "openInterestRate", "price", "fundingRate", "volume"])
+    def test_substring_no_longer_matches(self, metric):
+        # 旧实现：'oi' in metric.lower() → noise / openInterestRate 全部误命中
         assert _matches_metric(self.rule, metric) is False
 
     def test_empty_metric_returns_false(self):
@@ -102,108 +109,121 @@ class TestAnomalyRecord:
 # ── Integration: detect_anomalies ────────
 
 
-class MockDatum:
-    def __init__(self, metric, value, domain="crypto"):
-        self.metric = metric
-        self.value = value
-        self.domain = domain
-
-
-class MockResult:
-    def __init__(self, datums):
-        self.normalized = datums
-        self.tool = "test_tool"
+def _result(*datums: NormalizedDatum) -> ToolResult:
+    return ToolResult(
+        tool="derivatives",
+        arguments={},
+        status="success",
+        normalized=list(datums),
+    )
 
 
 class TestDetectCryptoAnomalies:
-    def test_oi_spike_detected(self):
-        results = [MockResult([MockDatum("openInterest", 8.5)])]
-        anomalies = detect_anomalies(results, domain="crypto")
-        oi_found = [a for a in anomalies if a.type == "oi_spike"]
-        assert len(oi_found) >= 1
-        assert oi_found[0].severity == "high"
+    def test_real_magnitude_oi_without_prev_never_triggers(self):
+        """真实量级 OI（3.2e9）无前值 → 不触发（旧实现报 critical + high）。"""
+        anomalies = detect_anomalies([_result(NormalizedDatum(metric="openInterest", value=3.2e9, tool="d"))], domain="crypto")
+        assert anomalies == []
 
-    def test_critical_oi_spike(self):
-        results = [MockResult([MockDatum("openInterest", 12.0)])]
-        anomalies = detect_anomalies(results, domain="crypto")
-        critical_found = [a for a in anomalies if a.severity == "critical"]
-        assert len(critical_found) >= 1
+    def test_oi_same_as_prev_does_not_trigger(self):
+        """前值相同 → 0% 变化 → 不触发。"""
+        r1 = _result(NormalizedDatum(metric="openInterest", value=3.2e9, tool="d"))
+        r2 = _result(NormalizedDatum(metric="openInterest", value=3.2e9, tool="d"))
+        assert detect_anomalies([r1, r2], domain="crypto") == []
 
-    def test_funding_rate_high(self):
-        results = [MockResult([MockDatum("fundingRate", 0.3)])]
-        anomalies = detect_anomalies(results, domain="crypto")
-        funding_found = [a for a in anomalies if a.type == "funding_rate_anomaly"]
-        assert len(funding_found) >= 1
+    def test_oi_spike_percent_change_triggers_highest_severity_only(self):
+        """前值 1e9 → 现值 1.2e9（+20%）→ 只报一条 critical（不再 high+critical 报两条）。"""
+        prev = _result(NormalizedDatum(metric="openInterest", value=1e9, tool="d"))
+        curr = _result(NormalizedDatum(metric="openInterest", value=1.2e9, tool="d"))
+        anomalies = detect_anomalies([prev, curr], domain="crypto")
 
-    def test_liquidation_detection(self):
-        results = [MockResult([MockDatum("totalLiqValue", 6_000_000)])]
-        anomalies = detect_anomalies(results, domain="crypto")
-        liq_found = [a for a in anomalies if a.type == "liquidation_event"]
-        assert len(liq_found) >= 1
+        assert len(anomalies) == 1
+        assert anomalies[0].severity == "critical"
+        assert anomalies[0].type == "oi_spike"
+        assert "20.0%" in anomalies[0].description
+
+    def test_oi_moderate_spike_triggers_high(self):
+        """+6% → high（不超过 critical 的 10% 阈值）。"""
+        prev = _result(NormalizedDatum(metric="openInterest", value=1e9, tool="d"))
+        curr = _result(NormalizedDatum(metric="openInterest", value=1.06e9, tool="d"))
+        anomalies = detect_anomalies([prev, curr], domain="crypto")
+        assert [a.severity for a in anomalies] == ["high"]
+
+    def test_funding_rate_percent_semantics(self):
+        """fundingRate 0.002（0.2%）→ high；0.0001（0.01%）→ 不触发。"""
+        high = detect_anomalies([_result(NormalizedDatum(metric="fundingRate", value=0.002, tool="d"))], domain="crypto")
+        assert [a.severity for a in high] == ["high"]
+        assert "0.2000%" in high[0].description
+
+        quiet = detect_anomalies([_result(NormalizedDatum(metric="fundingRate", value=0.0001, tool="d"))], domain="crypto")
+        assert quiet == []
+
+    def test_funding_rate_critical(self):
+        """0.006（0.6% > 0.5%）→ critical（单条，去重）。"""
+        anomalies = detect_anomalies([_result(NormalizedDatum(metric="fundingRate", value=0.006, tool="d"))], domain="crypto")
+        assert [a.severity for a in anomalies] == ["critical"]
+
+    def test_liquidation_absolute_semantics_unchanged(self):
+        """清算金额是绝对量：$6M → high（语义本来就正确，回归保护）。"""
+        anomalies = detect_anomalies([_result(NormalizedDatum(metric="totalLiqValue", value=6_000_000, tool="d"))], domain="crypto")
+        assert [a.severity for a in anomalies] == ["high"]
+
+    def test_noise_metric_never_triggers(self):
+        """metric='noise' 含 'oi' 子串但值再大也不触发（精确匹配）。"""
+        anomalies = detect_anomalies([_result(NormalizedDatum(metric="noise", value=3.2e9, tool="d"))], domain="crypto")
+        assert anomalies == []
 
     def test_no_false_positive_on_normal_values(self):
+        """正常量级快照：OI 无前值、fundingRate 0.0001 → 无 high/critical。"""
         results = [
-            MockResult(
-                [
-                    MockDatum("openInterest", 2.0),  # below threshold
-                    MockDatum("fundingRate", 0.02),  # below threshold
-                ]
+            _result(
+                NormalizedDatum(metric="openInterest", value=2.0e9, tool="d"),
+                NormalizedDatum(metric="fundingRate", value=0.0001, tool="d"),
             )
         ]
         anomalies = detect_anomalies(results, domain="crypto")
-        # Should have no HIGH or CRITICAL crypto anomalies
-        high_sev = [a for a in anomalies if a.severity in ("high", "critical")]
-        assert len(high_sev) == 0
+        assert [a for a in anomalies if a.severity in ("high", "critical")] == []
 
 
 class TestDetectAshareAnomalies:
     def test_limit_up_surge(self):
-        results = [MockResult([MockDatum("涨停家数", 85)])]
+        results = [_result(NormalizedDatum(metric="涨停家数", value=85, tool="a", domain="a_share"))]
         anomalies = detect_anomalies(results, domain="a_share")
         surge_found = [a for a in anomalies if a.type == "limit_up_surge"]
-        assert len(surge_found) >= 1
+        assert len(surge_found) == 1
 
     def test_limit_up_collapse(self):
-        results = [MockResult([MockDatum("涨停家数", 15)])]
+        results = [_result(NormalizedDatum(metric="涨停家数", value=15, tool="a", domain="a_share"))]
         anomalies = detect_anomalies(results, domain="a_share")
         collapse_found = [a for a in anomalies if a.type == "limit_up_collapse"]
-        assert len(collapse_found) >= 1
+        assert len(collapse_found) == 1
 
     def test_market_breadth_decline(self):
-        results = [MockResult([MockDatum("下跌家数", 3500)])]
+        results = [_result(NormalizedDatum(metric="下跌家数", value=3500, tool="a", domain="a_share"))]
         anomalies = detect_anomalies(results, domain="a_share")
         breadth_found = [a for a in anomalies if a.type == "sentiment_change"]
-        assert len(breadth_found) >= 1
+        assert len(breadth_found) == 1
 
     def test_empty_results(self):
-        results = []
-        anomalies = detect_anomalies(results, domain="a_share")
-        assert anomalies == []
+        assert detect_anomalies([], domain="a_share") == []
 
     def test_no_normalized_data(self):
-        results = [MockResult([])]
-        anomalies = detect_anomalies(results, domain="crypto")
+        anomalies = detect_anomalies([_result()], domain="crypto")
         assert anomalies == []
 
 
 class TestSeveritySorting:
     def test_sorted_by_severity(self):
-        """Anomalies should be sorted: critical > high > medium > low."""
-        # This implicitly tests sorting if any combination of thresholds triggers
+        """critical 应排在 high 前面（funding critical + 清算 high 组合）。"""
         results = [
-            MockResult(
-                [
-                    MockDatum("openInterest", 8.0),  # → high
-                    MockDatum("fundingRate", 0.6),  # → critical
-                ]
+            _result(
+                NormalizedDatum(metric="fundingRate", value=0.006, tool="d"),  # → critical
+                NormalizedDatum(metric="totalLiqValue", value=6_000_000, tool="d"),  # → high
             )
         ]
         anomalies = detect_anomalies(results, domain="crypto")
-        # Critical should come before high
-        if len(anomalies) >= 2:
-            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-            sevs = [severity_order[a.severity] for a in anomalies]
-            assert sevs == sorted(sevs), "Anomalies not sorted by severity"
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        sevs = [severity_order[a.severity] for a in anomalies]
+        assert sevs == sorted(sevs), "Anomalies not sorted by severity"
 
 
 class TestRuleCount:
