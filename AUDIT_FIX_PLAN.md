@@ -1,8 +1,11 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
 > **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
-> **行号基准**：`44c307f`（当前 HEAD）。行号已相对初版 `cabd00c` 漂移，本文所有锚点均已按当前代码校正；
-> 若再次漂移，以「定位锚点」里给的代码片段 grep 为准。
+> **最近一次更新**：2026-10-05 —— S1（修红）已由执行方完成、**主 Agent 已独立验收通过**（见 §0.4 "S1 验收复核记录"）；
+> 本次验收同时新发现两件事并立了新任务：**T18c**（并发请求会话串台，P1）、**T37**（打包/CI flat-layout 失败），另有 **T12b**（依赖清单漂移）。
+> **行号基准**：`44c307f`（`0965da6` 之后的改动未影响 §2 以后任务的锚点）。行号已相对初版 `cabd00c` 漂移，
+> 本文所有锚点均已按当前代码校正；若再次漂移，以「定位锚点」里给的代码片段 grep 为准。
+> **当前 HEAD**：`0965da6`（见 §0.4）。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -71,10 +74,11 @@
 > 两种 gateway 模式下全量测试均全绿**（2026-10-05，S1 会话实测）。ruff check / ruff format --check 全绿。
 > 行号基准 = `44c307f`（S1 的改动未影响 §2 以后任务的锚点；T18b 重写了 `tool_runtime.py` 的
 > `gateway_session` / `_do_execute`，T27 动手时以锚点片段 grep 为准）。
-> 备注：S1 会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在该会话不出现；
-> T18b 的根因改以复现脚本验证（`opened = 1 → 0`）。`pip install -e .` 在本仓库因 flat-layout
-> 多顶层包（app + memory）**本来就失败**（与 T12 的依赖行无关，已用 stash 在未改动基线复现），T12 的
-> 版本区间验收以"已装 mcp 2.1.1 满足 `>=2,<3` + test_data_integrity.py 32 条全绿"代替。
+> 备注：S1 执行会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在该会话不出现；
+> **验收者已在自己的受限会话（spawn 被拒）里复跑，确认那 6 条连带红同样消失**（详见下面的"S1 验收复核记录"）。
+> `pip install -e .` 在本仓库因 flat-layout 多顶层包（app + memory）**本来就失败**（与 T12 的依赖行无关），
+> 验收者已用系统 setuptools 81 直接复现该条件 → 另立 **T37**；T12 的版本区间验收以
+> "已装 mcp 2.1.1 满足 `>=2,<3` + test_data_integrity.py 全绿"代替（`requirements.txt` 漏改 → **T12b**）。
 
 | 任务 | 状态 | 提交 | 备注 |
 |---|---|---|---|
@@ -85,10 +89,39 @@
 | **T16 回边 reducer 去重** | ✅ 已实现并**验收通过** | `df757a5` | 已独立复现"改回 `add` 必红" |
 | **T17 news_search TTL** | ✅ 产品修复 + 测试已修（T17T） | `2bf11b7` / `b1b06fa` | patch 目标改为模块全局 `_search_news`，离线可跑；反向验证（改回无 settings 版 TTL 解析）必红 |
 | **T18 analyst 级复用 Gateway** | ✅ 完成并验收（T18b 修掉急切连接 + T18T 修 stub） | `44c307f` / `5647a4a` / `f2e4da1` | `gateway_session` 只标记会话、按需建连；3 条新用例含"建连挪回进入点必红"的反向防线 |
-| **T12 收尾（D1）** | ✅ 完成 | `0965da6` | `mcp>=2,<3`；已装 2.1.1；pip install -e . 的 flat-layout 失败是既有问题（见上） |
-| **T19–T27** | ⬜ 未开始 | — | 下一段 S2：T19 → T27 → T23 |
-| **T36 文档同步** | ⬜ 未做 | — | §5，建议批次 3 收尾时做 |
+| **T12 收尾（D1）** | ✅ 完成（但漏了 `requirements.txt`，见 **T12b**） | `0965da6` | `mcp>=2,<3`；已装 2.1.1；pip install -e . 的 flat-layout 失败是既有问题（见 **T37**，已被验收者直接复现） |
+| **T19–T27** | ⬜ 未开始 | — | 下一段 S2：**T18c**（新发现的并发缺陷）→ T19 → T27 → T23 |
+| **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
+| **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
+| **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
 | **T28–T35** | ⬜ 未做 | — | §4 |
+
+**S1 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
+
+- 逐条读了 5 个提交的 diff：T18b 的按需连接实现与规格一致（`_in_session` 可重入；`_ensure_gateway` 在
+  `__aenter__` 失败时把 `_gateway` 复位并**抛出**异常，没吞成默认值；`_close_gateway` 先复位再关闭、
+  关闭异常只记 warning）；T17T 的 patch 目标与关键字签名都改对了；T18T 的 stub 提供 `entered` 计数并被断言；
+  T12 只改了一行。
+- **反向验证（我自己做的）**：把 `await self._ensure_gateway()` 临时挪回 `gateway_session()` 的进入点 →
+  `test_gateway_reuse.py` 立即 2 failed（`assert 1 == 0`，两条新防线用例），其余 3 条仍绿；还原后
+  `git diff` 为空、23 passed。
+- **最强证据（执行方会话里无法产生的）**：本验收会话是 workspace-write 且**沙箱禁止 spawn 子进程**
+  （`MCPConnectionError: ... [WinError 5] 拒绝访问`），正是 §1.2 P1 里那 6 条连带红的发生环境。
+  修完后在 `mcp` 模式下跑 `test_news_no_symbol + test_graph_topology + test_graph_nodes +
+  test_gateway_reuse + test_tool_runtime_ttl` → **43 passed**，连带红彻底消失（修复前同一命令全红）。
+- **全量测试，两种跑法都对得上**：
+  ① 完全访问会话（`memory/` 可写、MCP spawn 可用）：`pytest -q` → **`421 passed, 2 skipped`**，
+  与执行方报告**逐字相符**（`mcp` 与 `http` 两种模式都跑过）。
+  ② 受限会话（附录 A 的 runner）：`5 failed / 380 passed / 2 skipped / 36 errors`，
+  5 个 failed 与 36 个 error **逐条核对后全部落在附录 A 记录的环境副作用清单内**，无真实失败。
+- 复现脚本：`opened = 1 → 0` ✓；已装 `mcp 2.1.1` 满足 `>=2,<3` ✓。
+- **未采信、已另立任务的两点**：`requirements.txt` 漏改（T12b）；`pip install -e .` 的 flat-layout
+  失败（T37 —— 我用系统 setuptools 81 直接复现：`FlatLayoutPackageFinder.find()` 返回
+  `['app', 'memory', ...]` 两个顶层包，正是 setuptools 报 "Multiple top-level packages" 的条件，
+  **确认是既有问题、与 T12 那行无关**，但 CI 的 `pip install -e ".[dev]"` 会因此失败，必须修）。
+- **验收者新发现（P1-b，见 §1.2）**：T18/T18b 的会话状态放在 `ToolRuntime` 实例属性上，而
+  `_get_orchestrator()` 是进程级单例、编译图只构建一次 → 节点实例被并发请求共享。已写出确定性复现，
+  另立 **T18c**（S2 第一个任务）。
 
 ---
 
@@ -102,19 +135,21 @@
 | 段 | 任务（按顺序） | 读本文档哪些部分 | 为什么这么切 | 结束门槛 |
 |---|---|---|---|---|
 | **S1 修红**（独占一段，阻塞一切） | T18b → T17T → T18T → T12 收尾 | §0 全部 + §1 全部 + §2 全部 + 附录 A | T18b（产品）与 T18T（测试）互相牵制，必须在同一会话里把基线跑绿；T12 只是一行 `pyproject`，顺手 | **`mcp` 与 `http` 双模式全绿**；4 个提交 |
-| **S2 缓存 / 运行时 / 成本** | T19 → T27 → T23 | §0 + §1.4 + 附录 A/B + §3 的 T19/T27/T23 | 都在 `cache.py` / `tool_runtime.py` / `http_client.py`，同批文件，避免跨会话反复重建认知 | 全绿；3 个提交 |
+| **S2 运行时 / 缓存 / 成本** | **T18c（并发串台，必须最先）** → T19 → T27 → T23 | §0 + §1.2（P1-b）+ §2 的 T18c + §3 的 T19/T27/T23 | T18c 与 T19/T27 都在 `tool_runtime.py` / `cache.py`，同批文件；T18c 是 P1 级并发缺陷，优先于同段的其它任务 | 全绿；4 个提交 |
 | **S3 检测与报告契约** | T22 → T20（含 anomalies）→ T15 | §0 + §1.4 + 附录 A/B + §3 的 T22/T20/T15 | **T22 必须先于 T20 的 anomalies 半条**（否则误报，D3 已定）；三者共同决定"报告里写什么" | 全绿；3 个提交 |
 | **S4 注册表** | T24（**把 T34 里 `test_tool_registry_multi_domain.py` 的断言并入本条**） | §0 + 附录 A/B + §3 的 T24 + §4 的 T34 | 它牵动全量 `tool_registry`，单独一段便于跑 normalizer / analyst 相关回归 | 全绿；1 个提交 |
 | **S5 请求生命周期** | T21 → T26 → T25 | §0 + 附录 A/B + §3 的 T21/T26/T25 | sqlite 跨线程、SSE 收尾、前端并发，都是"一次请求从进到出"；T25 是前端，放最后 | 全绿 + 手工看一眼界面；3 个提交 |
 | **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
-| **S7 测试有效性（下）+ 收尾** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T36 | §0 + 附录 A/B + §4 + §5 | T34 与 T35 是同文件收尾；T36 放最后，此时行为已定 | 全绿；4–5 个提交 + `§0.4` 定稿 |
+| **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
+| **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
 
 **硬性顺序约束（不要打乱）**：
-1. **S1 必须最先**，且做完之前不许开 S2 及以后（§2 的 T18b 未修时 `mcp` 模式下有 8 条无关测试是红的，任何"全绿"判断都不可信）。
+1. **S1 必须最先**（✅ 已完成并验收），S2 的 **T18c 是 P1 级并发缺陷，必须先于 S2 其它任务**。
 2. S3 内 **T22 早于 T20 的 anomalies 半条**。
 3. S5 内 **T21 早于 T26**（SSE 的落库断言需要可写的 sqlite 路径）。
 4. S6/S7 建议在 S1 之后：T31 解 skip 后会真跑到 analyst 节点，依赖 T18b 已修。
-5. 段的**内部**仍然遵守规则 1：一个任务一次提交。
+5. **S8 必须最后**：T37 会改 `pyproject.toml` 的打包配置，改完要重跑一次全量。
+6. 段的**内部**仍然遵守规则 1：一个任务一次提交。
 
 **每段的开场指令模板**（把 `{Sx}` 换成具体段号）：
 
@@ -155,7 +190,7 @@
 
 ### 1.2 未收尾问题清单（必须先处理）
 
-**P0 — 阻塞项（就是当前 3 条红）**
+**P0 — 修红项（3 条红）→ ✅ 全部由 S1 修复并验收（`5647a4a` / `b1b06fa` / `f2e4da1`）**
 
 | # | 测试 | 性质 | 归属任务 |
 |---|---|---|---|
@@ -163,7 +198,7 @@
 | 2 | `tests/test_graph_nodes.py::test_execute_skips_non_whitelist_no_stock` | 同上（`FakeRuntime` 缺 `gateway_session`） | **T18T**（§2） |
 | 3 | `tests/test_tool_runtime_ttl.py::test_news_search_cache_ttl_survives_execute` | **测试自身缺陷**：用 `runtime._search_news = fake` 打补丁，但生产代码读的是模块全局 `_search_news`（`app/graph/tool_runtime.py:304`），patch 无效 → 测试实际打真实 DDGS 网络，网络失败就红。**产品代码（T17 修复）没有问题** | **T17T**（§2） |
 
-**P1 — 本次新发现的产品级回归（T18 引入，必须和上面一起修）**
+**P1-a — 急切连接（T18 引入）→ ✅ 已由 `5647a4a`（T18b）修复并验收**
 
 `ToolRuntime.gateway_session()`（`app/graph/tool_runtime.py:62-89`）在**进入时就**创建并连接 Gateway。
 修改前，只分配内部工具（`news_search` / `internal_hk_northbound` / `internal_hk_index`）的 analyst
@@ -182,7 +217,34 @@
   `test_news_no_symbol.py` 2 条。
   切到 `MARKET_GATEWAY_MODE=http` 后这 6 条全绿 → 证明它们只是被"急切连接"放大，根因是同一处。
 
-**→ 修法见 §2 T18b（按需连接）。这一条修完，`mcp` 模式下这 6 条会自然变绿，不需要改这 6 条测试。**
+**修复验收（2026-10-05，验收者在本会话复跑）**：沙箱同样禁止 spawn（`[WinError 5]`），
+`mcp` 模式下 `test_news_no_symbol + test_graph_topology + test_graph_nodes + test_gateway_reuse +
+test_tool_runtime_ttl` → **43 passed**（修复前同一命令全红）。复现脚本 `opened = 1 → 0`。
+反向验证：把建连挪回会话进入点 → 两条新防线用例立刻 `assert 1 == 0` 变红。
+
+**P1-b — 并发请求共享 `ToolRuntime`，会话状态串台（T18 引入，T18b 未修，**待做 = T18c**）**
+
+`app/main.py:86-92` 的 `_get_orchestrator()` 是**进程级单例**，`Orchestrator._ensure_graph()`
+（`app/agent/orchestrator.py:23-26`）只构建一次编译图 → **所有并发请求共用同一批节点实例**
+（`self._runtime = ToolRuntime(settings)` 是节点实例属性，见 `analysts/base.py:73`）。
+T18/T18b 把会话状态放在 `ToolRuntime` 的**实例属性**上（`_in_session` / `_gateway` / `_available_tools`），
+于是两个并发调查会互相踩：
+
+- 第二个请求进入 `gateway_session()` 时看到 `_in_session=True`，被当成"嵌套会话"→ **复用第一个请求的客户端**；
+- 第一个请求先结束时 `_close_gateway()` 会关掉这个客户端 → 第二个请求**在途**的调用随即失败。
+
+**我的确定性复现**（`.tmp/verify_concurrent_session.py`，同一个节点实例并发跑两条 route）：
+```
+并发两请求共用节点 → gateway 实例数 = 1 (期望 2，每请求一个)
+A 结束后客户端 is_closed = True
+A errors: []
+B errors: ['technical analysis failed: gateway closed while quote_tencent_quote_get in flight']
+B findings failed: [{'analyst': 'technical', 'digest': '分析失败: ...', 'tools_used': [], 'failed': True}]
+```
+**触发条件在生产里是常态**：uvicorn 单进程 + 单例图，前端在调查中回车追问（T25 正是这件事）、
+两个标签页、同步 `/api/ask` 与 SSE 并发、或两个用户同时提问，都会命中。
+**T18 之前没有这个问题**：旧实现每个工具调用各自 `async with gateway_cls(...)`，无共享状态。
+→ **修法见 §2 的 T18c（S2 的第一个任务）。**
 
 **P2 — 流程失误（已记录，不单独提交代码）**
 
@@ -340,8 +402,87 @@ route 里加内部工具只需把 `{"tool_key": "news_search", "arguments": {"qu
 - 原 2 条 T18 用例仍绿（`len(instances) == 1`、异常时 `exited == 1`）。
 - **`MARKET_GATEWAY_MODE=mcp` 与 `=http` 两种模式下**，`pytest tests/test_graph_topology.py tests/test_news_no_symbol.py tests/test_graph_nodes.py -q` 都只剩 T18T 要修的那 2 条（修完 T18T 后全绿）。
 
-**风险 / 牵连**：`_in_session` / `_ensure_gateway` 是新状态，注意 analyst 并发（三个 analyst 节点各有自己的
-`ToolRuntime` 实例，`analyst/__init__` 每次都 `ToolRuntime(settings)`，所以不存在跨节点共享——改完顺手确认这一点没变）。
+**风险 / 牵连**：`_in_session` / `_ensure_gateway` 是新状态。
+
+> **⚠️ 本节规格里的一个错误假设（验收时更正）**：本节原文写的是"三个 analyst 节点各有自己的
+> `ToolRuntime` 实例，所以不存在跨节点共享"。**这句话只在一个请求内部成立**——
+> `_get_orchestrator()` 是进程级单例、编译图只构建一次，所以**并发请求会共用同一批节点实例**
+> （= 同一批 `ToolRuntime`）。T18b 按此思路把会话状态留在实例属性上，因此留下了 **P1-b 并发串台**
+> （已在 §1.2 记录、并已用确定性脚本复现）。**T18c 必须作为 S2 的第一个任务把会话状态改成
+> 每请求（per asyncio task）一份**；在 T18c 完成之前，S2 的其它任务不要动 `gateway_session` 的这层语义。
+
+**✅ 已完成（`5647a4a`）**：按需连接；`_in_session` 只标记会话，`_ensure_gateway` 首次网关调用才建连，
+`_close_gateway` 保证关闭；`_do_execute` 的 INTERNAL 分支在会话分支之前 return。
+3 条新回归用例（①内部工具零连接 ②混合 route 仍复用 1 个 ③网关必炸但内部工具照常成功）已验收通过。
+
+### T18c — 会话状态必须"每请求一份"（**P1-b 并发串台；S2 的第一个任务**）
+
+**定位锚点**
+- `app/graph/tool_runtime.py:64` — `self._in_session = False`（实例属性）
+- `app/graph/tool_runtime.py:66-84` — `gateway_session()` 用 `self._in_session` 判可重入
+- `app/graph/tool_runtime.py:86-113` — `_ensure_gateway` / `_close_gateway` 读写 `self._gateway`、`self._available_tools`
+- `app/graph/tool_runtime.py:203-220` — `_do_execute` 用 `self._in_session` 选路径
+- 共享来源：`app/main.py:86-92` `_get_orchestrator()`（单例）+ `app/agent/orchestrator.py:23-26` `_ensure_graph()`（只构建一次）
+- 节点持有 runtime：`app/graph/nodes/analysts/base.py:73` `self._runtime = ToolRuntime(settings)`
+
+**现象**：两个并发调查共用同一个 Gateway 客户端，先结束者把它关掉，另一个请求**在途**的调用失败，
+整个 analyst 降级为 `failed=True`（用户看到"某维度分析失败"，且原因与真实数据无关）。
+
+**复现**（把下面脚本存成 `.tmp/verify_concurrent_session.py` 运行；验收者已跑过，输出见 §1.2 P1-b）
+```python
+# 关键：同一个 node 实例被两个 asyncio 任务并发调用（模拟单例图）
+node = TechnicalAnalystNode(Settings())
+node._runtime._gateway_class = lambda: SlowGateway
+task_a = asyncio.create_task(node(_state("600519")))
+task_b = asyncio.create_task(node(_state("000001")))
+...
+# 当前输出：gateway 实例数 = 1（期望 2）；B errors = ['... gateway closed while ... in flight']
+```
+（完整脚本可直接照 `.tmp/verify_concurrent_session.py` 抄；它用两个 symbol 不同的 `quote` 调用 +
+两个 `asyncio.Event` 精确控制交错。**注意 route 里必须带 `symbol`**，否则会被 T8 的 symbol 守卫跳过。）
+
+**根因**：会话状态放在 `ToolRuntime` 实例属性上，而实例被并发请求共享。
+
+**修改（推荐 A，二选一）**
+- **A（推荐，改动最小）**：会话状态改放 `contextvars.ContextVar`，语义天然"每个 asyncio task 一份"
+  （`asyncio.create_task` 会复制当前 context，子任务看到会话、兄弟任务看不到）：
+  ```python
+  _session: ContextVar[dict | None] = ContextVar("gateway_session", default=None)
+
+  @asynccontextmanager
+  async def gateway_session(self):
+      if _session.get() is not None:      # 同一 task 内嵌套 → 复用
+          yield
+          return
+      token = _session.set({"gateway": None, "available": None})
+      try:
+          yield
+      finally:
+          session = _session.get()
+          _session.reset(token)
+          if session and session["gateway"] is not None:
+              await self._close_gateway(session)
+  ```
+  `_ensure_gateway()` 读写 `_session.get()` 里的字典；`_do_execute` 用 `_session.get() is not None` 判路径。
+  **不要**把每任务的会话状态继续留在 `self.*` 上。
+- **B（备选）**：让 `Orchestrator` 每个请求构建自己的图（去掉 `_graph` 缓存，或按请求 clone 节点）。
+  这样能顺带避免其它节点实例状态被共享，但每次请求多一次 `build_graph`，且不能防止"同一请求内
+  同一节点被并发调用"（正常不会发生）。选 B 必须在提交信息里说明为什么不用 A。
+
+**必补测试**（`tests/test_gateway_reuse.py` 追加，用上面的脚本改写成 pytest）
+- ① 同一个节点实例 + `asyncio.gather` 两个并发 route（symbol 不同）→ 断言 `len(FakeGateway.instances) == 2`、
+  `FakeGateway.exited == 2`、**两个结果都 `errors == []`、`failed is False`**。
+- ② 交错验证（防"先结束者关掉别人的客户端"）：A 的调用返回并结束会话后，B 的在途调用必须仍然成功。
+- **反向验证**：把会话状态改回 `self._in_session` / `self._gateway` → ①② 必红（当前实测就是红）。
+
+**验收**：复现脚本输出 `gateway 实例数 = 2`、`A errors: []`、`B errors: []`；
+`mcp` 与 `http` 两种模式下全量测试全绿；`test_gateway_reuse.py` 原有 5 条仍绿。
+
+**风险 / 牵连**：
+- `ContextVar` 在**同一个 task 内串行**开两次会话（一个 analyst 跑完再跑下一个）必须正确复位 ——
+  用 `reset(token)` 保证；测试要覆盖"连续两次会话各自建连又各自关闭"。
+- 会话外直接调 `execute()`（单工具调用方、`tests/test_truncate.py` 等）仍走旧的逐次新建路径。
+- 这条是**架构性共享**的一个实例，别顺手去重构整个 orchestrator 的单例（不在本任务范围）。
 
 ---
 
@@ -445,11 +586,19 @@ async def test_news_search_cache_ttl_survives_execute(monkeypatch):
 > 顺序建议：T12 收尾（D1）→ T19 → T20（先 D4 部分，anomalies 等 T22 后）→ T21 → T22 → T23 → T24 → T25 → T26 → T27 → T15（D2）→ T36（§5）。
 > 每条仍然要求「改完补一个能失败的测试」。
 
-### T12 收尾（D1=A）— 依赖区间收口
-`pyproject.toml:14` 把 `mcp>=1.12` 改为 **`mcp>=2,<3`**；`app/gateway/mcp_client.py` 保留
+### T12 收尾（D1=A）— 依赖区间收口 → ✅ `pyproject.toml` 已完成（`0965da6`），**`requirements.txt` 漏改，见 T12b**
+`pyproject.toml:14` 把 `mcp>=1.12` 改为 **`mcp>=2,<3`** ✅；`app/gateway/mcp_client.py` 保留
 `await asyncio.wait_for(self.session.initialize(), timeout=...)` 握手（T12 已实现）。
-**验收**：`pip install -e .` 后 `python -c "import importlib.metadata as m; print(m.version('mcp'))"` 满足区间；
+**验收**：已装 `mcp 2.1.1` 满足区间（`pip install -e .` 本身因 **T37** 的打包问题失败，不能作为验收手段）；
 `tests/test_data_integrity.py` 中 MCP 相关用例仍绿。
+
+### T12b — `requirements.txt` 与 `pyproject.toml` 依赖漂移（S7，一行）
+`requirements.txt:8` 仍是 `mcp>=1.12`，而 `pyproject.toml:14` 已是 `mcp>=2,<3`（T12 收口时漏了这个文件）。
+该文件是 `[project].dependencies` 的镜像清单，留着旧区间会让"文档承诺、代码不一致"多一处。
+**修改**：`requirements.txt:8` 改为 `mcp>=2,<3`；顺手核对其余 8 行与 `pyproject.toml` 是否逐条一致
+（有出入就一并同步，并在提交信息里列出）。
+**验收**：`diff` 两份依赖清单无差异。**必补测试**：无（纯清单同步）；
+若要机械化，可在 T37 里顺带加一条"两份清单一致性"的检查（可选，不要为它引入新依赖）。
 
 ### T15 — Evidence Gate 门控力（D2=B：降级不短路）
 **定位锚点**：`app/agent/evidence_gate.py:18-20`（文档承诺"`has_evidence=False` 时永远不应判 sufficient"）、
@@ -798,6 +947,49 @@ skip 理由写"P0 图为 supervisor→kernel"，但 `app/graph/builder.py` 早�
 - 完成后做一次全局检查：**不再存在"文档承诺、代码没有"的项**——重点核对四处：
   `has_evidence`（T15 已定：降级不短路）、`anomalies`（D3：代码填）、证据条数上限（T6）、MCP 模式与版本区间（D1：`mcp>=2,<3`）。
 
+### T37 — 打包 / CI：setuptools flat-layout 自动发现失败（S8，**已被验收者直接复现**）
+**定位锚点**
+- `pyproject.toml:1-3`（有 `[build-system]` 但**没有 `[tool.setuptools]` 段**）
+- `pyproject.toml:30-32`（`[tool.pytest.ini_options]` 是唯一的 tool 段）
+- `.github/workflows/ci.yml` 的安装步骤：`pip install -e ".[dev]"`
+**现象**：CI 的安装步骤会失败，测试根本没机会跑。
+**复现（验收者已用 pip 本体跑出，不只是推断）**
+```bash
+.venv\Scripts\python.exe -m pip install -e . --no-deps --dry-run
+# ERROR: Failed to build 'file:///D:/Mosaic' when getting requirements to build editable
+#   ... setuptools will not proceed with this build.
+#   1. set up custom discovery (`find` directive with `include` or `exclude`)
+```
+失败发生在 **"getting requirements to build editable"** 阶段 —— 连依赖都还没解析，
+所以**与 `mcp>=2,<3` 那一行完全无关**，是仓库既有问题。
+再用 setuptools 的发现器单独看顶层包：
+```bash
+python -c "from setuptools.discovery import FlatLayoutPackageFinder as F; print(F.find(where='.'))"
+# ['app', 'memory', 'app.agent', ..., 'memory.evening', 'memory.morning']
+```
+顶层包有**两个**（`app` 与 `memory`）→ setuptools 的 flat-layout 自动发现报
+`Multiple top-level packages discovered in a flat-layout: ['app', 'memory']`。
+注意 `memory/morning/`、`memory/evening/` 是**简报 JSON 数据目录**，被 PEP 420 当成命名空间子包了。
+**根因**：仓库是多顶层目录布局，却没有显式声明要打包哪些包。
+**修改**
+1. 在 `pyproject.toml` 加显式打包声明，例如：
+   ```toml
+   [tool.setuptools.packages.find]
+   include = ["app*"]
+   exclude = ["memory*", "tests*", "scripts*"]
+   ```
+   （或 `[tool.setuptools] packages = ["app"]` + 子包列表）。
+2. `app/web/index.html` 是运行时依赖的文件（`app/main.py` 的 `INDEX`）——若要做**非** editable 安装，
+   必须用 `[tool.setuptools.package-data]` 把它带上；editable 安装不受影响。
+   顺手确认 `app/web/__init__.py` 是否存在（不存在则 `app.web` 不是包）。
+3. 改完在**完全访问**会话里真跑一次 `pip install -e ".[dev]"`，确认通过；
+   CI 的 `.github/workflows/ci.yml` 不需要改（它本来就是对的，是仓库配置缺声明）。
+**验收**：`pip install -e ".[dev]"` 成功；`python -c "import app, memory"` 行为不变；
+`pytest -q` 全绿；`importlib.metadata.version("mosaic-market-intelligence")` 能查到。
+**风险 / 牵连**：这是**既有问题，不是 S1 引入的**（`FlatLayoutPackageFinder` 的结果与 `mcp` 依赖行无关）。
+改 `pyproject.toml` 会影响 CI、以及任何 `pip install` 的使用者；改完必须重跑一次全量测试。
+**不属于本任务**：不要顺手把仓库拆成 `src/` 布局（那会动所有 import，超出范围）。
+
 **完成定义**：批次 3–4 全绿（`ruff check` + `ruff format --check` + `pytest -q`），
 每条修复都带一个「改坏它就会红」的测试，文档与代码实际行为一致。
 `PROJECT_STATUS.md` 已被仓库主人删除，**不要再创建**；状态以本文档 §0.4 为准。
@@ -910,26 +1102,33 @@ pytest tests/test_brief_scheduler.py -q
 批次 1（P0）        ✅ 735aeaa / b8e114c / f86df07
 批次 2（P1）        ✅ dc75971 589cff7 a293e44 164c920 8c7c4ab c471dec d9f60fe 432b7ab 50aff98 ff03a2d f4bee89 3454af5
 批次 2 遗留         ✅ 7e87c6c(T14b+T5b 文案) fca2025(T13b) a9732dc(文档) df757a5(T16) 2bf11b7(T17) 44c307f(T18)
-                       —— 但下面这 3 条还没收尾
+                       —— T18b/T17T/T18T 已作为 S1 修红并验收（见下）
 
-批次 3 前置：修红（必须最先做完，全绿才提交）
-[ ] T18b gateway 按需连接（产品，修 T18 的急切连接回归）
-[ ] T17T 修正 T17 测试 patch 目标（测试）
-[ ] T18T 修 2 条 stub 测试（测试，不改产品）
-    验收门槛：mcp 与 http 两种模式下 test_graph_nodes / test_graph_topology / test_news_no_symbol 全绿
+批次 3 前置：修红（S1）— ✅ 完成并验收（5647a4a / b1b06fa / f2e4da1+e2513eb / 0965da6）
+[x] T18b gateway 按需连接（产品，修 T18 的急切连接回归）
+[x] T17T 修正 T17 测试 patch 目标（测试）
+[x] T18T 修 2 条 stub 测试（测试，不改产品）
+[x] T12 pyproject 收成 mcp>=2,<3（D1）
+    验收已过：mcp + http 双模式全绿；反向验证必红；记录见 §0.4 "S1 验收复核记录"
 
-批次 3（P2）剩余
-[ ] T12 收尾 pyproject 收成 mcp>=2,<3（D1）
-[ ] T19 缓存上限 + ttl=0            [ ] T20 必填字段默认值（+ D4 的 _ensure_list）
-[ ] T21 sqlite 线程 + 写失败 WARNING [ ] T22 anomaly 阈值/单位（D3 前置）
-[ ] T23 重试感知预算                [ ] T24 注册表域过滤 / HK 漂移
-[ ] T25 前端并发与渲染健壮性        [ ] T26 SSE 错误分支可达 + 任务 await
+S2 运行时 / 缓存 / 成本（T18c 必须最先）
+[ ] T18c 会话状态改每请求一份（P1-b 并发串台，ContextVar）  ← 验收者新发现，优先
+[ ] T19 缓存上限 + ttl=0
 [ ] T27 called_signatures 真去重
+[ ] T23 重试感知预算
+
+S2 之后（批次 3 其余）
+[ ] T12b requirements.txt 同步 mcp>=2,<3（S7，一行）
+[ ] T20 必填字段默认值（+ D4 的 _ensure_list）
+[ ] T21 sqlite 线程跨线程            [ ] T22 anomaly 阈值/单位（D3 前置）
+[ ] T24 注册表域过滤 / HK 漂移
+[ ] T25 前端并发与渲染健壮性        [ ] T26 SSE 错误分支可达 + 任务 await
 [ ] T15 Evidence Gate 降级（D2=B）  [ ] T20 后半：anomalies 用 detect_anomalies 填（D3，须在 T22 后）
 
 批次 4（测试有效性）  T28 T29 T30(+D4 budget) T31 T32 T33 T34 + T35 机制性防线
 
-收尾
+收尾（S8）
+[ ] T37 打包/CI flat-layout（pyproject 显式声明 app 包；CI 的 pip install -e ".[dev]" 才能过）  ← 验收者新发现
 [ ] T36 文档与实现同步（architecture / README / prompts / tool_registry）
 [ ] §0.4 更新（每完成一批就更新：任务表打 ✅ + 提交号 + 测试数字）
 
@@ -939,9 +1138,10 @@ pytest tests/test_brief_scheduler.py -q
 
 ---
 
-## 附录 D — 已完成任务的契约备忘（T1–T18）
+## 附录 D — 已完成任务的契约备忘（T1–T18 + S1 修红）
 
 > 细节用 `git show <提交号>` 查回。这里只保留**不许改回**的语义与对应的回归测试位置。
+> S1 修红新增/更新的契约已并入下表（T17 / T18 / T12 行）。
 
 | 任务 | 提交 | 不许改回的契约 | 回归测试 |
 |---|---|---|---|
@@ -963,5 +1163,5 @@ pytest tests/test_brief_scheduler.py -q
 | T13b evaluation 兜底 | `fca2025` | 未知 `case_id` → 按 FAIL，不 KeyError、不跳过 | `tests/test_evaluation.py` |
 | T5b note 文案 | `7e87c6c` | note 写明"保留最新 200 条（另加本说明条）"，与实际 201 条一致 | `tests/test_truncate.py`（追加断言） |
 | **T16 回边 reducer** | `df757a5` | `results` 按 `(tool, arguments)`、`evidence` 按 `id`、`findings` 按 `analyst` 去重（同键保留最新，不同键追加以支持并行 analyst）；`errors` 仍追加；**`state.tool_results` 已删，不要再加回** | `tests/test_graph_state_reducers.py` |
-| **T17 news_search TTL** | `2bf11b7` | `_resolve_ttl(tool, settings=None)`；`news_search` → `settings.news_search_ttl_seconds`（21600），`execute()` 不得把它覆盖成 30s | `tests/test_tool_runtime_ttl.py`（**测试待修，见 T17T**） |
-| **T18 analyst 级复用 Gateway** | `44c307f` | 一次 analyst 运行复用同一个 Gateway 客户端，异常时保证关闭；**但必须按需连接**（见 T18b） | `tests/test_gateway_reuse.py` |
+| **T17 news_search TTL** | `2bf11b7` + `b1b06fa`（T17T） | `_resolve_ttl(tool, settings=None)`；`news_search` → `settings.news_search_ttl_seconds`（21600），`execute()` 不得把它覆盖成 30s；测试必须 patch **模块全局** `app.graph.tool_runtime._search_news`（实例属性无效） | `tests/test_tool_runtime_ttl.py` |
+| **T18 analyst 级复用 Gateway** | `44c307f` + `5647a4a`（T18b）+ `f2e4da1`（T18T） | 一次 analyst 运行复用同一个 Gateway 客户端，异常时保证关闭；**连接必须按需**（进入会话不建连）；stub 必须提供 `gateway_session`；**会话状态还要改成每请求一份（见 T18c）** | `tests/test_gateway_reuse.py` |
