@@ -26,7 +26,7 @@ Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
 └────┬─────┴────┬─────┴────┬─────┴────┬─────┴────┬─────┘
      └──────────┴──────────┴────┬─────┴──────────┘
                                 ↓
-                        Evidence Gate (纯代码质量检查)
+                        Evidence Gate (纯代码质量检查；零证据 → 报告降级 confidence=low，不短路)
                                 ↓
                         Reasoning (LLM 汇总证据 → MarketIntelligence)
                                 ↓

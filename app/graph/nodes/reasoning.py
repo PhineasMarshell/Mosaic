@@ -85,6 +85,25 @@ class ReasoningNode:
                 findings=state.get("findings", []),
             )
 
+            # T15/D2：消费 Evidence Gate 的结论 —— has_evidence=False 时
+            # **降级但不短路**：报告照常产出，强制 confidence=low + data_caveats
+            # + errors。旧实现 has_evidence 全仓无消费方，零证据也能产出
+            # 正常置信度的报告。LLM/下游不能绕过此检查结果。
+            gate = state.get("gate")
+            gate_has_evidence = None
+            if gate is not None:
+                if isinstance(gate, dict):
+                    gate_has_evidence = gate.get("has_evidence")
+                else:
+                    gate_has_evidence = getattr(gate, "has_evidence", None)
+
+            gate_errors: list[str] = []
+            if gate_has_evidence is False:
+                report.confidence = "low"
+                report.data_caveats.append("证据链为空，结论不可作为依据")
+                gate_errors.append("Evidence gate: no evidence collected; report is unverified")
+                logger.warning("Evidence gate: has_evidence=False, report degraded to confidence=low")
+
             logger.info(
                 "Reasoning completed: confidence=%s revisions=%d",
                 report.confidence,
@@ -94,10 +113,13 @@ class ReasoningNode:
             # revision_count 只在"修订"（已存在上一轮 report）时递增，
             # 使 critic_max_revisions 精确表示允许的修订次数，而非总执行次数。
             is_revision = state.get("report") is not None
-            return {
+            out = {
                 "report": report,
                 "revision_count": (state.get("revision_count") or 0) + (1 if is_revision else 0),
             }
+            if gate_errors:
+                out["errors"] = gate_errors
+            return out
         except LLMOutputError as exc:
             logger.warning("Reasoning LLM output error: %s", exc)
             return {

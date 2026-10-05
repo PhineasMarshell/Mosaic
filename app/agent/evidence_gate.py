@@ -17,7 +17,9 @@ class EvidenceGateResult:
 
     has_evidence:
         是否存在至少一条 status=success 的有效证据。
-        如果为 false，Evaluator 永远不应判定 sufficient=true。
+        如果为 false，下游 Reasoning 会把报告**降级**：强制 confidence=low、
+        追加 data_caveats、写入 errors（T15/D2：降级不短路——报告仍会产出，
+        Evaluator / LLM 不能绕过此检查结果）。
 
     successful_tools:
         调用成功（status == "success"）的工具名集合。

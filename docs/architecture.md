@@ -50,7 +50,7 @@ iiix mcp serve market-gateway
 | **MoneyflowAnalyst** | 工具执行 | 执行 moneyflow 类工具（龙虎榜/北向资金/资金流），产出 Evidence + finding digest |
 | **NewsAnalyst** | 工具执行 | 执行 news 类工具（DDGS 新闻搜索），开关控制，默认关闭 |
 | **SentimentAnalyst** | 工具执行 + LLM | 评论爬取 + 清洗 + 聚合 + LLM 打分，开关控制，默认关闭（依赖评论 MCP） |
-| **Evidence Gate** | 纯代码 | 检查 ToolResult 状态（success/partial/error），判定证据是否具备基本可用性 |
+| **Evidence Gate** | 纯代码 | 检查 ToolResult 状态（success/partial/error），判定证据是否具备基本可用性；`has_evidence=False` 时 Reasoning **降级不短路**：报告照常产出，但强制 confidence=low + data_caveats + errors（T15/D2） |
 | **Reasoning** | LLM | 汇总所有 Evidence + findings，生成结构化 MarketIntelligence 报告 |
 | **Critic** | LLM | 审计报告结论是否有证据支撑，输出 pass/revise/research_more |
 
@@ -149,7 +149,7 @@ iiix mcp serve market-gateway
   → _build_route: steps 按工具 category 分组为 AnalystAssignment
   → 各 Analyst: 执行分配的 tool_calls → ToolResult 列表
   → build_evidence: ToolResult → Evidence 列表
-  → Evidence Gate: 代码级质量检查 → gate 结果（pass/fail）
+  → Evidence Gate: 代码级质量检查 → gate 结果（pass/fail；has_evidence=False 时 Reasoning 降级为 confidence=low，不短路）
   → Reasoning: LLM 汇总 evidence + findings → MarketIntelligence report
   → Critic: LLM 审计 report vs evidence → Critique
     → pass: END
