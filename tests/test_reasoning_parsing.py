@@ -202,22 +202,23 @@ class TestParseEvidenceNewFormat:
 
 
 class TestMarketIntelligenceValidation:
-    """End-to-end validation of MarketIntelligence with both evidence formats."""
+    """真调 ``ReasoningEngine.reason()`` 的端到端校验（evidence 双格式兼容）。
 
-    def _ensure_lists(self, payload, original_evidence=None):
-        """Apply the same transformations that ReasoningEngine.reason() does."""
-        from app.research.reasoning import _ensure_list, _parse_evidence
+    T29：旧实现自带一份 ``_ensure_lists`` 副本，其中把非法 confidence 置
+    ``medium``——与生产**相反**（``reasoning.py`` 置 ``low``，缺失置信度应表示
+    "没有足够把握"），6 个用例从不调用真的 ``reason()``，假阳性。
+    stub 模式复用本文件的 ``_stub_reasoning_engine``（照
+    tests/test_data_integrity.py 的 _stub_reasoning 模式）。
 
-        for key in ("why", "strong_areas", "what_changed", "what_matters", "risks", "data_caveats"):
-            payload[key] = _ensure_list(payload.get(key))
-        raw_ev = payload.get("evidence") or []
-        parsed = _parse_evidence(raw_ev, original_evidence or [])
-        payload["evidence"] = [ei.model_dump() for ei in parsed]
-        conf = payload.get("confidence")
-        if conf not in ("high", "medium", "low"):
-            payload["confidence"] = "medium"
-        payload["used_tools"] = _ensure_list(payload.get("used_tools"))
-        return payload
+    本类 mock 掉了什么：只 mock OpenAI 客户端（返回固定 JSON payload），
+    ``reason()`` 的全部后处理（_ensure_list / _parse_evidence / confidence
+    兜底 / schema 校验）都走生产代码。
+    """
+
+    def _engine(self, payload: dict):
+        import json as _json
+
+        return _stub_reasoning_engine(_json.dumps(payload, ensure_ascii=False))
 
     def _base_payload(self, **overrides):
         base = {
@@ -233,22 +234,24 @@ class TestMarketIntelligenceValidation:
             "data_caveats": [],
             "confidence": "medium",
             "used_tools": ["snapshot", "klines"],
+            "evidence": [],
         }
         base.update(overrides)
         return base
 
-    def test_validate_with_old_evidence_format(self):
+    @pytest.mark.asyncio
+    async def test_old_evidence_format_becomes_evidence_items(self):
         payload = self._base_payload(
             evidence=[
                 {"claim": "Price declining", "evidence_ids": ["e-001"]},
             ]
         )
-        payload = self._ensure_lists(payload)
-        model = MarketIntelligence.model_validate(payload)
-        assert len(model.evidence) >= 1
-        assert model.evidence[0].value == "Price declining"
+        report = await self._engine(payload).reason("q", [], [])
+        assert len(report.evidence) >= 1
+        assert report.evidence[0].value == "Price declining"
 
-    def test_validate_with_new_evidence_format(self):
+    @pytest.mark.asyncio
+    async def test_new_evidence_format_matches_originals(self):
         ev = [
             Evidence(id="e-001", source_tool="quote", domain="a_share", metric="price", value=3800.0, status="success"),
             Evidence(
@@ -281,38 +284,38 @@ class TestMarketIntelligenceValidation:
                 },
             ]
         )
-        payload = self._ensure_lists(payload, original_evidence=ev)
-        model = MarketIntelligence.model_validate(payload)
-        assert len(model.evidence) == 2
-        assert model.evidence[0].id == "e-001"
+        report = await self._engine(payload).reason("q", [], ev)
+        assert len(report.evidence) == 2
+        assert report.evidence[0].id == "e-001"
         # LLM 说 value=999，但真实值是 3800
-        assert model.evidence[0].value == 3800.0
-        assert model.evidence[1].status == "partial"
+        assert report.evidence[0].value == 3800.0
+        assert report.evidence[1].status == "partial"
 
-    def test_validate_with_list_what_changed(self):
+    @pytest.mark.asyncio
+    async def test_list_what_changed_preserved(self):
         payload = self._base_payload(what_changed=["Sentiment dropped", "Volume shrank", "New theme absent"])
-        payload = self._ensure_lists(payload)
-        model = MarketIntelligence.model_validate(payload)
-        assert isinstance(model.what_changed, list)
-        assert len(model.what_changed) == 3
+        report = await self._engine(payload).reason("q", [], [])
+        assert isinstance(report.what_changed, list)
+        assert len(report.what_changed) == 3
 
-    def test_validate_invalid_confidence_defaults_to_medium(self):
+    @pytest.mark.asyncio
+    async def test_invalid_confidence_defaults_to_low(self):
+        """T29：生产把非法 confidence 置 ``low``（副本曾置 medium、断言与生产相反）。"""
         payload = self._base_payload(confidence="extreme")
-        payload = self._ensure_lists(payload)
-        model = MarketIntelligence.model_validate(payload)
-        assert model.confidence == "medium"  # Invalid → default
+        report = await self._engine(payload).reason("q", [], [])
+        assert report.confidence == "low"
 
-    def test_validate_missing_evidence_is_empty_list(self):
+    @pytest.mark.asyncio
+    async def test_missing_evidence_is_empty_list(self):
         payload = self._base_payload(evidence=None)
-        payload = self._ensure_lists(payload)
-        model = MarketIntelligence.model_validate(payload)
-        assert model.evidence == []
+        report = await self._engine(payload).reason("q", [], [])
+        assert report.evidence == []
 
-    def test_validate_used_tools_as_string_converted(self):
+    @pytest.mark.asyncio
+    async def test_used_tools_as_string_converted(self):
         payload = self._base_payload(used_tools="snapshot")
-        payload = self._ensure_lists(payload)
-        model = MarketIntelligence.model_validate(payload)
-        assert model.used_tools == ["snapshot"]
+        report = await self._engine(payload).reason("q", [], [])
+        assert report.used_tools == ["snapshot"]
 
 
 class TestEnsureList:
@@ -574,7 +577,7 @@ async def test_build_response_fills_anomalies_from_code(monkeypatch):
     """D3：report.anomalies 由 detect_anomalies 产出（基于 state["results"]），
     模型给的 anomalies 被覆盖。"""
     from app.models.market import NormalizedDatum, ToolResult
-    from app.models.response import MarketIntelligence, build_response_from_state
+    from app.models.response import build_response_from_state
 
     prev = ToolResult(
         tool="d",
