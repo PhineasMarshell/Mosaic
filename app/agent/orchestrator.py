@@ -4,6 +4,7 @@
 """
 
 import logging
+import time
 
 from app.config import Settings
 from app.graph.builder import build_graph
@@ -48,6 +49,9 @@ class Orchestrator:
             question=question,
             domain=str(domain) if domain else None,
             conversation_id=conversation_id,
+            # T23b：预算按"整次调查"起算——research_more 回环的第二轮 analyst
+            # 读到的是同一个截止时刻，不会重新获得一整份 research_budget_seconds
+            budget_deadline=time.monotonic() + self.settings.research_budget_seconds,
         )
         result_state = await graph.ainvoke(
             state,

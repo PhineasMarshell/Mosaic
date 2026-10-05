@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -267,7 +268,13 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
 
     orchestrator = _get_orchestrator()
     graph = orchestrator._ensure_graph()
-    initial_state = {"question": question, "domain": domain, "conversation_id": conversation_id}
+    initial_state = {
+        "question": question,
+        "domain": domain,
+        "conversation_id": conversation_id,
+        # T23b：SSE 路径同样把整次调查的预算截止时刻写进 state（与 Orchestrator.run 对齐）
+        "budget_deadline": time.monotonic() + budget,
+    }
 
     queue: asyncio.Queue = asyncio.Queue()
 

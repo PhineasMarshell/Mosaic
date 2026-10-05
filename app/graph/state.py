@@ -108,6 +108,10 @@ class ResearchState(BaseModel):
     question: str
     conversation_id: str | None = None
     domain: str | None = None
+    #: T23b：整次调查的预算截止时刻（time.monotonic() 秒）。图启动前由 orchestrator /
+    #: SSE 路径写入；research_more 回环时**覆盖**（标量字段无 reducer，正是想要的语义——
+    #: 第二轮 analyst 不能重新获得一整份预算）。
+    budget_deadline: float | None = None
 
     # ── Supervisor 产出 ──
     intent: object | None = None

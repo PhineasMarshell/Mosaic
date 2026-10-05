@@ -192,9 +192,22 @@ class MarketAnalystNode:
         seen: set[tuple[str, tuple]] = set()
         # T23：整次调查的预算按"剩余预算 ÷ 剩余工具数"均分给每个工具，
         # 下发到 gateway 客户端做重试预算感知（超预算返回 error ToolResult，不炸链）。
+        # T23b：剩余预算以 state["budget_deadline"]（整次调查的截止时刻）为准——
+        # research_more 回环的第二轮不再重新获得一整份 research_budget_seconds。
         budget_seconds = float(getattr(self.settings, "research_budget_seconds", 0) or 0)
-        run_started = time.monotonic()
         total_calls = len(mine["tool_calls"])
+        budget_deadline = state.get("budget_deadline")
+        if budget_deadline is not None:
+            remaining_budget = float(budget_deadline) - time.monotonic()
+        else:
+            # 没有整次调查的预算信息 → 退回"本节点起算"的旧行为，但必须可见，
+            # 不许把"没有预算信息"静默当成"预算无限"。
+            logger.warning(
+                "%s: state 缺少 budget_deadline，预算退回按本节点起算（每次节点调用重置，旧行为）",
+                self.category,
+            )
+            remaining_budget = budget_seconds
+        run_started = time.monotonic()
 
         for idx, tc in enumerate(mine["tool_calls"]):
             if budget <= 0:
@@ -225,7 +238,10 @@ class MarketAnalystNode:
 
             deadline = None
             if budget_seconds > 0:
-                remaining_budget = budget_seconds - (time.monotonic() - run_started)
+                remaining_budget = min(
+                    remaining_budget,
+                    budget_seconds - (time.monotonic() - run_started),
+                )
                 remaining_tools = max(total_calls - idx, 1)
                 deadline = time.monotonic() + max(remaining_budget / remaining_tools, 0.0)
 
