@@ -1,5 +1,10 @@
 """tests/test_models_multi_domain.py — 多域数据模型测试。"""
 
+from typing import get_args
+
+import pytest
+from pydantic import ValidationError
+
 from app.models.research import (
     DEFAULT_DOMAINS,
     MarketDomain,
@@ -18,16 +23,34 @@ class TestMarketDomainTypes:
         assert "us_stock" in DEFAULT_DOMAINS
 
     def test_market_domain_type_accepted_values(self):
-        valid_values: list[MarketDomain] = [
+        """对 get_args(MarketDomain) 的每个合法值，pydantic 模型都必须真实接受。
+
+        T33：旧写法 `_: MarketDomain = val` 是运行时 no-op（注解求值后即丢弃，
+        不产生任何校验，"bogus" 也能通过）。这里改为真构造 ResearchIntent，
+        并以类型本身（get_args）作为合法值来源，避免手工清单漂移。
+        """
+        members = get_args(MarketDomain)
+        assert len(members) >= 7  # 类型被改成非 Literal（如 str）时 get_args 为空，不许空转通过
+        for val in members:
+            intent = ResearchIntent(question="问题", domain=val)
+            assert intent.domain == val
+
+    def test_market_domain_type_expected_members(self):
+        """Literal 成员集合必须覆盖七个已知市场域（允许未来新增，不许悄悄删减）。"""
+        assert set(get_args(MarketDomain)) >= {
             "a_share",
             "crypto",
+            "hk_stock",
             "us_stock",
+            "commodities",
             "macro",
             "unknown",
-        ]
-        for val in valid_values:
-            # 仅验证类型赋值不抛异常
-            _: MarketDomain = val  # noqa: F841
+        }
+
+    def test_market_domain_rejects_bogus_value(self):
+        """非法域值必须被 pydantic 拒绝——类型注解不是摆设。"""
+        with pytest.raises(ValidationError):
+            ResearchIntent(question="问题", domain="bogus")
 
 
 class TestResearchIntentMultiDomain:
