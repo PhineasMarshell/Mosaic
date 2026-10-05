@@ -1,18 +1,18 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
 > **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
-> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 / S4 均已由执行方完成、主 Agent 已独立验收通过**
-> （见 §0.4 的 "S1/S2/S3/S4 验收复核记录"）。
-> S1 验收追加：**T18c**（并发请求会话串台，P1；已在 S2 修完）、**T37**（打包/CI flat-layout 失败）、**T12b**（依赖清单漂移）。
+> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 / S4 / S5 均已由执行方完成、主 Agent 已独立验收通过**
+> （见 §0.4 的 "S1–S5 验收复核记录"）。
+> S1 验收追加：**T18c**（并发串台，P1；已在 S2 修完）、**T37**（打包/CI flat-layout）、**T12b**（依赖清单漂移）。
 > S2 验收追加：**T19b**（假阳性用例）、**T23b**（预算起算点）—— 已在 S3 修完。
-> S3 验收追加：**T22b**（精确匹配漏掉点分 metric → 异常检测在生产里等于关闭）、
-> **T22c**（前值只按 metric 存 → 不同 symbol 互相污染，报出假的 `OI 剧烈增长 200.0%`）—— 已在 S4 修完。
-> S4 验收追加：**T24b**（`.gitignore` 写的是 `.temp` 而不是 `.tmp/`，一行）—— 排在 **S5 最前面**。
-> 另外把四条"测试假阳性/反向验证"教训汇总进了 **§4 的 T35**（建议做 conftest 约定时一并落地）。
+> S3 验收追加：**T22b**（点分 metric 漏报）、**T22c**（前值跨 symbol 污染）—— 已在 S4 修完。
+> S4 验收追加：**T24b**（`.gitignore` 一行）—— 已在 S5 修完。
+> **S5 验收结论：无新立任务**（4 个任务全部通过；T25 的**浏览器手工验证**仍待仓库主人执行，详见 §0.4 S5 一节）。
+> 另把四条"测试假阳性/反向验证"教训汇总进了 **§4 的 T35**（做 conftest 约定时一并落地）。
 > **行号基准**：`44c307f`（S1/S2 的改动未影响未完成任务的锚点；`tool_runtime.py` 的
 > `execute`/`_do_execute`/`_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > 动手时以锚点片段 grep 为准）。若行号漂移，以「定位锚点」里的代码片段为准。
-> **当前 HEAD**：`7d2bfd6`（S4 的 §0.4 提交；见 §0.4 的表）。
+> **当前 HEAD**：`97e904d`（S5 的 §0.4 提交；见 §0.4 的表）。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -110,7 +110,7 @@
 | **T22c 前值按 symbol 隔离** | ✅ 完成并验收（S4） | `08c3656` | 前值 key = `(metric_basename, symbol)`（symbol 取 `arguments.symbol` → domain → "unknown"）；同一次调用内混入多 symbol 也隔离；market_cache 存储取舍已写入注释（TTL/LRU 淘汰与"前值过期不可比"一致，丢前值=少报不误报）+ 拿不到前值留 debug；6 条新用例；反向验证：停用 symbol 作用域 → 5 条必红（含"三次独立调查"复现用例——初版 parametrize 写法被反向验证抓出是假阳性，已改为单用例内顺序执行） |
 | **T24 注册表** | ✅ 完成并验收（S4，**并入 T34 的注册表断言**） | `3bef4f4` | ①`registry_text` 删 `or ALL_TOOLS` 静默回退、health 始终附加、空域 warning；②hk_quote/hk_search domain→`hk_stock`、hk_search category 对齐 technical；③BY_NAME 重复 operationId：cross 优先→先注册者为规范条目（保住 F10 钉死的 quote/search→a_share 与 snapshot→cross），占位条目显式进 `SHARED_BY_NAME`；T34 的 `assert A or B` 恒真改 `and`；7 条新用例，三处改动逐项反向验证必红 |
 | **T24b** `.gitignore` 临时目录写错 | ✅ 完成（S5） | `6c045cd` | `.temp` → `.tmp/` + 补行尾换行；删除 .tmp/ 里 4 个回退备份（3 个 .py.bak + tool_registry.t24.py，源码已确认干净全量绿）；`git check-ignore` 已生效、`git status` 不再出现 `.tmp/` |
-| **T21 sqlite 跨线程** | ✅ 完成并验收（S5） | `e026f0b` | 连接改 `threading.local()` 每线程一条 + 连接登记表（`close()` 覆盖所有线程）+ 代数计数（close 后旧线程句柄按代数重建）；WAL/autocommit 工厂与落库 warning 日志未动（T3/规则 4）；复现脚本 ProgrammingError 实测 → 修后 4 线程并发落库全成功；新增 tests/test_memory_thread_safety.py 4 条 + test_persistence 落库失败 WARNING 防回归 1 条；反向验证（退回共享单连接 / warning 降 debug）3+1 条必红 |
+| **T21 sqlite 跨线程** | ✅ 完成并**验收通过**（S5） | `e026f0b` | 连接改 `threading.local()` 每线程一条 + 连接登记表（`close()` 覆盖所有线程）+ 代数计数（close 后旧线程句柄按代数重建）；WAL/autocommit 工厂与落库 warning 日志未动（T3/规则 4）；复现脚本实测 ProgrammingError → 修后 4 线程并发落库全成功；新增 `test_memory_thread_safety.py` 4 条 + `test_persistence` 落库失败 WARNING 防回归 1 条；反向验证（退回共享单连接 / warning 降 debug）**3+1 条必红**（3 条我复跑确认） |
 | **T26 SSE 错误分支** | ✅ 完成并验收（S5） | `7f635ff` | ①ask_stream 在返回 StreamingResponse 前 eager `_get_orchestrator()`+`_ensure_graph()` → 图构建失败 HTTP 层 500（死分支 except ValueError 删除；_parse_ask_payload 留 try 外以免 400 被改写 500）；②finally 在 cancel 后 `await gather(task, return_exceptions=True)` 收尸；运行期错误走 200+SSE 事件的契约保留；新增 2 条用例旧实现下均必红（**教训**：预算超时路径的 task.cancel() 会清掉 Future 未检索标记、掩盖 warning——测试必须用客户端断开 aclose 场景才暴露） |
 | **T25 前端健壮化** | ✅ 完成并验收（S5） | `fe837b1` | ①计时器/AbortController 按请求持有（局部变量），finally 只清自己的；②ask() 防重入：追问 → superseded+abort 静默接管旧请求，不并发两条，接管期不解锁按钮；③addAILoader 返回行、removeLoader(row) 只删自己的；④severity 白名单渲染（low/medium/high/critical，未知不显示徽章），异常卡逐条 try/catch 降级；补 .critical 样式；新建 tests/test_web_frontend_contract.py 6 条文本契约，退回旧 index.html 全红；node --check 语法校验过 |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
@@ -292,7 +292,7 @@
 不是本项目实际用的 **`.tmp/`** —— `git check-ignore -v .tmp/...` 返回"未忽略"，`git status` 仍显示 `?? .tmp/`。
 `.tmp/` 里现在有 8 个文件（含 3 个 `.py.bak` 生产源码备份），正好是规则 3"不要 `git add -A`"要防的东西。→ **T24b**。
 
-**S5 执行记录（S5 会话自记，2026-10-05；**待主 Agent 验收**）**
+**S5 执行记录（S5 会话自记，2026-10-05；已由主 Agent 验收 —— 见下方的"S5 验收复核记录"）**
 
 - **T24b（`6c045cd`）**：`.gitignore` 的 `.temp` → `.tmp/` 并补行尾换行；删除 `.tmp/` 里 4 个回退备份
   （`base_t23b.py.bak` / `cache_t19.py.bak` / `reasoning_node_t15.py.bak` / `tool_registry.t24.py`，
@@ -343,6 +343,39 @@
   4. **正常路径回归**：正常提问/追问/重试按钮、loading 行的逐节点进度与消失时机与改前一致。
 - 遗留：无新立任务。`.tmp/` 里的 `verify_*` 复现脚本未提交（已被 `.tmp/` ignore 覆盖）。
 
+**S5 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
+
+- **通过**：逐条读了 4 个提交 + 2 个 chore/docs 的 diff；测试数增量对得上（481 → 494 收集 = **+13**）；
+  `pytest -q` → **`492 passed, 2 skipped`**，与报告逐字相符；`ruff check` + `format --check` 全绿；
+  **本次确认工作区首次真正干净**（`.gitignore:43:.tmp/` 生效，`git status --porcelain` 无输出）。
+- **T24b ✓**：`git check-ignore -v .tmp/verify_s4_anomaly.py` → `.gitignore:43:.tmp/`；`.tmp/` 里 4 个
+  `.py.bak`/备份已删（剩下的都是当前在用的探针与附录 A 的 runner）。
+- **T21 ✓**：反向验证（把 `conn` 退回"整实例共享一条连接"= 旧行为）→ `test_memory_thread_safety.py`
+  **3 failed**（多线程落库、close 覆盖他线程连接、close 后重建），与报告一致；
+  测试本身是行为断言（含"同线程连接仍复用"这条**防过度修正**的对照）而不是自省断言。
+- **T26 ✓**：两条反向验证我都复跑 —— 去掉建图预检 → `test_stream_graph_build_failure_returns_500` 红；
+  去掉 `await gather` → `test_stream_pump_crash_does_not_leak_unretrieved_task_warning` 红。
+  另加**行为探针**（`.tmp/verify_s5_http.py`，TestClient）：空 question → 400、非字符串 → 400、
+  非法 domain → 400、`_ensure_graph()` 抛错 → **500** —— 确认删掉 `except ValueError` **没有**引入
+  400→500 回归（`_parse_ask_payload` 抛的是 `HTTPException`，放进 try 才会被 `except Exception` 吞成 500）。
+- **T25 ✓（逻辑层，DOM 接线未覆盖）**：
+  1. 退回 T25 之前的 `index.html`（`git checkout fe837b1^ -- app/web/index.html`）→ 6 条契约测试
+     **全红**；恢复后文件哈希与原文件**逐字节一致**（`FB532DDA…`）。
+  2. `node --check` 校验**正确抽取**的内联 JS（用 Python 读 UTF-8 写出，避免 PowerShell 重编码把中文/emoji
+     弄坏导致假报错）→ **exit 0**，确认执行方"语法校验通过"的说法成立。
+  3. **从 index.html 原文抽取** `SEVERITY_STYLES`/`severityBadge` 与 anomalies 的 map 体，在 Node 里真跑
+     （`.tmp/verify_t25_logic.js`）：13 组 severity 输入（含 `1`/`0`/`true`/`false`/`null`/`undefined`/`{}`/`[]`）
+     **全部不抛错**（旧实现 `a.severity.toUpperCase()` 对数字必抛）；喂一条 `get description()` 抛错的坏卡片
+     → 三张卡照常渲染、坏的那张降级为占位、数字 severity 不产生徽章、critical 徽章正常 ✓。
+- **未由我完成的部分（如实报告）**：**T25 的浏览器级手工验证没做** —— 本会话没有浏览器自动化手段。
+  §1.3 的四个手工步骤（并发追问静默接管、`severity: 1` 仍完整渲染、正常路径回归）仍请仓库主人在浏览器里
+  走一遍；我覆盖的是其中的**纯逻辑**与**文本接线**：DOM 事件/SSE 流的实际联调属于这四步的范畴。
+- **两条可选改进（不立任务，记录备查）**：
+  1. `MarketMemory.close()` 目前**没有任何生产调用点**（只有测试用）。若在 FastAPI shutdown 里挂一个
+     `get_memory().close()`，可在退出时确定性关闭连接/收尾 WAL（现在靠进程退出兜底，功能上无碍）。
+  2. 既有测试仍用 `mem.conn.close()` 直连句柄关闭；新引入的 `close()` 才会按代数重建。
+     将来若有测试"关掉 `mem.conn` 后继续用同一个 `mem`"，会拿到已关闭的句柄 —— 记得用 `memory.close()`。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -358,17 +391,16 @@
 | **S2 运行时 / 缓存 / 成本** | ✅ **已完成并验收**：T18c → T19 → T27 → T23 | — | 见 §0.4 "S2 验收复核记录" | `436 passed + 2 skipped`（双模式）；6 个提交；但 S3 需先补 **T19b / T23b** |
 | **S3 检测与报告契约** | ✅ **已完成并验收**：T19b → T23b → T22 → T20 → T15 | — | 见 §0.4 "S3 验收复核记录" | `454 passed + 2 skipped`（双模式）；7 个提交；但 S4 需先补 **T22b / T22c** |
 | **S4 注册表 + 异常检测尾巴** | ✅ **已完成并验收**：T22b → T22c → T24（T34 的注册表断言已并入） | — | 见 §0.4 "S4 验收复核记录" | `479 passed + 2 skipped`（双模式）；4 个提交；但 S5 需先补 **T24b** |
-| **S5 请求生命周期** | ✅ **已完成**：T24b（一行） → T21 → T26 → T25 | — | 见 §0.4 表格与下方"S5 执行记录"（含 T25 手工验证步骤） | `492 passed + 2 skipped`（双模式）；4 个提交；**待主 Agent 验收**（T25 手工看一眼界面） |
+| **S5 请求生命周期** | ✅ **已完成并验收**：T24b（一行） → T21 → T26 → T25 | — | 见 §0.4 "S5 验收复核记录"（T25 的**浏览器手工步骤仍未做**，见该节末尾） | `492 passed + 2 skipped`（双模式）；5 个提交；**无新立任务** |
 | **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
 | **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
 | **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
 
 **硬性顺序约束（不要打乱）**：
-1. **S1 必须最先**（✅ 已完成并验收）；S2 ✅、S3 ✅、S4 ✅。
-2. S5 先做 **T24b**（`.gitignore` 一行），再 **T21 早于 T26**（SSE 的落库断言需要可写的 sqlite 路径）。
-3. S6/S7 建议在 S1 之后：T31 解 skip 后会真跑到 analyst 节点，依赖 T18b 已修。
-4. **S8 必须最后**：T37 会改 `pyproject.toml` 的打包配置，改完要重跑一次全量。
-5. 段的**内部**仍然遵守规则 1：一个任务一次提交。
+1. **S1 必须最先**（✅ 已完成并验收）；S2 ✅、S3 ✅、S4 ✅、S5 ✅。
+2. S6/S7 建议在 S1 之后：T31 解 skip 后会真跑到 analyst 节点，依赖 T18b 已修。
+3. **S8 必须最后**：T37 会改 `pyproject.toml` 的打包配置，改完要重跑一次全量。
+4. 段的**内部**仍然遵守规则 1：一个任务一次提交。
 
 **每段的开场指令模板**（把 `{Sx}` 换成具体段号）：
 
@@ -1542,11 +1574,15 @@ S4 注册表 + 异常检测尾巴 — ✅ 完成并验收（e7c2272 / 08c3656 / 
     验收已过：479 passed + 2 skipped（双模式）；四项反向验证我复跑过（7 / 5 / 3 / 6 条必红）；
     记录见 §0.4 "S4 验收复核记录"；**留下 T24b（.gitignore 一行）**
 
-S5 请求生命周期
-[ ] T24b .gitignore 的 .temp → .tmp/（补行尾换行；清掉 .tmp 里的 .py.bak）  ← 验收者实测
-[ ] T21 sqlite 线程跨线程
-[ ] T26 SSE 错误分支可达 + 任务 await
-[ ] T25 前端并发与渲染健壮性
+S5 请求生命周期 — ✅ 完成并验收（6c045cd / e026f0b / 7f635ff / fe837b1）
+[x] T24b .gitignore 的 .temp → .tmp/（`git check-ignore` 已命中；.tmp 里备份已清）
+[x] T21 sqlite 连接按线程各取一条（反向验证：退回共享单连接 → 3 条必红）
+[x] T26 SSE 错误分支可达 + cancel 后 await 收尸（两条反向验证各 1 条必红；400 未被改写成 500）
+[x] T25 前端并发与渲染健壮性（退回旧 index.html → 6 条契约全红；severity 逻辑在 Node 里动态验证通过）
+    验收已过：492 passed + 2 skipped（双模式）；无新立任务；
+    记录见 §0.4 "S5 验收复核记录"；**T25 的浏览器手工步骤仍待仓库主人执行**
+
+S6 测试有效性（上）  [ ] T28 → [ ] T29 → [ ] T30（含 D4 budget）→ [ ] T31
 
 其余
 [ ] T12b requirements.txt 同步 mcp>=2,<3（S7，一行）
