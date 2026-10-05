@@ -284,6 +284,40 @@ python -m app.cli "今天A股为什么这么弱？"
 curl http://127.0.0.1:8000/health
 ```
 
+> 本地 `python -m app.main` 默认只绑 `127.0.0.1:8000`；要用环境变量覆盖绑地址/端口：
+> `HOST=0.0.0.0 PORT=8080 python -m app.main`（容器里必须绑 `0.0.0.0`，否则端口映射打不通）。
+
+### 部署（Docker）
+
+仓库自带 [Dockerfile](Dockerfile)（多阶段、非 root 运行、带 `/health` HEALTHCHECK）与
+[docker-compose.yml](docker-compose.yml)：
+
+```bash
+cp .env.example .env      # 填 OPENAI_API_KEY、MARKET_GATEWAY_API_KEY
+docker compose up -d --build
+curl http://127.0.0.1:8000/health
+```
+
+容器里有三处和本地不同，都已写进 Dockerfile / compose，改动时别改回去：
+
+| 项 | 本地默认 | 容器里 | 为什么 |
+|---|---|---|---|
+| 绑定地址 | `127.0.0.1:8000`（`app/main.py` 的 `__main__`） | `uvicorn --host 0.0.0.0`（compose 给 `HOST=0.0.0.0`） | 绑回环时宿主机的端口映射转发不进来 |
+| Market Memory | 项目根 `<repo>/memory/memory.db`（`storage.py` 默认） | `MOSAIC_MEMORY_DB=/data/memory.db`（compose 挂 `mosaic-data` 卷到 `/data`） | 镜像里代码在 `site-packages`，项目根之外属主是 root，非 root 进程写不进去 |
+| 简报 JSON | `<repo>/memory/{morning,evening}/`（`briefs.py` 默认） | `MOSAIC_DATA_DIR=/data` | 同上：定时简报也要写到可写卷，否则调度器到点保存静默失败 |
+| Gateway 模式 | 按 `.env`（`.env.example` 是 `http`，`Settings` 默认是 `mcp`） | 强制 `MARKET_GATEWAY_MODE=http` | MCP 模式要 spawn `iiix mcp serve market-gateway`，镜像里没有这个 CLI |
+
+其他部署注意事项：
+
+- **密钥不进镜像**：`.env` 同时在 `.gitignore` 与 `.dockerignore` 里；Dockerfile 不含任何
+  `COPY .env`，只拷了一份 `.env.example` 模板。运行时用 compose 的 `env_file` 或 `-e` 注入。
+- **卷属主要对**：容器以 UID/GID `10001`（用户 `mosaic`）运行。用宿主目录绑定时先
+  `sudo chown -R 10001:10001 ./deploy-data`，或用命名卷（compose 默认 `mosaic-data`）。
+- **简报调度器随容器启动**（`app/main.py` 的 lifespan 里 `start_brief_scheduler()`）；
+  `/health` 的 `brief_scheduler` 字段能看到 `running`/`stopped`。
+- 镜像里没装 `curl`（`python:3.13-slim`），HEALTHCHECK 用 `python -c "urllib.request..."` 代替。
+- 不用 Docker 也可以直接跑：`pip install -e ".[dev]"` 后 `python -m app.main`。
+
 ## 安全限制
 
 系统限制防止无限循环调用的配置项：

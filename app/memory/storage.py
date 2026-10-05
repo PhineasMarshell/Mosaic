@@ -49,6 +49,42 @@ def _sqlite_connection_factory(path: Path) -> SQLite3Connection:
     return conn
 
 
+def project_root() -> Path:
+    """项目根目录（仓库里 = <repo>；wheel 安装后 = site-packages 的上一级）。"""
+    return Path(__file__).resolve().parents[2]
+
+
+def data_dir() -> Path:
+    """运行期数据目录，落盘路径的统一入口。
+
+    优先级：配置 `MOSAIC_DATA_DIR` > `<项目根>/memory`。
+    容器里代码在 site-packages，项目根之外不可写，所以 Dockerfile 把
+    `MOSAIC_DATA_DIR` 指到可写卷（/data）；本地开发不设即保持历史行为。
+    """
+    try:
+        from app.config import get_settings
+
+        raw = (get_settings().mosaic_data_dir or "").strip()
+    except Exception:  # noqa: BLE001 — 配置不可用不应阻止默认路径生效
+        raw = ""
+    return Path(raw).expanduser() if raw else project_root() / "memory"
+
+
+def _configured_db_path() -> Path | None:
+    """从配置读 `MOSAIC_MEMORY_DB`（容器部署用可写卷路径）；未配置返回 None。
+
+    读取失败（缺少依赖、settings 校验不过等）一律退回默认路径，不让配置问题
+    变成导入期崩溃——真正的可写性检查交给 sqlite 打开时的报错。
+    """
+    try:
+        from app.config import get_settings
+
+        raw = (get_settings().mosaic_memory_db or "").strip()
+    except Exception:  # noqa: BLE001 — 配置不可用不应阻止默认路径生效
+        return None
+    return Path(raw).expanduser() if raw else None
+
+
 # ── Schema ────────────────────────────────────────────────────────────────
 
 _INIT_SQL = """
@@ -101,9 +137,11 @@ class MarketMemory:
     """
 
     def __init__(self, db_path: Path | None = None):
-        # 默认存到项目根目录下 memory/memory.db（P5：从 ~/.mosaic 迁入项目目录）
-        _project_root = Path(__file__).resolve().parents[2]
-        self.db_path = db_path or (_project_root / "memory" / "memory.db")
+        # 路径优先级：显式参数 > 配置 MOSAIC_MEMORY_DB > <项目根>/memory/memory.db
+        # （P5：从 ~/.mosaic 迁入项目目录；容器部署时项目根在 site-packages 之外，
+        # 必须用 MOSAIC_MEMORY_DB 指到可写卷，否则导入期就 PermissionError）
+        _project_root = project_root()
+        self.db_path = db_path or _configured_db_path() or (_project_root / "memory" / "memory.db")
         # T21：连接按线程各取一条。SQLite 连接默认只能在创建它的线程里使用，
         # 而本实例是进程级单例（get_memory()），async 端点可能运行在另一个
         # 线程——跨线程复用同一条连接会抛 ProgrammingError。

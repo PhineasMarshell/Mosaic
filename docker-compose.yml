@@ -1,0 +1,44 @@
+# Mosaic 部署编排。用法：
+#   docker compose up -d --build
+#   docker compose logs -f mosaic
+#   curl http://127.0.0.1:8000/health
+#
+# 前置：复制 .env.example 为 .env 并填真实 key（.env 已被 .gitignore / .dockerignore 排除）。
+# 注意：容器里没有 iiix CLI，所以这里显式把 gateway 模式钉成 http——
+# 即使你的本地 .env 写的是 mcp，容器也会用 http + MARKET_GATEWAY_API_KEY。
+services:
+  mosaic:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mosaic-market-intelligence:0.1.0
+    container_name: mosaic
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 容器内没有 iiix MCP CLI；要用 mcp 模式得自己把 CLI 装进镜像并挂进来
+      - MARKET_GATEWAY_MODE=http
+      # 绑 0.0.0.0 才能被端口映射转发（app 的 HOST/PORT 由 uvicorn CMD 消费）
+      - HOST=0.0.0.0
+      - PORT=8000
+      # Market Memory（SQLite）与定时简报 JSON 都落在卷里；容器以 UID 10001 运行，卷属主要对得上
+      - MOSAIC_MEMORY_DB=/data/memory.db
+      - MOSAIC_DATA_DIR=/data
+    ports:
+      - "8000:8000"
+    volumes:
+      - mosaic-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('PORT', '8000') + '/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  mosaic-data:

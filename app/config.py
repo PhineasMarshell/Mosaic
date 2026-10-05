@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 90
     max_conversation_turns: int = 10
 
+    #: Market Memory 的 SQLite 路径。留空 = 默认落在"项目根/memory/memory.db"
+    #: （本地开发的历史行为）。容器/只读代码目录部署时用 `MOSAIC_MEMORY_DB`
+    #: 指到可写卷上，例如 `/data/memory.db`。
+    mosaic_memory_db: str = ""
+
+    #: 运行期数据目录（定时简报 JSON 等）。留空 = 默认"项目根/memory"。
+    #: 容器部署时用 `MOSAIC_DATA_DIR=/data`，否则非 root 进程写不进 site-packages 之外。
+    mosaic_data_dir: str = ""
+
     # ── LangGraph 图配置（P2+） ────────────────────
     #: Critic 打回 Reasoning 重写的最大轮次
     critic_max_revisions: int = 2

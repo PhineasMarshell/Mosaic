@@ -55,9 +55,14 @@ def _in_window(target: dt_time, now: datetime) -> bool:
 
 
 def _brief_file_dir(brief_type: str) -> Path:
-    """定时简报的文件目录：<项目根>/memory/<morning|evening>/。"""
-    project_root = Path(__file__).resolve().parents[2]
-    d = project_root / "memory" / brief_type
+    """定时简报的文件目录：<数据目录>/<morning|evening>/。
+
+    数据目录来自 `app.memory.storage.data_dir()`（配置 `MOSAIC_DATA_DIR`，
+    默认 `<项目根>/memory`）——容器里项目根不可写，必须走可写卷。
+    """
+    from app.memory.storage import data_dir
+
+    d = data_dir() / brief_type
     d.mkdir(parents=True, exist_ok=True)
     return d
 
