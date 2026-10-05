@@ -1,16 +1,18 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
 > **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
-> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 均已由执行方完成、主 Agent 已独立验收通过**
-> （见 §0.4 的 "S1/S2/S3 验收复核记录"）。
+> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 / S4 均已由执行方完成、主 Agent 已独立验收通过**
+> （见 §0.4 的 "S1/S2/S3/S4 验收复核记录"）。
 > S1 验收追加：**T18c**（并发请求会话串台，P1；已在 S2 修完）、**T37**（打包/CI flat-layout 失败）、**T12b**（依赖清单漂移）。
 > S2 验收追加：**T19b**（假阳性用例）、**T23b**（预算起算点）—— 已在 S3 修完。
 > S3 验收追加：**T22b**（精确匹配漏掉点分 metric → 异常检测在生产里等于关闭）、
-> **T22c**（前值只按 metric 存 → 不同 symbol 互相污染，报出假的 `OI 剧烈增长 200.0%`）。这两个排在 **S4 最前面**。
+> **T22c**（前值只按 metric 存 → 不同 symbol 互相污染，报出假的 `OI 剧烈增长 200.0%`）—— 已在 S4 修完。
+> S4 验收追加：**T24b**（`.gitignore` 写的是 `.temp` 而不是 `.tmp/`，一行）—— 排在 **S5 最前面**。
+> 另外把四条"测试假阳性/反向验证"教训汇总进了 **§4 的 T35**（建议做 conftest 约定时一并落地）。
 > **行号基准**：`44c307f`（S1/S2 的改动未影响未完成任务的锚点；`tool_runtime.py` 的
 > `execute`/`_do_execute`/`_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > 动手时以锚点片段 grep 为准）。若行号漂移，以「定位锚点」里的代码片段为准。
-> **当前 HEAD**：`c436844`（S3 的 §0.4 提交；见 §0.4 的表）。
+> **当前 HEAD**：`7d2bfd6`（S4 的 §0.4 提交；见 §0.4 的表）。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -107,7 +109,8 @@
 | **T22b metric 名归一化** | ✅ 完成并验收（S4） | `e7c2272` | `_metric_basename`：去掉数组下标、取末段基名后与别名表精确比对（保住 T22 的"不做子串匹配"裁决，noise/openInterestRate 仍不误命中）；12 条新用例**全部经过 `normalize_tool_result`**（三种载荷形状 + A 股 `data.涨停家数` + 反向对照）；反向验证：恒等函数 → 7 条必红 |
 | **T22c 前值按 symbol 隔离** | ✅ 完成并验收（S4） | `08c3656` | 前值 key = `(metric_basename, symbol)`（symbol 取 `arguments.symbol` → domain → "unknown"）；同一次调用内混入多 symbol 也隔离；market_cache 存储取舍已写入注释（TTL/LRU 淘汰与"前值过期不可比"一致，丢前值=少报不误报）+ 拿不到前值留 debug；6 条新用例；反向验证：停用 symbol 作用域 → 5 条必红（含"三次独立调查"复现用例——初版 parametrize 写法被反向验证抓出是假阳性，已改为单用例内顺序执行） |
 | **T24 注册表** | ✅ 完成并验收（S4，**并入 T34 的注册表断言**） | `3bef4f4` | ①`registry_text` 删 `or ALL_TOOLS` 静默回退、health 始终附加、空域 warning；②hk_quote/hk_search domain→`hk_stock`、hk_search category 对齐 technical；③BY_NAME 重复 operationId：cross 优先→先注册者为规范条目（保住 F10 钉死的 quote/search→a_share 与 snapshot→cross），占位条目显式进 `SHARED_BY_NAME`；T34 的 `assert A or B` 恒真改 `and`；7 条新用例，三处改动逐项反向验证必红 |
-| **T21、T25、T26** | ⬜ 未开始 | — | S5（T21 → T26 → T25） |
+| **T21、T25、T26** | ⬜ 未开始 | — | S5（**先 T24b** → T21 → T26 → T25） |
+| **T24b** `.gitignore` 临时目录写错 | ⬜ **待做（S5 最前面，一行）** | — | `ceea711` 加的是 `.temp` 而不是 `.tmp/`（`git check-ignore` 证实未生效），且丢了行尾换行；`.tmp/` 里还有 3 个 `.py.bak` 生产源码备份 |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
@@ -217,7 +220,7 @@
      ```
      后两条是**用户可见的错误结论**（D3 已把 anomalies 写进报告与 `daily_states`）。→ **T22c**。
 
-**S4 执行记录（S4 会话自记，2026-10-05；**待主 Agent 验收**）**
+**S4 执行记录（S4 会话自记，2026-10-05；已由主 Agent 验收 —— 见下方的"S4 验收复核记录"）**
 
 - **T22b（`e7c2272`）**：`_metric_basename` 去数组下标、取末段基名，`_matches_metric` 用基名比对别名表；
   只改"匹配哪条规则"，`value_semantics` 比对值不动。12 条新用例全部经过 `normalize_tool_result`
@@ -247,8 +250,45 @@
   `mcp` 与 `http` 双模式各跑一次全量，数字一致。
 - 测试数增量：456 → 481 收集 = +25（T22b +12、T22c +6、T24 +7）；`test_anomaly_detector.py` 现 56 条、
   `test_tool_registry_multi_domain.py` 现 27 条。
-- 遗留：§1.3 的复现脚本在 `.tmp/`（`verify_t22_metric_names.py` / `verify_t22_prev_scope.py`），
-  未提交；S4 修完后两个脚本输出已符合预期（嵌套载荷 `['oi_spike']`、三次调查 `[]/[]/[]`）。
+- 遗留：`.tmp/` 下的两个**旧**复现脚本（`verify_t22_metric_names.py` / `verify_t22_prev_scope.py`）未提交。
+  ⚠️ **更正（验收者核实）**：这两个脚本是**手工往 `market_cache` 塞前值**、键格式还是 T22c 之前的
+  `__anomaly_prev__:<metric>`；T22c 改键后它们连扁平载荷都输出 `[]`，**不能作为"已符合预期"的证据**。
+  结论以验收者的端到端探针 `.tmp/verify_s4_anomaly.py` 为准（连续调用 `detect_anomalies`，
+  不手工写内部状态）：嵌套载荷 +20% 报 `oi_spike`、三次不同 symbol 全 `[]`、扁平载荷回归仍报 —— 都对。
+
+**S4 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
+
+- **通过**：逐条读了 3 个提交 + 2 个 chore/docs 的 diff；测试数增量对得上（456 → 481 收集 = **+25**：
+  T22b +12、T22c +6、T24 +7）；历史干净。
+- **全量 + 门禁**：`pytest -q` → **`479 passed, 2 skipped`**，与报告逐字相符；`ruff check` + `format --check` 全绿。
+- **反向验证（4 项，我自己重跑）**：
+  1. **T22b**：把 `_metric_basename` 换成恒等 → `test_anomaly_detector.py` **7 failed**（`nested`/`list` 载荷形状 + A 股
+     `data.涨停家数`），扁平载荷对照仍绿 → 与报告一致。
+  2. **T22c**：**忠实**回退（把 `_prev_key` 改回 `metric`-only，而不是让 `_prev_scope` 返回常量）→ **5 failed**
+     （`test_three_investigations_different_symbols_no_pollution`、`test_multiple_symbols_in_one_call_are_isolated`、
+     `test_missing_symbol_falls_back_to_domain[0/1/2]`）→ 与报告一致。
+     *方法学提醒*：我第一次的弱回退只红了 2 条 —— **反向验证必须忠实复现旧行为**，只是"把新代码弄坏"会得出错误结论。
+  3. **T24①**：恢复 `or ALL_TOOLS` → **3 failed**（`us_stock` 排除他域+含 health、`unknown` 域只回 health+warning、
+     `hk_stock` 含 HK 工具+health）。
+  4. **T24③**：恢复"后注册者静默胜出" → **6 failed**，其中 4 条在 `test_normalizer_f10.py`
+     （`quote/search → a_share` 的域推断被打破）—— 证明这条钉死语义真的受保护。
+- **我自己写的端到端探针（`.tmp/verify_s4_anomaly.py`）**：嵌套载荷同 symbol 1e9 → 1.2e9 → **报 `oi_spike` critical
+  「OI 剧烈增长 20.0%」**（修复前是 `[]`）；三次不同 symbol → **全 `[]`**（修复前 ETH 被报 +200%）；
+  扁平载荷 +20% 仍报（回归对照）。T22b/T22c 都真的生效了。
+- **注册表独立探针（`.tmp/verify_s4_registry.py`）**：`ALL_TOOLS=40 / BY_NAME=35 / SHARED=5`（不丢不重）、`BY_KEY=40`；
+  **4 组复用同一 operationId 的条目，其 `http_method`/`http_path` 完全一致** → 规范条目的选择**不改变真实调用**（这是我最担心的一点，已排除）；
+  `registry_text` 行数：`us_stock` 2（health）、`hk_stock` 6（含 HK 工具）、`a_share` 20（不再混入 hk 工具）、
+  `bogus`/`unknown` 2（health + warning）、`None` 40。
+- **⚠️ 需要更正执行方 §0.4 里的一句（我已就地改）**：报告写"S4 修完后两个遗留脚本输出已符合预期
+  （嵌套载荷 `['oi_spike']`）"——**不成立**。那两个脚本是**手工往 `market_cache` 里塞前值**、键格式是 T22c 之前的
+  `__anomaly_prev__:<metric>`；T22c 把键改成 `<basename>|<symbol>` 后，手工塞的键再也读不到，
+  所以它们现在**连扁平载荷都输出 `[]`**（我实测）。这不是产品问题，而是**探针过期**：
+  教训与 T22c 那条同源 —— **探针要通过公开路径驱动行为（连续调用 `detect_anomalies`），不要手工写内部状态**。
+  已用新探针 `.tmp/verify_s4_anomaly.py` 取代它们。
+
+**⚠️ 轻微遗留（不影响 S4 任务本身，已立 T24b）**：`ceea711` 给 `.gitignore` 加的是 **`.temp`**（且丢了行尾换行），
+不是本项目实际用的 **`.tmp/`** —— `git check-ignore -v .tmp/...` 返回"未忽略"，`git status` 仍显示 `?? .tmp/`。
+`.tmp/` 里现在有 8 个文件（含 3 个 `.py.bak` 生产源码备份），正好是规则 3"不要 `git add -A`"要防的东西。→ **T24b**。
 
 ---
 
@@ -264,20 +304,18 @@
 | **S1 修红**（独占一段，阻塞一切） | T18b → T17T → T18T → T12 收尾 | §0 全部 + §1 全部 + §2 全部 + 附录 A | T18b（产品）与 T18T（测试）互相牵制，必须在同一会话里把基线跑绿；T12 只是一行 `pyproject`，顺手 | **`mcp` 与 `http` 双模式全绿**；4 个提交 |
 | **S2 运行时 / 缓存 / 成本** | ✅ **已完成并验收**：T18c → T19 → T27 → T23 | — | 见 §0.4 "S2 验收复核记录" | `436 passed + 2 skipped`（双模式）；6 个提交；但 S3 需先补 **T19b / T23b** |
 | **S3 检测与报告契约** | ✅ **已完成并验收**：T19b → T23b → T22 → T20 → T15 | — | 见 §0.4 "S3 验收复核记录" | `454 passed + 2 skipped`（双模式）；7 个提交；但 S4 需先补 **T22b / T22c** |
-| **S4 注册表 + 异常检测尾巴** | ✅ **已完成**：T22b → T22c → T24（T34 的注册表断言已并入） | — | 见 §0.4 表格与下方"S4 执行记录" | `479 passed + 2 skipped`（双模式）；3 个提交；**待主 Agent 验收** |
-| **S5 请求生命周期** | T21 → T26 → T25 | §0 + 附录 A/B + §3 的 T21/T26/T25 | sqlite 跨线程、SSE 收尾、前端并发，都是"一次请求从进到出"；T25 是前端，放最后 | 全绿 + 手工看一眼界面；3 个提交 |
+| **S4 注册表 + 异常检测尾巴** | ✅ **已完成并验收**：T22b → T22c → T24（T34 的注册表断言已并入） | — | 见 §0.4 "S4 验收复核记录" | `479 passed + 2 skipped`（双模式）；4 个提交；但 S5 需先补 **T24b** |
+| **S5 请求生命周期** | **T24b**（一行） → T21 → T26 → T25 | §0 + 附录 A/B + §3 的 T24b/T21/T26/T25 | T24b 是仓库卫生一行，先清掉；sqlite 跨线程、SSE 收尾、前端并发都是"一次请求从进到出"；T25 是前端，放最后 | 全绿 + 手工看一眼界面；4 个提交 |
 | **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
 | **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
 | **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
 
 **硬性顺序约束（不要打乱）**：
-1. **S1 必须最先**（✅ 已完成并验收）；S2 ✅、S3 ✅。
-2. **S4 的 T22b / T22c 最优先**：它们是"异常检测漏报 / 误报"的正确性缺陷，且 D3 已经把 anomalies
-   接进报告与 `daily_states`——不修就等于对外输出错误结论。
-3. S5 内 **T21 早于 T26**（SSE 的落库断言需要可写的 sqlite 路径）。
-4. S6/S7 建议在 S1 之后：T31 解 skip 后会真跑到 analyst 节点，依赖 T18b 已修。
-5. **S8 必须最后**：T37 会改 `pyproject.toml` 的打包配置，改完要重跑一次全量。
-6. 段的**内部**仍然遵守规则 1：一个任务一次提交。
+1. **S1 必须最先**（✅ 已完成并验收）；S2 ✅、S3 ✅、S4 ✅。
+2. S5 先做 **T24b**（`.gitignore` 一行），再 **T21 早于 T26**（SSE 的落库断言需要可写的 sqlite 路径）。
+3. S6/S7 建议在 S1 之后：T31 解 skip 后会真跑到 analyst 节点，依赖 T18b 已修。
+4. **S8 必须最后**：T37 会改 `pyproject.toml` 的打包配置，改完要重跑一次全量。
+5. 段的**内部**仍然遵守规则 1：一个任务一次提交。
 
 **每段的开场指令模板**（把 `{Sx}` 换成具体段号）：
 
@@ -991,7 +1029,30 @@ SOLUSDT OI=3,300,000,000  -> [('oi_spike','high','OI 短时间内快速增加 10
 断言 deadline 用尽后请求次数 == 1，且返回 `status == "error"`、`errors` 语义明确。
 **验收**：复现里的请求次数断言成立；正常（预算充足）路径的重试行为不变。
 
-### T24 — 工具注册表：域过滤与注释相反、HK 工具 domain/category 漂移
+### T24b — `.gitignore` 的临时目录写法写错（S5 一行；验收者实测）
+`ceea711` 给 `.gitignore` 最后加的是 **`.temp`**，而本项目实际用的是 **`.tmp/`**（附录 A 的 runner、
+各段的复现脚本、执行方的 `.py.bak` 备份都放在那里），并且该行丢了行尾换行符。
+**复现**
+```bash
+git check-ignore -v .tmp/verify_s4_anomaly.py   # 无输出（退出码 1）= 未被忽略
+git status --porcelain                          # 仍显示 ?? .tmp/
+```
+**修改**：把 `.temp` 改成 `.tmp/`（或两者都写），补回文件末尾换行；
+顺手把 `.tmp/` 里执行方留下的 `base_t23b.py.bak` / `cache_t19.py.bak` / `reasoning_node_t15.py.bak` /
+`tool_registry.t24.py` 删掉（它们是回退备份，源码已确认干净：`git diff -- app/ tests/` 为空、全量绿）。
+**验收**：`git check-ignore -v .tmp/run_tests_local.py` 能命中；`git status --porcelain` 里不再出现 `.tmp/`；
+`.tmp/` 里只剩 `run_tests_local.py` 与当前在用的复现脚本。
+**必补测试**：无（纯仓库卫生）。**风险**：无。
+
+### T24 — 工具注册表：域过滤与注释相反、HK 工具 domain/category 漂移 → ✅ 已完成（`3bef4f4`，见 §0.4）
+> 原始问题描述保留在下方作为回归依据。已实现：`registry_text` 删掉 `or ALL_TOOLS` 静默回退、
+> health 始终附加、空域记 warning；`hk_quote`/`hk_search` 的 domain → `hk_stock`（category 与 A 股对齐）；
+> `BY_NAME` 规范条目选取显式化（cross 优先、否则先注册者），占位条目进 `SHARED_BY_NAME`。
+> 回归测试：`tests/test_tool_registry_multi_domain.py`（27 条，含并入的 T34 断言）；
+> **验证结论见 §0.4 "S4 验收复核记录"**（4 组复用 operationId 的 `http_method`/`http_path` 完全一致 → 不影响真实调用）。
+
+**原始描述（历史）**
+
 **定位锚点**
 - `app/gateway/tool_registry.py:625-639` `registry_text`：`:634` 先按 domain 过滤，
   `:636` `filtered = [t for t in filtered if t.domain != "unknown"] or ALL_TOOLS` ← 注释说"始终包含 health"，
@@ -1213,6 +1274,22 @@ skip 理由写"P0 图为 supervisor→kernel"，但 `app/graph/builder.py` 早�
    （`tests/test_graph_topology.py` 已开始这么做，请推广到所有 e2e 用例；§2 的 T18T 已经给三条用例加上了）。
 3. 每个新增测试都自问：**"把对应生产代码改坏，它会不会变红？"** 不会就重写。
 
+**S1–S4 验收中反复出现、请一并沉淀进 `conftest.py` 注释与评审清单的四条教训**：
+- **假阳性模式①（整体替换被测对象）**：stub 把 `_runtime` 换成 `None`/缺方法的假对象 → 异常被节点的兜底
+  `except` 吞成 "failed finding"，用例却断言通过（T18T）。
+- **假阳性模式②（autouse fixture 清状态 + `@parametrize`）**：每条参数化用例都在干净状态下跑，
+  **跨调用污染类**回归（前值串台、缓存复用、签名去重）根本不会发生 —— T22c 初版就是这么写的，
+  被反向验证抓出后才改成**单条用例内顺序执行**。凡是"第 N 次调用受第 N-1 次影响"的行为，
+  都必须放在一条用例里连续调用。
+- **假阳性模式③（fixture 手工造数据、绕开真实入口）**：T22 的用例手写 `NormalizedDatum(metric="openInterest")`，
+  而生产里 metric 是 normalizer 产出的 `data.openInterest`；T22b 的漏报就是这么漏过去的。
+  **凡是断言"某条规则会命中"的用例，都必须经过 `normalize_tool_result`。**
+- **反向验证的正确姿势**：必须**忠实复现旧行为**，而不是"随便把新代码弄坏"。T22c 我第一次只让
+  `_prev_scope` 返回常量，只红了 2 条；改成把 `_prev_key` 退回 metric-only（与旧实现等价）才红了 5 条。
+  同理，**探针脚本不要手工写内部状态**（如直接往 `market_cache` 塞 `__anomaly_prev__:*`）：
+  T22c 改了键格式后，两个旧探针连扁平载荷都输出 `[]`，看起来像"修复失效"，其实是探针过期；
+  探针要通过公开路径驱动（连续调用 `detect_anomalies`）。
+
 ---
 
 ## 5. 收尾
@@ -1405,12 +1482,15 @@ S3 检测与报告契约 — ✅ 完成并双模式全绿（61c48e9 / 661be64 / 
     验收已过：454 passed + 2 skipped（双模式）；T19b / T15 反向验证验收者复跑过；
     记录见 §0.4 "S3 验收复核记录"；**T22 留下两个正确性缺陷 → T22b / T22c**
 
-S4 注册表 + 异常检测尾巴（先把上一段验收发现的缺陷清掉）
-[ ] T22b metric 名归一化（点分路径取末段；新测试必须经过 normalize_tool_result）  ← 验收者实测
-[ ] T22c 前值按 symbol 隔离（否则不同币种互当前值、报出假的 +200%）              ← 验收者实测
-[ ] T24 注册表域过滤 / HK 漂移（含并入 T34 的 multi_domain 断言）
+S4 注册表 + 异常检测尾巴 — ✅ 完成并验收（e7c2272 / 08c3656 / 3bef4f4）
+[x] T22b metric 名归一化（点分路径取末段；新测试全部经过 normalize_tool_result）
+[x] T22c 前值按 symbol 隔离
+[x] T24 注册表域过滤 / HK 漂移 / BY_NAME 歧义（含并入 T34 的 multi_domain 断言）
+    验收已过：479 passed + 2 skipped（双模式）；四项反向验证我复跑过（7 / 5 / 3 / 6 条必红）；
+    记录见 §0.4 "S4 验收复核记录"；**留下 T24b（.gitignore 一行）**
 
 S5 请求生命周期
+[ ] T24b .gitignore 的 .temp → .tmp/（补行尾换行；清掉 .tmp 里的 .py.bak）  ← 验收者实测
 [ ] T21 sqlite 线程跨线程
 [ ] T26 SSE 错误分支可达 + 任务 await
 [ ] T25 前端并发与渲染健壮性
