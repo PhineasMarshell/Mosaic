@@ -1,7 +1,9 @@
 """Market Memory — 市场记忆持久化 (SQLite)。
 
-存储每日 Market State、主题强弱、异常记录、重要变化和用户研究记录，
-支持跨日历史比较（PRD §38-39）。
+存储每日 Market State、主题强弱、异常记录、重要变化和用户研究记录（PRD §38-39）。
+跨日快照读取由 `get_recent_states` 提供（晨报/晚报模板消费）；**交互式提问不做跨日
+上下文注入**——此前用于 Reasoning 注入的 `get_context_for_question` 无生产调用方，
+已按 S8 验收裁决删除，不要以"文档承诺"为由重新引入。
 
 存储方案：SQLite WAL 模式（ACID + 并发安全）
 存储路径：<项目根>/memory/memory.db
@@ -348,36 +350,6 @@ class MarketMemory:
         lines.append("--- 对话历史结束 ---")
         return "\n".join(lines)
 
-    # ── Search / Context ──────────────────────
-
-    def get_context_for_question(self, question: str, days_back: int = 7) -> str:
-        """为给定问题生成历史上下文文本（供 Reasoning Prompt 注入）。
-
-        提取最近几天的 Market State 摘要，帮助 AI 进行跨日比较。
-        """
-        states = self.get_recent_states(days=days_back)
-        if not states:
-            return ""
-
-        lines = [f"--- 过去 {len(states)} 天 Market State 快照 ---"]
-        for s in states[:8]:
-            date = s.get("_file_date", "?")
-            a_state = s.get("a_share_state", s.get("a-share", s.get("aShare")))
-            c_state = s.get("crypto_state", s.get("crypto", s.get("c-state")))
-            themes = s.get("strong_areas", s.get("themes", []))
-            parts = []
-            if a_state:
-                parts.append(f"A股={a_state}")
-            if c_state:
-                parts.append(f"Crypto={c_state}")
-            if themes:
-                theme_str = ", ".join(themes[:3])
-                parts.append(f"Themes=[{theme_str}]")
-            lines.append(f"{date}: {' · '.join(parts)}")
-
-        lines.append("--- 历史上下文结束 ---")
-        return "\n".join(lines)
-
 
 # ── 进程内共享实例 ──────────────────────────
 
@@ -389,8 +361,7 @@ def get_memory() -> MarketMemory:
     """返回进程内共享的 MarketMemory。
 
     以前每个调用点都自己 ``MarketMemory()``：一次调查里 main.py 的单例、
-    investigate() 的对话历史读取、investigate() 的跨日上下文读取，各开一条
-    连接且从不关闭（连接/FD 随请求量增长）。
+    investigate() 的对话历史读取等各开一条连接且从不关闭（连接/FD 随请求量增长）。
 
     更严重的是它和未提交事务叠加后的效果：写入方那条连接能看见自己未提交的
     数据，别的连接看不见 —— 于是多轮对话上下文永远是空字符串，追问功能

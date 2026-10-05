@@ -111,7 +111,7 @@ Researching...
 
 ### Market Memory（PRD §38-39）
 
-持久化市场记忆，支持跨日历史比较。全部落在**项目内单个 SQLite 文件** `memory/memory.db`
+持久化市场记忆，支持跨日历史比较（**目前由晨报/晚报摘要消费**）。全部落在**项目内单个 SQLite 文件** `memory/memory.db`
 （四张表：`daily_states` / `anomalies` / `research_records` / `conversations`）：
 - `daily_states` — 每日 Market State 快照
 - `anomalies` — 持久化的历史异常事件（`record_anomaly`）
@@ -121,10 +121,14 @@ Researching...
 > 早期版本写的是 `~/.mosaic/memory/{daily,anomalies,research}/` 三个目录，**P5 已迁到
 > 项目内 SQLite**，那三个路径现在不存在。
 
-跨日比较的快照读取器是 `MarketMemory.get_context_for_question(question, days_back=7)`
-（取最近 7 天 Market State 摘要）。**当前它只被简报模板与测试调用，尚未接进
-Reasoning 链路**——也就是说"问'今天和昨天有什么不同'时 Reasoning 自动注入 7 天上下文"
-目前只在简报里成立，交互式提问还没有。属于待接入项。
+跨日快照读取器是 `MarketMemory.get_recent_states(days=7)`（取最近 7 天 Market State
+摘要），**目前只有晨报/晚报模板消费**（`app/scheduler/briefs.py`）。
+
+> 早期版本承诺"问'今天和昨天有什么不同'时 Reasoning Engine 会自动注入最近 7 天
+> Market State"，但那个注入方法（`get_context_for_question`）**从来没有生产调用方**；
+> S8 验收时已按裁决删除该方法及其 3 条用例——**交互式提问不做跨日上下文注入**，
+> 不要再当成现存能力。若要接进 Reasoning 链路，属新增运行时行为，需单独立任务
+> （决定注入点、token 预算与测试）。
 
 ### Anomaly Radar（PRD §29-30）
 

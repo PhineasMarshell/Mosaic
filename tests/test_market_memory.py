@@ -10,7 +10,10 @@ Coverage:
   INSERT must raise sqlite3.IntegrityError, and concurrent save_turn from two
   connections must never persist a duplicate turn index (TOCTOU in MAX+1 ->
   the constraint is the backstop; the loser must fail loudly, not silently)
-- Context generation for reasoning prompts
+
+T36/S8：原先还有 `get_context_for_question` 的 3 条用例；该方法无生产调用方，
+已按 S8 验收裁决删除（跨日快照读取保留在 `get_recent_states(days=7)`，由晨报/
+晚报模板消费，其 4 条用例在 TestRecentStates 中）。
 """
 
 import json
@@ -342,41 +345,3 @@ class TestConversationHistory:
         history = memory.get_conversation_history(conv_id)
         assert "Q1: Only question" in history
         assert "A1:" not in history  # No A line when answer is empty
-
-
-# ── Context Generation Tests ───────────────────────────────────────────────
-
-
-class TestContextGeneration:
-    def test_empty_when_no_history(self, memory):
-        ctx = memory.get_context_for_question("anything")
-        assert ctx == ""
-
-    def test_includes_recent_states(self, memory):
-        for d in ["2025-09-03", "2025-09-04", "2025-09-05"]:
-            memory.save_daily_state(
-                date=d,
-                data={
-                    "state_label": "Risk-On",
-                    "strong_areas": ["AI"],
-                },
-            )
-
-        ctx = memory.get_context_for_question("今天和昨天有什么不同？")
-        assert "Market State" in ctx
-        assert "2025-09-05" in ctx
-
-    def test_context_format_with_domains(self, memory):
-        memory.save_daily_state(
-            date="2025-09-05",
-            data={
-                "a-share": "Theme Cooling",
-                "crypto": "Funding Extreme",
-                "strong_areas": ["Semiconductors", "EV Battery"],
-            },
-        )
-
-        ctx = memory.get_context_for_question("市场怎么样？")
-        assert "A股=Theme Cooling" in ctx
-        assert "Crypto=Funding Extreme" in ctx
-        assert "Themes=[" in ctx
