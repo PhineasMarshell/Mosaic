@@ -74,8 +74,8 @@
 
 ### 0.4 当前进展
 
-> **当前 HEAD：`7dce255`（S2 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）均已完成：
-> **436 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S2 会话实测）。
+> **当前 HEAD：`4a9ca07`（S3 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）均已完成：
+> **454 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S3 会话实测）。
 > ruff check / ruff format --check 全绿。
 > 行号基准 = `44c307f`（S1/S2 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
 > `execute` / `_do_execute` / `_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
@@ -94,10 +94,15 @@
 | **T17 news_search TTL** | ✅ 产品修复 + 测试已修（T17T） | `2bf11b7` / `b1b06fa` | patch 目标改为模块全局 `_search_news`，离线可跑；反向验证（改回无 settings 版 TTL 解析）必红 |
 | **T18 analyst 级复用 Gateway** | ✅ 完成并验收（T18b 按需连接 + T18T stub + **T18c 每请求会话**） | `44c307f` / `5647a4a` / `f2e4da1` / `f3b76e4` | 会话状态在模块级 `ContextVar _session`；并发复现脚本 `实例数 1→2`、B 的在途调用不再被关；反向验证（换回实例属性实现）①②必红 |
 | **T12 收尾（D1）** | ✅ 完成（但漏了 `requirements.txt`，见 **T12b**） | `0965da6` | `mcp>=2,<3`；已装 2.1.1；pip install -e . 的 flat-layout 失败是既有问题（见 **T37**） |
-| **T19 缓存** | ✅ 完成（**但 1 条用例是假阳性 → T19b**） | `bc4849d` | `ttl=0` 立即过期（`ttl or` 反向验证必红）；`max_entries=512` + LRU 淘汰 + set 顺带清理过期 + stats 加 `max_entries`/`evictions`；**`test_expired_entries_purged_on_set` 停用 purge 仍绿 = 未覆盖该行为** |
+| **T19 缓存** | ✅ 完成并验收（假阳性已由 T19b 修掉） | `bc4849d` / `61c48e9` | `ttl=0` 立即过期（`ttl or` 反向验证必红）；`max_entries=512` + LRU 淘汰 + set 顺带清理过期 + stats 加 `max_entries`/`evictions`；**`test_expired_entries_purged_on_set` 停用 purge 仍绿 = 未覆盖该行为** |
 | **T27 去重** | ✅ 完成 | `e6a04e5` | 同签名 3 次调用真实网关 2→1 次；重复调用返回 `partial` + note；route 层 seen 集合提前跳过；stash 旧实现 3 条全红 |
-| **T23 重试预算** | ✅ 完成（**但预算只按节点内起算 → T23b**） | `f119f51` + `7dce255` | deadline 全链路下发（base 均分 → execute → gateway.call）；忽略 deadline 反向验证 3/4 条红；测试 stub 的 call/execute 签名已补 `deadline=None` |
-| **T20–T22、T24–T26、T15** | ⬜ 未开始 | — | 下一段 S3，**最前面先做 T19b + T23b**（本次验收追加） |
+| **T23 重试预算** | ✅ 完成并验收（起算点已由 T23b 修为整次调查） | `f119f51` + `7dce255` / `661be64` | deadline 全链路下发（base 均分 → execute → gateway.call）；忽略 deadline 反向验证 3/4 条红；测试 stub 的 call/execute 签名已补 `deadline=None` |
+| **T19b 假阳性** | ✅ 完成 | `61c48e9` | 断言前不再先 get；读路径覆盖拆独立用例；停用 purge 必红（已反向验证）；其余 4 条自检过 |
+| **T23b 调查级预算** | ✅ 完成 | `661be64` | orchestrator/SSE 写入 state["budget_deadline"]，analyst 按剩余调查预算均分；缺失时退回旧行为 + warning；反向验证（回退本节点起算）2 条必红 |
+| **T22 异常检测** | ✅ 完成 | `17b0782` | OI 规则改对前值的 % 变化（无前值不触发）、fundingRate 比率→百分比、metric 精确别名匹配、同 datum 同类型去重；旧实现下 9 failed |
+| **T20 必填字段 + D3** | ✅ 完成 | `a9d6a89` | market_state/what_happened 置空 + data_caveats；anomalies 归一化 list[dict]；build_response_from_state 用 detect_anomalies 代码填充；旧实现下 4 failed |
+| **T15 Evidence Gate（D2）** | ✅ 完成 | `7d66ad2` | Reasoning 消费 state["gate"]：has_evidence=False → 强制 confidence=low + caveats + errors，报告仍产出；文档同步（evidence_gate/architecture/README）；停用降级 2 条必红 |
+| **T24–T26、T21** | ⬜ 未开始 | — | 下一段 S4（T24）→ S5（T21 → T26 → T25） |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
@@ -1215,12 +1220,12 @@ S2 运行时 / 缓存 / 成本 — ✅ 完成并双模式全绿（f3b76e4 / bc48
     验收已过：436 passed + 2 skipped（双模式）；T18c 反向验证（回退实例属性）2 条必红；
     记录见 §0.4 "S2 验收复核记录"；**留下两个尾巴 T19b / T23b**
 
-S3 检测与报告契约（先把上一段的尾巴清掉）
-[ ] T19b 修 test_expired_entries_purged_on_set 假阳性（停用 purge 仍绿 = 没覆盖）  ← 验收者实测
-[ ] T23b 预算按整次调查起算（现在每轮重置，research_more 第二轮仍可能 504）      ← 验收者发现
-[ ] T22 anomaly 阈值/单位（D3 前置）  → [ ] T20 必填字段默认值（+ D4 的 _ensure_list）
-[ ] T20 后半：anomalies 用 detect_anomalies 填（D3，须在 T22 后）
-[ ] T15 Evidence Gate 降级（D2=B）
+S3 检测与报告契约 — ✅ 完成并双模式全绿（61c48e9 / 661be64 / 17b0782 / a9d6a89 / 7d66ad2）
+[x] T19b 修 test_expired_entries_purged_on_set 假阳性（停用 purge 必红，已反向验证）
+[x] T23b 预算按整次调查起算（state["budget_deadline"]；反向验证 2 条必红）
+[x] T22 anomaly 阈值/单位（D3 前置）  → [x] T20 必填字段默认值（+ anomalies 归一化）
+[x] T20 后半：anomalies 用 detect_anomalies 填（D3，代码填、模型条目被覆盖）
+[x] T15 Evidence Gate 降级（D2=B：降级不短路）
 
 S2 之后（批次 3 其余）
 [ ] T12b requirements.txt 同步 mcp>=2,<3（S7，一行）
@@ -1270,4 +1275,8 @@ S2 之后（批次 3 其余）
 | **T18 analyst 级复用 Gateway** | `44c307f` + `5647a4a`（T18b）+ `f2e4da1`（T18T）+ `f3b76e4`（T18c） | 一次 analyst 运行复用同一个 Gateway 客户端，异常时保证关闭；**连接必须按需**（进入会话不建连）；stub 必须提供 `gateway_session`；**会话状态必须在模块级 ContextVar 里（每 asyncio task 一份），不许放回 `self.*`**（单例图的节点实例被并发请求共享） | `tests/test_gateway_reuse.py`（8 条） |
 | **T19 缓存容量与 TTL** | `bc4849d` | `set` 用 `ttl if ttl is not None else default`（`ttl=0` = 立即过期，不许落回默认）；`max_entries=512` + LRU 淘汰；`set` 时清理过期条目；`stats` 含 `max_entries`/`evictions`（**该行为的测试是假阳性，须由 T19b 修好**） | `tests/test_cache_capacity.py` |
 | **T23 重试感知预算** | `f119f51` + `7dce255` | `deadline` 全链路下发（analyst 均分 → `execute` → `gateway.call`）；HTTP 重试前/退避前检查剩余时间，MCP 每次尝试前检查；超预算返回 `error` ToolResult（不抛异常炸链）；**预算起算点是本节点而非整次调查（T23b 修）** | `tests/test_http_client_budget.py`（4 条） |
+| **T15 Evidence Gate** | `7d66ad2` | `has_evidence=False` 时 Reasoning **降级不短路**：报告照常产出，但 confidence 强制 low、data_caveats 追加"证据链为空"、errors 写 "Evidence gate: ..."；模型置信度被覆盖；gate 为 dict（reducer 序列化后）同样要被消费 | `tests/test_evidence_gate.py`（9 条） |
+| **T20 报告字段 + D3 anomalies** | `a9d6a89` | `market_state` / `what_happened` 允许为空但必须写 data_caveats（不许静默）；`anomalies` 归一化为 list[dict]（标量不炸 schema）；**anomalies 由 build_response_from_state 用 detect_anomalies 代码填充，模型条目一律被覆盖** | `tests/test_reasoning_parsing.py`（+4） |
+| **T22 异常检测语义** | `17b0782` | metric 匹配是**精确别名表**（'oi' 子串不许回潮）；OI 规则比较**对前值的 % 变化**，无前值不触发；fundingRate 是小数比率（×100 后比 % 阈值）；同 datum 同 rule_type 只报最高严重级；OI 前值存 market_cache（key `__anomaly_prev__:*`，ttl 3600） | `tests/test_anomaly_detector.py`（38 条） |
+| **T23b 调查级预算** | `661be64` | 预算起算点是 **state["budget_deadline"]**（orchestrator.run / SSE initial_state 写入，research_more 回环覆盖）；`_execute_tools` 缺该字段时退回本节点起算**并记 warning**，不许静默当成预算无限；main.py 的 wait_for 硬上限保留 | `tests/test_budget_deadline.py`（4 条） |
 | **T27 called_signatures** | `e6a04e5` | 签名在**真实执行成功后立即**登记；同签名重复调用返回 `status="partial"` + `note`（不许静默成功、不许绕过缓存再打网关）；`_execute_tools` 用 `seen` 集合在 route 层提前跳过 | `tests/test_tool_runtime_dedup.py`（3 条） |
