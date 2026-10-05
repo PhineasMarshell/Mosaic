@@ -94,7 +94,9 @@ def mock_openai(monkeypatch):
             "revision_count": revision_count + (1 if is_revision else 0),
         }
 
-    monkeypatch.setattr(reason_mod.ReasoningNode, "__call__", fake_reasoning_call)
+    monkeypatch.setattr(
+        reason_mod.ReasoningNode, "__call__", fake_reasoning_call
+    )  # T35-OK: e2e 验证图接线与报告产出，reasoning 语义由 test_reasoning_parsing 覆盖
 
     yield
 
@@ -108,6 +110,23 @@ def graph():
     from app.graph.builder import build_graph
 
     return build_graph(Settings())
+
+
+# 节点兜底降级分支的统一 errors 标记（T35；完整清单见 tests/conftest.py）。
+# 注意 "Evidence gate: …"（T15 零证据合法降级）不是失败标记，不在此列。
+_FALLBACK_MARKERS = (
+    "analysis failed",  # analyst
+    "gate failed",
+    "critic audit failed",
+    "reasoning engine failed",
+    "reasoning node failed",
+    "supervisor routing failed",
+)
+
+
+def _fallback_leaks(errors) -> list[str]:
+    """从 errors 里挑出兜底降级标记（T35：防"节点内部炸了测试却绿"）。"""
+    return [e for e in (errors or []) if any(m in str(e).lower() for m in _FALLBACK_MARKERS)]
 
 
 # ------------------------------------------------------------------ #
@@ -137,6 +156,12 @@ async def test_full_flow_produces_report(graph):
     assert "fundamental" in finding_analysts
     assert "moneyflow" in finding_analysts
 
+    # T35：任何节点滑进兜底 except 降级分支都必须让本用例变红，
+    # 而不是被吞成 failed finding 后照样绿（Evidence gate 合法降级除外）。
+    assert _fallback_leaks(result.get("errors")) == [], (
+        f"有节点滑进兜底降级分支: {_fallback_leaks(result.get('errors'))}"
+    )
+
 
 @pytest.mark.asyncio
 async def test_stream_emits_node_events(graph):
@@ -154,6 +179,13 @@ async def test_stream_emits_node_events(graph):
         names.update(item.keys())
 
     assert "supervisor" in names
+
+    # T35：流式路径同样不得有节点滑进兜底 except 降级分支。
+    for item in events:
+        for node_name, update in item.items():
+            errs = update.get("errors") if isinstance(update, dict) else None
+            leaks = _fallback_leaks(errs)
+            assert leaks == [], f"节点 {node_name} 滑进兜底降级分支: {leaks}"
 
 
 # ------------------------------------------------------------------ #

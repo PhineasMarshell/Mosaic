@@ -1,3 +1,6 @@
+"""Normalizer 单元测试 —— 不 mock 任何东西：normalize_tool_result 为纯函数，
+直接喂真实网关载荷形状。未覆盖：下游 evidence 构建由 test_evidence.py 覆盖。"""
+
 from app.gateway.normalizer import normalize_tool_result
 
 

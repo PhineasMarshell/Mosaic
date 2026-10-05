@@ -210,8 +210,10 @@ def _patch_reasoning_and_critic(monkeypatch):
     async def fake_critic(self, state):
         return {"critique": Critique(verdict="pass", reason="ok")}
 
-    monkeypatch.setattr(rea_mod.ReasoningNode, "__call__", fake_reasoning)
-    monkeypatch.setattr(crit_mod.CriticNode, "__call__", fake_critic)
+    monkeypatch.setattr(
+        rea_mod.ReasoningNode, "__call__", fake_reasoning
+    )  # T35-OK: 本组用例验证 supervisor/gate 拓扑接线，reasoning 非验证目标
+    monkeypatch.setattr(crit_mod.CriticNode, "__call__", fake_critic)  # T35-OK: 同上，critic 非验证目标
 
 
 def _patch_tool_runtime(monkeypatch):
@@ -254,7 +256,9 @@ async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
         called_categories.append(self.category)
         return await orig_call(self, state)
 
-    monkeypatch.setattr(MarketAnalystNode, "__call__", tracked_call)
+    monkeypatch.setattr(
+        MarketAnalystNode, "__call__", tracked_call
+    )  # T35-OK: 只包一层计数透传原 __call__，analyst 骨架仍真实运行
 
     graph = build_graph(Settings())
     result_state = await graph.ainvoke({"question": "测试", "domain": "a_share"})
@@ -284,7 +288,9 @@ async def test_fanout_falls_back_to_all_analysts_when_route_empty(monkeypatch):
         called_categories.append(self.category)
         return await orig_call(self, state)
 
-    monkeypatch.setattr(MarketAnalystNode, "__call__", tracked_call)
+    monkeypatch.setattr(
+        MarketAnalystNode, "__call__", tracked_call
+    )  # T35-OK: 只包一层计数透传原 __call__，analyst 骨架仍真实运行
 
     graph = build_graph(Settings())
     result_state = await graph.ainvoke({"question": "测试", "domain": "a_share"})
@@ -434,7 +440,9 @@ async def test_revise_loop_reinvokes_reasoning(monkeypatch):
             rc += 1
         return {"report": _fake_report(), "revision_count": rc}
 
-    monkeypatch.setattr(rea_mod.ReasoningNode, "__call__", fake_reasoning)
+    monkeypatch.setattr(
+        rea_mod.ReasoningNode, "__call__", fake_reasoning
+    )  # T35-OK: 本组用例验证 critic 回环/预算，reasoning 非验证目标
 
     critic_calls = {"n": 0}
 
@@ -443,7 +451,9 @@ async def test_revise_loop_reinvokes_reasoning(monkeypatch):
         verdict = "revise" if critic_calls["n"] == 1 else "pass"
         return {"critique": Critique(verdict=verdict, reason="test")}
 
-    monkeypatch.setattr(crit_mod.CriticNode, "__call__", seq_critic)
+    monkeypatch.setattr(
+        crit_mod.CriticNode, "__call__", seq_critic
+    )  # T35-OK: 本组用例验证回环次序，critic verdict 序列是受控输入
 
     graph = build_graph(Settings())
     result = await graph.ainvoke({"question": "测试", "domain": "a_share"})
@@ -476,7 +486,9 @@ async def test_research_more_loop_reinvokes_supervisor(monkeypatch):
             rc += 1
         return {"report": _fake_report(), "revision_count": rc}
 
-    monkeypatch.setattr(rea_mod.ReasoningNode, "__call__", fake_reasoning)
+    monkeypatch.setattr(
+        rea_mod.ReasoningNode, "__call__", fake_reasoning
+    )  # T35-OK: 本组用例验证 critic 回环/预算，reasoning 非验证目标
 
     supervisor_calls = {"n": 0}
     orig_supervisor = sup_mod.SupervisorNode.__call__
@@ -485,7 +497,9 @@ async def test_research_more_loop_reinvokes_supervisor(monkeypatch):
         supervisor_calls["n"] += 1
         return await orig_supervisor(self, state)
 
-    monkeypatch.setattr(sup_mod.SupervisorNode, "__call__", counting_supervisor)
+    monkeypatch.setattr(
+        sup_mod.SupervisorNode, "__call__", counting_supervisor
+    )  # T35-OK: 只包一层计数透传原 __call__，supervisor 仍真实运行
 
     critic_calls = {"n": 0}
 
@@ -494,7 +508,9 @@ async def test_research_more_loop_reinvokes_supervisor(monkeypatch):
         verdict = "research_more" if critic_calls["n"] == 1 else "pass"
         return {"critique": Critique(verdict=verdict, reason="test")}
 
-    monkeypatch.setattr(crit_mod.CriticNode, "__call__", seq_critic)
+    monkeypatch.setattr(
+        crit_mod.CriticNode, "__call__", seq_critic
+    )  # T35-OK: 本组用例验证回环次序，critic verdict 序列是受控输入
 
     graph = build_graph(Settings())
     result = await graph.ainvoke({"question": "测试", "domain": "a_share"})

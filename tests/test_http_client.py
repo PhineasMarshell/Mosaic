@@ -1,3 +1,7 @@
+"""HTTP 网关客户端本地校验单元测试 —— 不 mock 任何东西、不发真实请求：
+直接构造 MarketGatewayHttpClient 验证本地逻辑（API key 校验等）。
+未覆盖：HTTP 请求/重试/预算行为由 test_http_client_budget.py 打桩覆盖。"""
+
 import pytest
 
 from app.config import Settings

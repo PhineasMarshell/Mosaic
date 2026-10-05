@@ -1,3 +1,7 @@
+"""工具注册表单元测试 —— 不 mock 任何东西：by_category / registry_text /
+resolve_tool 均为进程内纯查询。未覆盖：多域过滤与 operationId 歧义语义
+由 test_tool_registry_multi_domain.py 覆盖。"""
+
 from app.gateway.tool_registry import by_category, registry_text, resolve_tool
 
 

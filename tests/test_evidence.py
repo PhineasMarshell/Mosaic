@@ -1,3 +1,7 @@
+"""Evidence 构建单元测试 —— 不 mock 任何东西：normalize_tool_result 与
+build_evidence 均为纯函数，直接喂真实 ToolResult/NormalizedDatum 结构。
+未覆盖：真实网关载荷形状由 test_normalizer* 系列覆盖。"""
+
 from app.gateway.normalizer import normalize_tool_result
 from app.research.evidence import build_evidence
 
