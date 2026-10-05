@@ -219,7 +219,7 @@ def _patch_tool_runtime(monkeypatch):
     from app.graph.tool_runtime import ToolRuntime
     from app.models.market import ToolResult
 
-    async def fake_execute(self, tool_name, arguments, called_signatures):
+    async def fake_execute(self, tool_name, arguments, called_signatures, deadline=None):
         return ToolResult(
             tool=tool_name,
             arguments=arguments,
@@ -344,7 +344,7 @@ async def test_news_node_executed_when_enabled(monkeypatch):
 
     executed_tools: list[str] = []
 
-    async def fake_execute(self, tool_name, arguments, called_signatures):
+    async def fake_execute(self, tool_name, arguments, called_signatures, deadline=None):
         executed_tools.append(tool_name)
         return ToolResult(
             tool=tool_name,

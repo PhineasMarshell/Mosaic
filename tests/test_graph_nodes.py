@@ -54,7 +54,7 @@ def mock_runtime(monkeypatch):
     """用同步调用伪造 ToolRuntime.execute，避免真实网络请求。"""
     results = []
 
-    async def fake_execute(tool_name, arguments, called_signatures):
+    async def fake_execute(tool_name, arguments, called_signatures, deadline=None):
         result = types.SimpleNamespace(
             tool=tool_name,
             arguments=arguments,
@@ -233,7 +233,7 @@ async def test_execute_skips_non_whitelist_no_stock(mock_runtime, monkeypatch):
     # Mock at instance level — __init__ already set self._runtime = ToolRuntime(settings),
     # so we replace the instance attribute rather than trying to patch the global class.
     class FakeRuntime(_NoGatewayRuntime):
-        async def execute(self, tool_name, arguments, sig):
+        async def execute(self, tool_name, arguments, sig, deadline=None):
             executed_tools.append(tool_name)
             return types.SimpleNamespace(
                 tool=tool_name,
@@ -537,7 +537,7 @@ async def test_analyst_evidence_is_evidence_instances(monkeypatch):
     settings = Settings()
     node = TechnicalAnalystNode(settings)
 
-    async def fake_execute(self, tool_name, arguments, called_signatures):
+    async def fake_execute(self, tool_name, arguments, called_signatures, deadline=None):
         return ToolResult(
             tool=tool_name,
             arguments=arguments,

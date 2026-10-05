@@ -16,7 +16,7 @@ def mock_tools(monkeypatch):
     """Mock ToolRuntime.execute → avoid real MCP calls."""
     from app.models.market import ToolResult
 
-    async def fake_execute(self, tool_name, arguments, called_signatures):
+    async def fake_execute(self, tool_name, arguments, called_signatures, deadline=None):
         return ToolResult(
             tool=tool_name,
             arguments=arguments,

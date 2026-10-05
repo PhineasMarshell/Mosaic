@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import shlex
+import time
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -114,6 +115,7 @@ class MarketGatewayClient:
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        deadline: float | None = None,
     ):
         if not self.session:
             raise MCPToolCallError("MCP client is not connected")
@@ -122,6 +124,13 @@ class MarketGatewayClient:
         max_attempts = self.settings.max_retry_per_tool + 1
 
         for attempt in range(max_attempts):
+            # T23：与 HTTP client 相同的预算语义——总预算用尽就不再重试。
+            if deadline is not None and deadline - time.monotonic() <= 0:
+                logger.warning("MCP call %s stopped: budget exhausted before attempt %d", tool_name, attempt + 1)
+                reason = f"budget exhausted: no time left for another attempt"
+                if last_error:
+                    reason = f"{last_error}; {reason}"
+                return normalize_tool_result(tool_name, arguments, None, error=reason)
             try:
                 result = await asyncio.wait_for(
                     self.session.call_tool(tool_name, arguments=arguments),

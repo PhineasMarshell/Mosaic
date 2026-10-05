@@ -32,7 +32,7 @@ class CountingGateway:
     async def __aexit__(self, *exc):
         return None
 
-    async def call(self, tool_name, arguments):
+    async def call(self, tool_name, arguments, deadline=None):
         CountingGateway.calls += 1
         return ToolResult(
             tool=tool_name,
@@ -81,7 +81,7 @@ async def test_failed_call_signature_not_registered_allows_retry():
     rt = ToolRuntime(Settings())
     rt._gateway_class = lambda: CountingGateway
 
-    async def failing_call(self, tool_name, arguments):
+    async def failing_call(self, tool_name, arguments, deadline=None):
         return ToolResult(tool=tool_name, arguments=arguments, status="error", error="upstream boom")
 
     failing_call_original = CountingGateway.call

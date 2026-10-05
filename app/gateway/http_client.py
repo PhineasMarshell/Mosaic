@@ -8,6 +8,7 @@
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -82,7 +83,18 @@ class MarketGatewayHttpClient:
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        deadline: float | None = None,
     ):
+        """执行一次工具调用。
+
+        Args:
+            tool_name: registry 中的 operationId
+            arguments: 调用参数
+            deadline: T23 — 本工具允许用到的最后时刻（``time.monotonic()`` 秒）。
+                由 analyst 按"剩余总预算 ÷ 剩余工具数"均分下发；None 表示无预算约束
+                （行为与旧实现完全一致）。重试前检查剩余时间：不够就不再重试，
+                退避时间也不得超过剩余预算；超预算以 error ToolResult 返回，不抛异常。
+        """
         if self.client is None:
             raise HTTPGatewayError("HTTP client is not connected")
 
@@ -90,7 +102,22 @@ class MarketGatewayHttpClient:
         last_error = None
         max_attempts = self.settings.max_retry_per_tool + 1
 
+        def _remaining() -> float | None:
+            return None if deadline is None else deadline - time.monotonic()
+
+        def _budget_exhausted():
+            reason = "budget exhausted: no time left for another attempt"
+            if last_error:
+                reason = f"{last_error}; {reason}"
+            logger.warning("HTTP call %s stopped: %s", tool_name, reason)
+            # 规则 6：超预算必须以 error ToolResult 收尾，不能抛出去炸整条链
+            return normalize_tool_result(tool_name, arguments, None, error=reason)
+
         for attempt in range(max_attempts):
+            remaining = _remaining()
+            if remaining is not None and remaining <= 0:
+                return _budget_exhausted()
+
             try:
                 response = await self.client.request(
                     meta.http_method,
@@ -128,8 +155,14 @@ class MarketGatewayHttpClient:
                     )
 
                 if response.status_code == 429:
-                    # 限流：短暂等待后重试
+                    # 限流：短暂等待后重试。T23：退避不得超过剩余预算。
                     backoff = min(2**attempt, 10)
+                    remaining = _remaining()
+                    if remaining is not None:
+                        if remaining <= 0:
+                            last_error = "Rate limited (429)"
+                            return _budget_exhausted()
+                        backoff = min(backoff, remaining)
                     logger.warning(
                         "Rate limited (%d), backing off %ds",
                         response.status_code,
@@ -173,7 +206,13 @@ class MarketGatewayHttpClient:
                 )
 
             if attempt < max_attempts - 1:
-                await asyncio.sleep(0.5 * (attempt + 1))
+                backoff = 0.5 * (attempt + 1)
+                remaining = _remaining()
+                if remaining is not None:
+                    if remaining <= 0:
+                        return _budget_exhausted()
+                    backoff = min(backoff, remaining)
+                await asyncio.sleep(backoff)
 
         return normalize_tool_result(
             tool_name,

@@ -131,13 +131,21 @@ class ToolRuntime:
         """同一次运行内的去重签名：tool_name + 排序后的参数。"""
         return f"{tool_name}:{sorted(arguments.items())}"
 
-    async def execute(self, tool_name: str, arguments: dict, called_signatures: set[str]) -> ToolResult:
+    async def execute(
+        self,
+        tool_name: str,
+        arguments: dict,
+        called_signatures: set[str],
+        deadline: float | None = None,
+    ) -> ToolResult:
         """执行单个工具调用。
 
         Args:
             tool_name: gateway 侧操作名（operationId），如 ``snapshot_get``
             arguments: 参数字典
             called_signatures: 已执行签名的集合（去重用）
+            deadline: T23 — 本工具的预算截止时刻（monotonic 秒），下发到 gateway
+                客户端做重试预算感知；None 表示无预算约束
 
         Returns:
             ToolResult — 包含 normalized 数据、状态、错误信息
@@ -165,7 +173,7 @@ class ToolRuntime:
             return cached
 
         # 执行真实调用
-        result = await self._do_execute(tool_name, arguments)
+        result = await self._do_execute(tool_name, arguments, deadline=deadline)
 
         # 只缓存成功/部分成功的结果。T5：缓存里存**深拷贝**，使后续 truncate
         # 对工作对象的原地改写不会污染缓存（旧实现存同一实例，truncate 会改到缓存）。
@@ -232,7 +240,7 @@ class ToolRuntime:
     # 内部实现                                                             #
     # ------------------------------------------------------------------ #
 
-    async def _do_execute(self, tool_name: str, arguments: dict) -> ToolResult:
+    async def _do_execute(self, tool_name: str, arguments: dict, deadline: float | None = None) -> ToolResult:
         """单次工具调用的核心逻辑。"""
         # 内部工具直连（不走 Gateway）—— 必须在会话分支之前 return，
         # 只用内部工具的 analyst 不得触发建连（T18b）
@@ -245,13 +253,20 @@ class ToolRuntime:
         session = _session.get()
         if session is not None:
             gateway = await self._ensure_gateway(session)
-            return await self._call_gateway(gateway, session["available"], tool_name, arguments)
+            return await self._call_gateway(gateway, session["available"], tool_name, arguments, deadline=deadline)
 
         gateway_cls = self._gateway_class()  # 会话外：保持旧的逐次新建路径
         async with gateway_cls(self.settings) as gateway:
-            return await self._call_gateway(gateway, None, tool_name, arguments)
+            return await self._call_gateway(gateway, None, tool_name, arguments, deadline=deadline)
 
-    async def _call_gateway(self, gateway, available: set[str] | None, tool_name: str, arguments: dict) -> ToolResult:
+    async def _call_gateway(
+        self,
+        gateway,
+        available: set[str] | None,
+        tool_name: str,
+        arguments: dict,
+        deadline: float | None = None,
+    ) -> ToolResult:
         """通过已连接的 gateway 执行一次调用；available 为 None 时按模式现场解析。"""
         if available is None:
             available = (
@@ -269,7 +284,7 @@ class ToolRuntime:
                 error=f"Tool not available: {tool_name}",
             )
 
-        return await gateway.call(tool_name, arguments)
+        return await gateway.call(tool_name, arguments, deadline=deadline)
 
     def _check_cache(
         self,

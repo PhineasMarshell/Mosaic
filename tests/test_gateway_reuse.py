@@ -44,7 +44,7 @@ class FakeGateway:
         FakeGateway.exited += 1
         return None
 
-    async def call(self, tool_name, arguments):
+    async def call(self, tool_name, arguments, deadline=None):
         return ToolResult(
             tool=tool_name,
             arguments=arguments,
@@ -54,7 +54,7 @@ class FakeGateway:
 
 
 class ExplodingGateway(FakeGateway):
-    async def call(self, tool_name, arguments):
+    async def call(self, tool_name, arguments, deadline=None):
         raise RuntimeError("upstream boom")
 
 
@@ -159,7 +159,7 @@ class _BoomOnEnterGateway:
     async def __aexit__(self, *exc):
         return None
 
-    async def call(self, name, args):  # pragma: no cover - 不应被走到
+    async def call(self, name, args, deadline=None):  # pragma: no cover - 不应被走到
         raise AssertionError("gateway should never be called")
 
 
@@ -253,7 +253,7 @@ class _SlowGateway:
         self.is_closed = True
         return None
 
-    async def call(self, tool_name, arguments):
+    async def call(self, tool_name, arguments, deadline=None):
         event = _SlowGateway.release.get(arguments.get("symbol"))
         if event is not None:
             await event.wait()

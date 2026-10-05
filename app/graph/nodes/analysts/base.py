@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -189,8 +190,13 @@ class MarketAnalystNode:
         # T27：route 里重复的 (tool, arguments) 在这里真正跳过，
         # 不再依赖下游 execute 的签名集合（那只挡得住"已成功执行过"的）。
         seen: set[tuple[str, tuple]] = set()
+        # T23：整次调查的预算按"剩余预算 ÷ 剩余工具数"均分给每个工具，
+        # 下发到 gateway 客户端做重试预算感知（超预算返回 error ToolResult，不炸链）。
+        budget_seconds = float(getattr(self.settings, "research_budget_seconds", 0) or 0)
+        run_started = time.monotonic()
+        total_calls = len(mine["tool_calls"])
 
-        for tc in mine["tool_calls"]:
+        for idx, tc in enumerate(mine["tool_calls"]):
             if budget <= 0:
                 break
             budget -= 1
@@ -217,7 +223,15 @@ class MarketAnalystNode:
                 continue
             seen.add(dedup_key)
 
-            results.append(await self._runtime.execute(meta.tool_name, arguments, called_signatures))
+            deadline = None
+            if budget_seconds > 0:
+                remaining_budget = budget_seconds - (time.monotonic() - run_started)
+                remaining_tools = max(total_calls - idx, 1)
+                deadline = time.monotonic() + max(remaining_budget / remaining_tools, 0.0)
+
+            results.append(
+                await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
+            )
 
         return results
 
