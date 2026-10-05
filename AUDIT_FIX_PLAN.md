@@ -1,7 +1,7 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
 > **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
-> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 / S4 / S5 / S6 均已由执行方完成、主 Agent 已独立验收通过**
+> **最近一次更新**：2026-10-05 —— **S1 / S2 / S3 / S4 / S5 / S6 均已由执行方完成、主 Agent 已独立验收通过；S7 已由执行方完成（待主 Agent 验收）**
 > （见 §0.4 的 "S1–S6 验收复核记录"）。
 > S1 验收追加：**T18c**（并发串台，P1；已在 S2 修完）、**T37**（打包/CI flat-layout）、**T12b**（依赖清单漂移）。
 > S2 验收追加：**T19b**（假阳性用例）、**T23b**（预算起算点）—— 已在 S3 修完。
@@ -9,11 +9,12 @@
 > S4 验收追加：**T24b**（`.gitignore` 一行）—— 已在 S5 修完。
 > **S5 验收结论：无新立任务**（4 个任务全部通过；T25 的**浏览器手工验证已由仓库主人执行并通过**，2026-10-05，详见 §0.4 S5 一节）。
 > **S6 验收结论：无新立任务**（4 个任务全部通过；T30 的独立反向验证退回旧 `base.py` 复得 4 红 2 绿，与执行方声明精确一致；**全量从此 0 skipped**，详见 §0.4 S6 一节）。
+> **S7 执行结论（执行方自记，待验收）**：T32 / T33 / T34（不含注册表条目，已并入 S4）/ T35 / T12b 全部完成，双模式 **506 passed + 0 skipped**，无新立任务；T35 的 conftest 约定与 `tests/test_conventions.py` 机械检查自 S7 起对所有新增/修改的测试文件生效。
 > 另把四条"测试假阳性/反向验证"教训汇总进了 **§4 的 T35**（做 conftest 约定时一并落地）。
 > **行号基准**：`44c307f`（S1/S2 的改动未影响未完成任务的锚点；`tool_runtime.py` 的
 > `execute`/`_do_execute`/`_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > 动手时以锚点片段 grep 为准）。若行号漂移，以「定位锚点」里的代码片段为准。
-> **当前 HEAD**：`ed7e830`（S6 的 §0.4 提交；见 §0.4 的表）。
+> **当前 HEAD**：`55b9973`（S7 五个任务提交的最后一个；S7 的 §0.4 更新在其后的单独 chore 提交，见 §0.4 "S7 执行记录"）。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -114,14 +115,17 @@
 | **T21 sqlite 跨线程** | ✅ 完成并**验收通过**（S5） | `e026f0b` | 连接改 `threading.local()` 每线程一条 + 连接登记表（`close()` 覆盖所有线程）+ 代数计数（close 后旧线程句柄按代数重建）；WAL/autocommit 工厂与落库 warning 日志未动（T3/规则 4）；复现脚本实测 ProgrammingError → 修后 4 线程并发落库全成功；新增 `test_memory_thread_safety.py` 4 条 + `test_persistence` 落库失败 WARNING 防回归 1 条；反向验证（退回共享单连接 / warning 降 debug）**3+1 条必红**（3 条我复跑确认） |
 | **T26 SSE 错误分支** | ✅ 完成并验收（S5） | `7f635ff` | ①ask_stream 在返回 StreamingResponse 前 eager `_get_orchestrator()`+`_ensure_graph()` → 图构建失败 HTTP 层 500（死分支 except ValueError 删除；_parse_ask_payload 留 try 外以免 400 被改写 500）；②finally 在 cancel 后 `await gather(task, return_exceptions=True)` 收尸；运行期错误走 200+SSE 事件的契约保留；新增 2 条用例旧实现下均必红（**教训**：预算超时路径的 task.cancel() 会清掉 Future 未检索标记、掩盖 warning——测试必须用客户端断开 aclose 场景才暴露） |
 | **T25 前端健壮化** | ✅ 完成并验收（S5） | `fe837b1` | ①计时器/AbortController 按请求持有（局部变量），finally 只清自己的；②ask() 防重入：追问 → superseded+abort 静默接管旧请求，不并发两条，接管期不解锁按钮；③addAILoader 返回行、removeLoader(row) 只删自己的；④severity 白名单渲染（low/medium/high/critical，未知不显示徽章），异常卡逐条 try/catch 降级；补 .critical 样式；新建 tests/test_web_frontend_contract.py 6 条文本契约，退回旧 index.html 全红；node --check 语法校验过 |
-| **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
+| **T12b** requirements 同步 | ✅ 完成（S7） | `55b9973` | `requirements.txt:8` `mcp>=1.12` → `mcp>=2,<3`；脚本抽取两份清单逐条 diff **完全一致**（其余 9 行本就无漂移）；纯清单同步无必补测试（按 §3 规格） |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
 | **T28 finding 结构用例** | ✅ 完成（S6） | `efef499` | 旧 fake 是非 awaitable 的 lambda → 走异常降级分支 failed=True，isinstance 断言照过（探针证实）；改 MethodType 绑定 async fake，断言 `failed is False` / `tools_used == []` / `errors == []`，去 skip；反向验证（fake 改回 lambda）必红 |
 | **T29 reasoning 副本** | ✅ 完成（S6） | `5495702` | 删 `_ensure_lists` 副本（把非法 confidence 置 medium、与生产置 low 相反），复用 `_stub_reasoning_engine` 真调 `reason()`，6 条用例全部走生产后处理；`defaults_to_low` 断言 low；反向验证（生产兜底改回 medium）必红 |
 | **T30 budget 守卫 + D4** | ✅ 完成（S6） | `3a890a1` | ①显式 budget 优先（None 才回退 len），budget=0 = 不执行；②`max_tool_calls` 与 budget 取 min 成为真实上限（此前只有 /health 消费点）；③**语义裁决：budget 计真实执行次数**——`budget -= 1` 移到 execute 之前，跳过的调用（unknown key/缺 symbol/T27 重复）不消耗预算（探针实测旧实现 budget=n 可能只执行 1 次）；删恒真 co_varnames 断言，新增 6 条走真实 `_execute_tools` 的用例（实例级 RecordingRuntime），旧实现下 4 条必红 |
 | **T31 e2e 解封** | ✅ 完成（S6） | `1840f6b` | `test_full_flow_produces_report` 去掉过期 skip（"P0 图为 supervisor→kernel"），真跑且绿（mock LLM + mock tools，断言 report 非空 + 三 analyst finding）；反向验证：builder 退回不注册 analyst 的旧拓扑 → 用例报错。全量从此 **0 skipped** |
-| **T32、T33、T34 剩余、T35** | ⬜ 未做 | — | §4（S7） |
+| **T32 唯一约束假阳性** | ✅ 完成（S7） | `327ba41` | 探针证实旧用例从不触发约束（删掉 UNIQUE 它照样绿）；旧用例改名 `test_turn_indices_increment_per_turn` + 新增 2 条（直接 INSERT 重复行必抛 IntegrityError；datetime 门闩强制两条连接 TOCTOU 交错——赢家拿索引、输家大声抛、无重复行、撞车后正常续号）；反向验证：删 UNIQUE → 恰好 2 条新用例红 |
+| **T33 MarketDomain no-op 循环** | ✅ 完成（S7） | `6c723f9` | 探针：`_: MarketDomain = val` 塞 bogus/123/None 全通过；改为真构造 ResearchIntent（合法值来源 `get_args`，`len>=7` 守卫防类型退化成非 Literal 时空转通过）+ 七域集合断言 + bogus 必抛 ValidationError；反向验证两方向：放宽成 str → 1 红，Literal 删 macro → 3 红 |
+| **T34 剩余假阳性（三条）** | ✅ 完成（S7） | `06be493` | ①graph_nodes 空转 fixture（缺 self 静默错位 + "一触即炸"探针坐实两用例都不触类补丁）：补 self/补属性集/补 truncate，skips 用例改真实消费 fixture 记录；②routing 恒抛 mock（探针：跳过 planner 旧用例照样绿）：raise_on_prompt + last_prompt 断言 planner 真被调用 + 非空对照；③news_search 真网络+恒真断言（status 三结局恒存在）：密封 monkeypatch DDGS + **空 query 分支首覆盖**（分支自 99aad46 存在、从未有测试）。注册表条目**已并入 S4 的 T24（`3bef4f4`）**，本提交不含 |
+| **T35 机制性防线** | ✅ 完成（S7） | `46d8a1b` | conftest 落 T35 约定 + S1–S6 四条假阳性教训 + 兜底降级统一标记清单；新建 `test_conventions.py` 两条机械检查（模块 docstring 强制声明 mock 范围——4 个缺声明文件补齐；整体替换 `__call__` 须 `# T35-OK:` 豁免注释——AST 扫描，10 处既有合法点已加注）；e2e 两条全链路用例补 `_fallback_leaks` 兜底降级泄漏断言（流式按节点检查）。⚠️ 过程修掉防线自身缺陷：行级扫描被 ruff format 折行绕过，改 AST 后闭合；反向验证：删 docstring/删豁免注释/GateNode 注入炸点 → 三处各自必红 |
 
 **S1 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
 
@@ -451,6 +455,103 @@
 - **S6 验收结论：无新立任务**（4 个任务全部通过）。D4 的"budget 计真实执行次数"裁决已写进
   `base.py` 注释与测试 docstring；S7 的 T35 若落地 conftest 约定，无需再动 budget 语义。
 
+**S7 执行记录（S7 会话自记，2026-10-05；待主 Agent 验收）**
+
+- 开工检查：`git status --porcelain` 为空；`git log --oneline -5` 与 §0.4 记录一致
+  （2c80152 → 731b15d → ed7e830 → 1840f6b → 3a890a1）。本会话 `memory/` 可写（探针实测），
+  直接用 `pytest -q`，未用附录 A runner。
+- 每条都先按要求证明"现有测试在（被改坏的）旧行为下不会红"，再改，再做「改坏必红」反向验证。
+  探针脚本在 `.tmp/`（`probe_t32.py` / `probe_t33.py` / `probe_t34_nodes.py` / `probe_t34_routing.py` /
+  `probe_t34_news.py`），未提交。
+- **T32（`327ba41`）**：探针实测——①把 `_INIT_SQL` 的 `UNIQUE(conversation_id, turn_index)` 删掉，
+  旧用例体（顺序三条 `save_turn`、断言 `idx3 == 3`）**照样 PASS**，坐实它从不触发约束；
+  ②真实 schema 直接 INSERT 重复行 → `sqlite3.IntegrityError`（约束真实存在、可触发）；
+  ③两条连接并发 `save_turn`，用 `datetime.now` 门闩把两条执行**确定性**拦在
+  SELECT MAX 之后、INSERT 之前（MAX+1 的 TOCTOU 窗口），5/5 轮撞车、约束兜底一方
+  IntegrityError、无重复行。改法：旧用例改名 `test_turn_indices_increment_per_turn`
+  （docstring 写明"本用例不触发约束"）；新增 `test_duplicate_turn_index_raises_integrity_error`
+  （直接 INSERT 重复行必抛）；新增 `test_concurrent_save_turn_from_two_connections_no_silent_duplicate`
+  （断言：赢家拿索引、输家**大声**抛 IntegrityError 不许静默成功、表里不落重复行、
+  撞车后下一条正常续号 = 2；两条连接来自 T21 的 threading.local）。
+  反向验证：storage.py 临时删掉 UNIQUE → **恰好 2 条新用例红**（DID NOT RAISE / 撞车未复现），
+  旧用例与改名用例照旧绿——与假阳性声明精确一致；还原后 27 passed。
+- **T33（`6c723f9`）**：探针实测——旧循环体 `_: MarketDomain = val` 塞 "bogus"/123/None 全通过
+  （注解求值后即丢弃，运行时 no-op）；生产模型真拒 "bogus"（ValidationError: domain）。
+  改法：`test_market_domain_type_accepted_values` 改为真构造 `ResearchIntent`，合法值来源换成
+  `get_args(MarketDomain)`（类型本身，防手工清单漂移）并加 **`len >= 7` 守卫**
+  （防"类型退化成非 Literal → get_args 为空 → 循环空转通过"的残余假阳性）；
+  新增 `test_market_domain_type_expected_members`（七域集合断言：允许新增、不许悄悄删减）；
+  新增 `test_market_domain_rejects_bogus_value`。反向验证两方向：A) `domain: MarketDomain`
+  放宽成 `str` → 恰好 rejects_bogus 红（DID NOT RAISE），其余绿；B) Literal 删 "macro" →
+  expected_members + accepted_values 的 >=7 守卫 + 既有 macro 用例共 **3 红**。
+- **T34（`06be493`，三条独立成段；注册表条目已并入 S4 的 T24（`3bef4f4`），本提交不含）**：
+  - ① `test_graph_nodes.py`：探针实测——mock_runtime 的 fake_execute **缺 self**：类补丁真触发一次，
+    记录到的 tool 是 ToolRuntime 实例、"sentiment" 落到 arguments（静默错位成垃圾，不报错）；
+    把类补丁换成"一触即炸"的假 execute、复刻两个消费用例的公开路径 → 全程不炸，
+    **fixture 完全空转坐实**（一个用例按构造不执行工具、另一个用本地 FakeRuntime 整体替换 `_runtime`）。
+    修复：fixture 补 self + 补齐生产消费的属性集（build_evidence/_make_digest/_cache_info）+ 补 truncate
+    打桩；`test_execute_skips_non_whitelist_no_stock` 不再替换实例、断言直接消费 fixture 记录
+    （白名单回归或打桩失联都会红）；`test_analyst_with_no_matching_tools_returns_empty` 移除空转参数。
+    反向验证：a) sentiment 移出 WHITELIST_NO_SYMBOL → **7 failed**（含目标用例）；
+    b) fake_execute 退回缺 self → 目标用例红（TypeError 被兜底 except 吞成 failed finding → KeyError 'results'）。
+  - ② `test_graph_routing.py`：探针实测——`FakeOpenAI(raise_on=...)` 对任何输入都抛；
+    把生产改成"空 question 跳过 planner 直接写 errors"（planner 调用次数 0），旧用例照样绿 →
+    它对"planner 是否被调用"失明。修复：FakeOpenAI 增加 `raise_on_prompt`（仅当问题真进入 prompt
+    才抛）与 `last_prompt` 记录；用例断言空 question 也真的流经 planner，并补**非空 question 对照**
+    （同一个 fake 成功产出 intent、问题进入 prompt、无 errors）。反向验证：supervisor 对空问题短路
+    → 恰好该用例红（last_prompt 断言），其余 7 条绿。
+  - ③ `test_news_search.py`：探针实测——旧断言表达式
+    （`if count==0: isinstance(meta.get("error",""),str) or meta.get("status")`）套在
+    "成功有结果 / 成功零结果 / 抛异常"三种结局上**恒为 True**（status 键恒存在）；
+    且旧用例不打桩、直接打真实 DDGS（非密封、慢、依赖网络）。修复：TestSyncSearch 全部
+    monkeypatch **模块全局** DDGS（密封）——异常 → 断言 `meta.error == str(exc)`、`status == "搜索失败"`；
+    零结果 → "成功获取 0 条" 且无 error 键；成功 → count 与 news 对齐；
+    **新增空 query 分支首覆盖**（该分支自初始提交 `99aad46` 就存在于 news_search.py、
+    从未有测试；打"一触即炸"的假 DDGS 证明短路）。反向验证：a) except 改 raise →
+    error-path 用例红（RuntimeError 传播）；b) 空 query 分支禁用 → empty-query 用例红
+    （booby-trap 异常被生产兜底 except 吞掉后 status 变"搜索失败"，仍被抓）。
+- **T35（`46d8a1b`）**：
+  - `tests/conftest.py`：T35 约定（禁整体替换被测节点 / 每文件 docstring 声明 mock 范围 /
+    关键用例断言成功分支 / "改坏必红"自问）+ S1–S6 验收沉淀的**四条假阳性教训**（模式①②③ +
+    反向验证姿势）+ 评审清单；节点兜底降级的统一标记清单落档
+    （analyst/gate/critic/reasoning/supervisor → "… failed: …"；**"Evidence gate: …" 是 T15
+    合法降级、不是失败标记**）。
+  - 新建 `tests/test_conventions.py` 两条机械检查：a) 每个测试模块必须有 docstring——
+    4 个缺声明的文件补齐（test_evidence / test_http_client / test_normalizer / test_tool_registry，
+    均为不打桩的纯单元测试，docstring 如实声明"不 mock 任何东西"+ 未覆盖归属）；
+    b) 整体替换节点 `__call__`（setattr / 字符串路径 / 属性赋值）必须带 `# T35-OK:` 行内豁免注释——
+    10 处既有合法替换点（topology 9 + e2e 1）已全部加注理由。
+    ⚠️ **过程发现并修掉防线自身缺陷**：b) 初版是行级扫描，反向验证第一次删注释**没红**——
+    ruff format 把长 setattr 调用折成多行，`setattr(` 与 `"__call__"` 分家后扫不到；
+    改为 AST 扫描（Call/Assign 节点 + 语句行范围内找豁免注释）后闭合。
+  - 兜底降级泄漏断言推广：`test_full_flow_produces_report` 与 `test_stream_emits_node_events`
+    （流式路径**按节点逐一**检查）新增 `_fallback_leaks` 断言——任何节点的 errors 出现兜底标记即红；
+    topology 既有 3 处 `not errors` 断言保持。
+  - 反向验证三项：删 docstring → 检查 a 红；删豁免注释 → 检查 b 红（AST 版；
+    第一次没红即上述缺陷，修复后重做通过）；GateNode 注入 `RuntimeError("t35 drill")` →
+    full flow 与 stream 两条用例**均红**（"Gate failed: t35 drill" 泄漏被抓，流式路径连节点名都指出）。
+- **T12b（`55b9973`）**：`requirements.txt:8` `mcp>=1.12` → `mcp>=2,<3`（T12 收口 `0965da6` 漏改的镜像清单）。
+  核对方式：脚本从两份文件各抽取依赖清单逐条 diff → **完全一致**（其余 9 行
+  fastapi/uvicorn[standard]/openai/pydantic/pydantic-settings/python-dotenv/httpx/ddgs/langgraph
+  本就无漂移）。纯清单同步，无必补测试（按 §3 规格）。
+- **数字演进（全量 `pytest -q`，mcp 与 http 双模式每步各跑一次、数字一致）**：
+  - S6 收官：499 passed + 0 skipped
+  - T32 后：**501**（`test_market_memory.py` 25 → 27：旧用例改名净 0，+2 新用例）
+  - T33 后：**503**（`test_models_multi_domain.py` 11 → 13：accepted_values 原名重写净 0，+2 新用例）
+  - T34 后：**504**（`test_news_search.py` 9 → 10：TestSyncSearch 旧 3 条 → 新 4 条——
+    `test_empty_result_structure` 改名重写为 `test_empty_results_structure`、
+    `test_error_path_no_crash` 重写为 `test_ddgs_error_path_returns_structured_error`、
+    `test_meta_has_required_fields` 原名重写、新增 `test_empty_query_skipped_without_touching_ddgs`；
+    `test_graph_nodes.py` 21 → 21、`test_graph_routing.py` 8 → 8，只动签名/fixture/用例体，不改收集数）
+  - T35 后：**506**（+`test_conventions.py` 2 条；其余文件只加断言/注释/docstring，不改收集数）
+  - T12b 后：**506**（清单一行，0 变化）
+  - 净 **+7** = 499 → 506，每步在提交前都独立跑过双模式全量。
+- **三道门禁（每个提交前独立跑过）**：`ruff check --no-cache app/ tests/` +
+  `ruff format --check --no-cache app/ tests/` 全绿（104 files）。
+- **遗留：无新立任务。** 对 S8 的生效项：**新增/修改测试文件必须过 `tests/test_conventions.py`
+  两条检查**（docstring 声明 mock 范围；整体替换 `__call__` 须 `# T35-OK:` 豁免注释），
+  conftest.py 的四条教训即评审清单。`.tmp/` 探针未提交（已被 ignore 覆盖）。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -468,7 +569,7 @@
 | **S4 注册表 + 异常检测尾巴** | ✅ **已完成并验收**：T22b → T22c → T24（T34 的注册表断言已并入） | — | 见 §0.4 "S4 验收复核记录" | `479 passed + 2 skipped`（双模式）；4 个提交；但 S5 需先补 **T24b** |
 | **S5 请求生命周期** | ✅ **已完成并验收**：T24b（一行） → T21 → T26 → T25 | — | 见 §0.4 "S5 验收复核记录"（T25 的**浏览器手工验证已通过**，2026-10-05） | `492 passed + 2 skipped`（双模式）；5 个提交；**无新立任务** |
 | **S6 测试有效性（上）** | ✅ **已完成并验收**：T28 → T29 → T30（含 D4 budget）→ T31 | — | 见 §0.4 "S6 验收复核记录" | `499 passed + 0 skipped`（双模式）；4 个提交；**无新立任务** |
-| **S7 测试有效性（下）** | T32 → T33 → T34（**不含注册表那条，已并入 S4**）→ T35 → T12b | §0 + 附录 A/B + §4 + §3 的 T12b | T34 与 T35 是同文件收尾；T12b 是一行依赖同步，顺手 | 全绿；5 个提交 |
+| **S7 测试有效性（下）** | ✅ **已完成待验收**：T32 → T33 → T34（不含注册表条目，已并入 S4 的 T24）→ T35 → T12b | — | 见 §0.4 "S7 执行记录"（待主 Agent 验收） | `506 passed + 0 skipped`（双模式）；5 个任务提交 + 1 个 §0.4 chore；**无新立任务** |
 | **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
 
 **硬性顺序约束（不要打乱）**：
