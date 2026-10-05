@@ -1,11 +1,15 @@
 # Mosaic 代码审计修复计划（交接给执行 Agent）
 
 > **本次重写日期**：2026-10-04，由主 Agent 在独立验收批次 2 遗留（T14b/T13b/T5b）与批次 3 前半（T16/T17/T18）之后重写。
-> **最近一次更新**：2026-10-05 —— S1（修红）已由执行方完成、**主 Agent 已独立验收通过**（见 §0.4 "S1 验收复核记录"）；
-> 本次验收同时新发现两件事并立了新任务：**T18c**（并发请求会话串台，P1）、**T37**（打包/CI flat-layout 失败），另有 **T12b**（依赖清单漂移）。
-> **行号基准**：`44c307f`（`0965da6` 之后的改动未影响 §2 以后任务的锚点）。行号已相对初版 `cabd00c` 漂移，
-> 本文所有锚点均已按当前代码校正；若再次漂移，以「定位锚点」里给的代码片段 grep 为准。
-> **当前 HEAD**：`0965da6`（见 §0.4）。
+> **最近一次更新**：2026-10-05 —— **S1 与 S2 均已由执行方完成、主 Agent 已独立验收通过**
+> （见 §0.4 的 "S1 验收复核记录" 与 "S2 验收复核记录"）。
+> S1 验收追加：**T18c**（并发请求会话串台，P1；已在 S2 修完）、**T37**（打包/CI flat-layout 失败）、**T12b**（依赖清单漂移）。
+> S2 验收追加：**T19b**（`test_expired_entries_purged_on_set` 是假阳性：停用 purge 仍然全绿）、
+> **T23b**（deadline 只按节点内起算，`research_more` 第二轮会重置预算）。这两个排在 **S3 最前面**。
+> **行号基准**：`44c307f`（S1/S2 的改动未影响未完成任务的锚点；`tool_runtime.py` 的
+> `execute`/`_do_execute`/`_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
+> 动手时以锚点片段 grep 为准）。若行号漂移，以「定位锚点」里的代码片段为准。
+> **当前 HEAD**：`32bdc43`（S2 的 §0.4 提交；见 §0.4）。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -90,10 +94,10 @@
 | **T17 news_search TTL** | ✅ 产品修复 + 测试已修（T17T） | `2bf11b7` / `b1b06fa` | patch 目标改为模块全局 `_search_news`，离线可跑；反向验证（改回无 settings 版 TTL 解析）必红 |
 | **T18 analyst 级复用 Gateway** | ✅ 完成并验收（T18b 按需连接 + T18T stub + **T18c 每请求会话**） | `44c307f` / `5647a4a` / `f2e4da1` / `f3b76e4` | 会话状态在模块级 `ContextVar _session`；并发复现脚本 `实例数 1→2`、B 的在途调用不再被关；反向验证（换回实例属性实现）①②必红 |
 | **T12 收尾（D1）** | ✅ 完成（但漏了 `requirements.txt`，见 **T12b**） | `0965da6` | `mcp>=2,<3`；已装 2.1.1；pip install -e . 的 flat-layout 失败是既有问题（见 **T37**） |
-| **T19 缓存** | ✅ 完成 | `bc4849d` | `ttl=0` 立即过期（`ttl or` 反向验证必红）；`max_entries=512` + LRU 淘汰 + set 顺带清理过期 + stats 加 `max_entries`/`evictions` |
+| **T19 缓存** | ✅ 完成（**但 1 条用例是假阳性 → T19b**） | `bc4849d` | `ttl=0` 立即过期（`ttl or` 反向验证必红）；`max_entries=512` + LRU 淘汰 + set 顺带清理过期 + stats 加 `max_entries`/`evictions`；**`test_expired_entries_purged_on_set` 停用 purge 仍绿 = 未覆盖该行为** |
 | **T27 去重** | ✅ 完成 | `e6a04e5` | 同签名 3 次调用真实网关 2→1 次；重复调用返回 `partial` + note；route 层 seen 集合提前跳过；stash 旧实现 3 条全红 |
-| **T23 重试预算** | ✅ 完成 | `f119f51` + `7dce255` | deadline 全链路下发（base 均分 → execute → gateway.call）；忽略 deadline 反向验证 3/4 条红；测试 stub 的 call/execute 签名已补 `deadline=None` |
-| **T20–T22、T24–T26、T15** | ⬜ 未开始 | — | 下一段 S3：T22 → T20（含 anomalies）→ T15 |
+| **T23 重试预算** | ✅ 完成（**但预算只按节点内起算 → T23b**） | `f119f51` + `7dce255` | deadline 全链路下发（base 均分 → execute → gateway.call）；忽略 deadline 反向验证 3/4 条红；测试 stub 的 call/execute 签名已补 `deadline=None` |
+| **T20–T22、T24–T26、T15** | ⬜ 未开始 | — | 下一段 S3，**最前面先做 T19b + T23b**（本次验收追加） |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
@@ -126,6 +130,36 @@
   `_get_orchestrator()` 是进程级单例、编译图只构建一次 → 节点实例被并发请求共享。已写出确定性复现，
   另立 **T18c**（S2 第一个任务）。
 
+**S2 验收复核记录（主 Agent 独立重跑，2026-10-05，非采信执行方报告）**
+
+- **通过**：逐条读了 5 个提交的 diff；测试数增量对得上（423 → 438 收集 = +15：T18c 3 + T19 5 + T27 3 + T23 4）；
+  历史里没有混进 `.tmp/`、`*.db`、`.bak`、`.env`（`git log --name-only` 已核）；两个文档提交是独立的 `chore:`/`docs:`。
+- **全量测试**：完全访问会话下 `pytest -q` → **`436 passed, 2 skipped`**，`mcp` 与 `http` 两种模式
+  各跑一次都是这个数字，与报告**逐字相符**；`ruff check` + `ruff format --check` 全绿。
+- **反向验证 T18c（我自己做的，最高风险项）**：用**外科式**回退——只把会话状态从模块级 `ContextVar`
+  换回实例属性（保留 T23 的 `deadline` 参数，避免因签名不匹配而"红得不是地方"）→
+  `test_gateway_reuse.py` **2 failed**：`test_concurrent_requests_get_isolated_sessions`（`assert 1 == 2` 实例数）
+  与 `test_session_close_does_not_kill_concurrent_inflight`（日志正是
+  `Analyst technical failed: gateway closed while quote_tencent_quote_get in flight`）；
+  串行会话那条如期保持绿；还原后 `git diff` 为空、8 passed。
+  → **执行方关于"并发 stub 必须有真实挂起点"的发现成立且必要**：`_SlowGateway.call` 里的 `await asyncio.sleep(0)`
+  是让两个任务真正交错的关键，没有它旧实现可能整段跑完、测试就不会红。
+- 代码复核要点：`gateway_session` 的 `finally` 顺序正确（先取 session → `reset(token)` → 再关闭）；
+  `_ensure_gateway` 失败复位并抛出不吞异常；`_do_execute` 优先读 `_session.get()`；
+  T27 的签名在真实成功后登记、重复调用返回 `partial` + note（不静默成功，符合规则 6）；
+  T23 的 `normalize_tool_result(..., error=...)` 关键字参数确实存在。
+
+- **⚠️ 未完全采信的两点（已立任务）**：
+  1. **`test_expired_entries_purged_on_set` 是假阳性（T19 的 5 条用例之一）**。
+     我实测：把 `set()` 里的 `self._purge_expired()` 换成 `pass`（停用该行为）→ `tests/test_cache_capacity.py`
+     **仍然 5 passed**。原因是该用例在断言前先调了一次 `c.get("old")`，读路径本来就会删掉过期键，
+     所以"set 时顺带清理"这个行为**没有任何测试覆盖**。正确写法（不先 get）在停用 purge 时会红：
+     `old in c._store` → `True`（应断言 `False`）。→ **T19b**（必须在下一段最前面修掉，2026-10-05 追加）。
+  2. **T23 的 deadline 只按"节点内开始时刻"计算（T23b）**。`base._execute_tools` 用 `run_started = time.monotonic()`
+     在本节点开始时起算、并把 `research_budget_seconds` 当成本节点的全额预算 → `research_more` 回环的第二轮
+     会重新获得一整份预算，而 `main.py` 的 `wait_for(research_budget_seconds)` 才是整次调查的硬上限。
+     单轮内的降级目标已达成，但"第二轮烧完再 504"这条路径仍然存在。→ **T23b**（下一段）。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -138,8 +172,8 @@
 | 段 | 任务（按顺序） | 读本文档哪些部分 | 为什么这么切 | 结束门槛 |
 |---|---|---|---|---|
 | **S1 修红**（独占一段，阻塞一切） | T18b → T17T → T18T → T12 收尾 | §0 全部 + §1 全部 + §2 全部 + 附录 A | T18b（产品）与 T18T（测试）互相牵制，必须在同一会话里把基线跑绿；T12 只是一行 `pyproject`，顺手 | **`mcp` 与 `http` 双模式全绿**；4 个提交 |
-| **S2 运行时 / 缓存 / 成本** | **T18c（并发串台，必须最先）** → T19 → T27 → T23 | §0 + §1.2（P1-b）+ §2 的 T18c + §3 的 T19/T27/T23 | T18c 与 T19/T27 都在 `tool_runtime.py` / `cache.py`，同批文件；T18c 是 P1 级并发缺陷，优先于同段的其它任务 | 全绿；4 个提交 |
-| **S3 检测与报告契约** | T22 → T20（含 anomalies）→ T15 | §0 + §1.4 + 附录 A/B + §3 的 T22/T20/T15 | **T22 必须先于 T20 的 anomalies 半条**（否则误报，D3 已定）；三者共同决定"报告里写什么" | 全绿；3 个提交 |
+| **S2 运行时 / 缓存 / 成本** | ✅ **已完成并验收**：T18c → T19 → T27 → T23 | — | 见 §0.4 "S2 验收复核记录" | `436 passed + 2 skipped`（双模式）；6 个提交；但 S3 需先补 **T19b / T23b** |
+| **S3 检测与报告契约** | **T19b** → **T23b** → T22 → T20（含 anomalies）→ T15 | §0 + §1.4 + 附录 A/B + §3 的 T19b/T23b/T22/T20/T15 | T19b/T23b 是上一段验收留下的两个小尾巴，先清掉；**T22 必须先于 T20 的 anomalies 半条**（否则误报，D3 已定） | 全绿；5 个提交 |
 | **S4 注册表** | T24（**把 T34 里 `test_tool_registry_multi_domain.py` 的断言并入本条**） | §0 + 附录 A/B + §3 的 T24 + §4 的 T34 | 它牵动全量 `tool_registry`，单独一段便于跑 normalizer / analyst 相关回归 | 全绿；1 个提交 |
 | **S5 请求生命周期** | T21 → T26 → T25 | §0 + 附录 A/B + §3 的 T21/T26/T25 | sqlite 跨线程、SSE 收尾、前端并发，都是"一次请求从进到出"；T25 是前端，放最后 | 全绿 + 手工看一眼界面；3 个提交 |
 | **S6 测试有效性（上）** | T28 → T29 → T30（含 D4 budget）→ T31 | §0 + 附录 A/B + §4 的 T28–T31 | 4 条都在 graph e2e / reasoning / graph_nodes，文件重合度高 | 全绿；4 个提交 |
@@ -225,7 +259,7 @@
 test_tool_runtime_ttl` → **43 passed**（修复前同一命令全红）。复现脚本 `opened = 1 → 0`。
 反向验证：把建连挪回会话进入点 → 两条新防线用例立刻 `assert 1 == 0` 变红。
 
-**P1-b — 并发请求共享 `ToolRuntime`，会话状态串台（T18 引入，T18b 未修，**待做 = T18c**）**
+**P1-b — 并发请求共享 `ToolRuntime`，会话状态串台（T18 引入）→ ✅ 已由 `f3b76e4`（T18c）修复并验收**
 
 `app/main.py:86-92` 的 `_get_orchestrator()` 是**进程级单例**，`Orchestrator._ensure_graph()`
 （`app/agent/orchestrator.py:23-26`）只构建一次编译图 → **所有并发请求共用同一批节点实例**
@@ -271,10 +305,9 @@ B findings failed: [{'analyst': 'technical', 'digest': '分析失败: ...', 'too
 | T5b（已修，回归确认） | 250 条 datum → `truncate` | `kept: 201`，`status: partial`，note 写明 250/200 ✓ |
 | T17（已修，回归确认） | `execute("news_search", ...)` 后看缓存 | 剩余 TTL `21600s` ✓ |
 
-**尚未复现（执行时自己确认）**：T23（重试预算，需 stub transport 计数）、T25（前端并发/渲染，需浏览器或文本契约）、
-T26（SSE 错误分支，需 TestClient + monkeypatch）、T27（`called_signatures`，需计数 Gateway stub）。
-T27 的根因已由阅读确认：`_check_cache` 只在**缓存命中**时 `called_signatures.add(...)`，
-而"签名已存在"时 `return None` 被调用方当成"无缓存"→ 真的再打一次网关。
+**尚未复现（执行时自己确认）**：T25（前端并发/渲染，需浏览器或文本契约）、T26（SSE 错误分支，需 TestClient + monkeypatch）。
+（T23 与 T27 原在此列，S2 已完成并由验收者复核；T27 的根因是：`_check_cache` 只在**缓存命中**时
+`called_signatures.add(...)`，而"签名已存在"时 `return None` 被调用方当成"无缓存"→ 真的再打一次网关。）
 
 ### 1.4 已拍板决策（不要再问、不要再改）
 
@@ -586,7 +619,11 @@ async def test_news_search_cache_ttl_survives_execute(monkeypatch):
 
 ## 3. 批次 3 剩余任务
 
-> 顺序建议：T12 收尾（D1）→ T19 → T20（先 D4 部分，anomalies 等 T22 后）→ T21 → T22 → T23 → T24 → T25 → T26 → T27 → T15（D2）→ T36（§5）。
+> **已完成（保留原文作回归依据）**：T12 收尾（`0965da6`）、T18c（`f3b76e4`）、T19（`bc4849d`）、
+> T23（`f119f51`+`7dce255`）、T27（`e6a04e5`）——各自小节里都标了 ✅。
+> **未完成**：T12b、T15、T20–T22、T24–T26，以及验收追加的 **T19b / T23b**（物理位置在本节末尾，
+> 按 §0.5 的段顺序执行即可，不必被小节摆放位置误导）。
+> 顺序以 **§0.5 的分段表**为准：S3 = **T19b → T23b** → T22 → T20（含 anomalies）→ T15。
 > 每条仍然要求「改完补一个能失败的测试」。
 
 ### T12 收尾（D1=A）— 依赖区间收口 → ✅ `pyproject.toml` 已完成（`0965da6`），**`requirements.txt` 漏改，见 T12b**
@@ -692,8 +729,9 @@ MarketIntelligence.model_validate({"title": "t", "state_label": "Neutral"})  # V
 
 > **核查更正（2026-10-04，主 Agent）**：初版 T21 还写了"`main.py` 里所有写入失败都吞成 `logger.debug`（:224/:243）"。
 > 这条**已经不存在了**：T3 把持久化收敛到 `app/agent/persistence.py`，三处落库失败都是
-> `logger.warning(...)`（`:77-78` / `:92-93` / `:97-98`），且 `report is None` 时也有 warning；
-> 全仓 `app/` 已无任何 `logger.debug`（T10 一并清了）。**本任务只需要处理跨线程连接，不要把日志改回去。**
+> `logger.warning(...)`（`:77-78` / `:92-93` / `:97-98`），且 `report is None` 时也有 warning。
+> （写这句时全仓 `app/` 已无 `logger.debug`；T19 之后 `app/cache.py` 的 LRU 淘汰**有意**加了一条
+> `logger.debug`，那是内存缓存的观测点，与"落库失败被吞"无关。**本任务只需要处理跨线程连接。**）
 **复现**（受限会话里 sqlite 不可写，先在可写会话跑）
 ```python
 import threading, time
@@ -850,7 +888,55 @@ print(len(hk), any("[unknown]" in l for l in hk))   # 旧实现：2 False → �
   （可用 `caplog` 或 pytest 的 `recwarn`/`asyncio` 日志捕获）。
 **验收**：两条用例在旧实现下必红。
 
-### T27 — `called_signatures` 的"去重"契约不成立
+### T19b — 修掉 T19 的假阳性用例（**验收者实测发现；下一段最前面做**）
+**定位锚点**：`tests/test_cache_capacity.py` 的 `test_expired_entries_purged_on_set`（文件末尾那条）。
+**现象 / 证据**：把 `app/cache.py` 的 `set()` 里 `self._purge_expired()` 换成 `pass`（停用"set 时清理过期条目"），
+该文件 **仍然 5 passed** —— 这条用例声称验证 purge-on-set，实际什么都没验证。
+**根因**：用例在断言前先调了 `c.get("old")`；读路径本身会把过期键删掉，于是断言 `"old" not in c._store` 恒真。
+**修改**：让断言只可能被 `set` 里的 purge 满足（**不要先 get**）：
+```python
+def test_expired_entries_purged_on_set():
+    c = Cache()
+    c.set("old", 1, ttl=0.01)
+    time.sleep(0.02)
+    c.set("new", 2)                 # 只有这里的 _purge_expired 能让 old 消失
+    assert "old" not in c._store    # 停用 purge → True → 必红
+    assert c.get("new") == 2
+```
+若想同时保留"读路径也会删"的覆盖，另开一条用例断言 `c.get("old") is None`，不要混在一条里。
+**验收（必须自己跑反向验证）**：把 `set()` 里的 `_purge_expired()` 换成 `pass` → 这条用例**必须变红**；
+还原后全绿。顺手把 `tests/test_cache_capacity.py` 里其余 4 条也做一次"改坏必红"自检。
+**风险**：纯测试改动，不碰产品代码。
+
+### T23b — 预算要按"整次调查"起算，而不是"本节点"（**验收者发现；下一段做**）
+**定位锚点**
+- `app/graph/nodes/analysts/base.py:195-197` — `budget_seconds = settings.research_budget_seconds`，
+  `run_started = time.monotonic()`（**每次节点调用都重置**），`:229-234` 的 deadline 计算
+- `app/main.py:219` / `:353` — 整次调查的硬上限 `asyncio.wait_for(..., timeout=settings.research_budget_seconds)`
+**现象**：`research_more` 回环会让 analyst 再跑一轮，而每一轮都在自己的起点重新获得一整份
+`research_budget_seconds`；于是"第二轮把预算又烧满"→ 撞上 `main.py` 的 300s 硬上限 → 仍然 504。
+T23 只在**单轮内**达成了"超预算就降级返回 error ToolResult"。
+**修改**：把整次调查的起点（或已用时长）往下传，deadline 用**剩余调查预算**而不是节点预算：
+1. 由 orchestrator / `main.py` 在图启动前把 `time.monotonic()` 写进 state（例如
+   `state["budget_started_at"]`，或直接写 `state["budget_deadline"] = monotonic() + research_budget_seconds`），
+   并在 `ResearchState` 里加对应字段（注意别用会跨回环累加的 reducer）。
+2. `_execute_tools` 读该值算 `remaining_budget = deadline_at - now`；缺失时**退回当前行为**并记一条 warning
+   （不要把"没有预算信息"静默当成"预算无限"）。
+3. deadline 仍然按"剩余预算 ÷ 剩余工具数"均分下发（T23 已有逻辑不变）。
+**必补测试**：`tests/test_graph_topology.py` 或新建 —— 构造 `state["budget_deadline"]` 已过半的场景，
+断言 analyst 下发的 deadline **明显早于**"现在 + research_budget_seconds / n"；
+再补一条：state 里没有该字段时退回旧行为且有 warning。**反向验证**：把 `_execute_tools` 改回用本节点起点 → 用例必红。
+**风险 / 牵连**：`ResearchState` 加字段要确认不会与 T16 的 reducer 语义冲突（标量字段默认无 reducer，回环时覆盖，正是我们要的）；
+`main.py` 的硬上限**不要删**（它是最后的安全网，两者都要在）。
+
+### T27 — `called_signatures` 的"去重"契约不成立 → ✅ 已完成（`e6a04e5`，见 §0.4）
+> 下面保留原始问题描述作为回归依据。已实现的语义：签名在**真实执行成功后立即**登记；
+> 同签名重复调用返回 `status="partial"` + `note`（不静默成功、不再绕过缓存打网关）；
+> `base._execute_tools` 用 `(tool_name, sorted(args))` 的 `seen` 集合在 route 层提前跳过重复。
+> 回归测试：`tests/test_tool_runtime_dedup.py`（3 条）。
+
+**原始描述（历史）**
+
 **定位锚点**
 - `app/graph/tool_runtime.py:212-229` `_check_cache`：
   ```python
@@ -908,6 +994,13 @@ budget 守卫删掉也不报错。补测：构造 `budget=1` 而 `tool_calls` �
 `raw_budget = mine.get("budget")` + `budget = len(tool_calls) if raw_budget is None else int(raw_budget)`，
 使**显式 `budget=0` 表示不执行**（现在被 `or` 吞成"全部执行"）；并让 `config.max_tool_calls` 成为真实上限
 （在 `_execute_tools` 或 supervisor 侧与 `budget` 取 min，并补 `/health` 之外的真实消费点）。
+
+> **⚠️ D4 要一并决定的细节（验收者在 S2 复核时留意到的）**：`budget -= 1` 现在位于循环**顶部**
+> （`base.py:199-202`，在 unknown tool_key / 缺 symbol / T27 重复签名这些 `continue` **之前**），
+> 所以**被跳过的调用照样消耗预算**。T27 之后"route 里重复的 tool_call 被跳过"是常见情形，
+> 于是 `budget=n` 实际可能只执行 1 次。做 D4 时请明确选一种语义并写进测试：
+> ①`max_tool_calls` 计"真实执行次数"（把扣减移到真正 `execute` 之前）；或②计"处理过的 route 条目数"（保留现状，注释写明）。
+> 两种都可以，**但不能再出现"文档说上限 N、实际执行数看跳过情况"的含糊状态**。
 
 ### T31 — `tests/test_graph_e2e.py:118-136` 唯一的真实全链路 e2e 被 skip，理由已过期
 skip 理由写"P0 图为 supervisor→kernel"，但 `app/graph/builder.py` 早已注册三个 analyst。去掉 skip 让它真跑；
@@ -1119,16 +1212,23 @@ S2 运行时 / 缓存 / 成本 — ✅ 完成并双模式全绿（f3b76e4 / bc48
 [x] T19 缓存上限 + ttl=0
 [x] T27 called_signatures 真去重
 [x] T23 重试感知预算
+    验收已过：436 passed + 2 skipped（双模式）；T18c 反向验证（回退实例属性）2 条必红；
+    记录见 §0.4 "S2 验收复核记录"；**留下两个尾巴 T19b / T23b**
+
+S3 检测与报告契约（先把上一段的尾巴清掉）
+[ ] T19b 修 test_expired_entries_purged_on_set 假阳性（停用 purge 仍绿 = 没覆盖）  ← 验收者实测
+[ ] T23b 预算按整次调查起算（现在每轮重置，research_more 第二轮仍可能 504）      ← 验收者发现
+[ ] T22 anomaly 阈值/单位（D3 前置）  → [ ] T20 必填字段默认值（+ D4 的 _ensure_list）
+[ ] T20 后半：anomalies 用 detect_anomalies 填（D3，须在 T22 后）
+[ ] T15 Evidence Gate 降级（D2=B）
 
 S2 之后（批次 3 其余）
 [ ] T12b requirements.txt 同步 mcp>=2,<3（S7，一行）
-[ ] T20 必填字段默认值（+ D4 的 _ensure_list）
-[ ] T21 sqlite 线程跨线程            [ ] T22 anomaly 阈值/单位（D3 前置）
+[ ] T21 sqlite 线程跨线程
 [ ] T24 注册表域过滤 / HK 漂移
 [ ] T25 前端并发与渲染健壮性        [ ] T26 SSE 错误分支可达 + 任务 await
-[ ] T15 Evidence Gate 降级（D2=B）  [ ] T20 后半：anomalies 用 detect_anomalies 填（D3，须在 T22 后）
 
-批次 4（测试有效性）  T28 T29 T30(+D4 budget) T31 T32 T33 T34 + T35 机制性防线
+批次 4（测试有效性）  T28 T29 T30(+D4 budget，含"跳过是否消耗预算"的语义决定) T31 T32 T33 T34 + T35 机制性防线
 
 收尾（S8）
 [ ] T37 打包/CI flat-layout（pyproject 显式声明 app 包；CI 的 pip install -e ".[dev]" 才能过）  ← 验收者新发现
@@ -1141,10 +1241,10 @@ S2 之后（批次 3 其余）
 
 ---
 
-## 附录 D — 已完成任务的契约备忘（T1–T18 + S1 修红）
+## 附录 D — 已完成任务的契约备忘（T1–T18 + S1 修红 + S2 运行时）
 
 > 细节用 `git show <提交号>` 查回。这里只保留**不许改回**的语义与对应的回归测试位置。
-> S1 修红新增/更新的契约已并入下表（T17 / T18 / T12 行）。
+> S1/S2 新增或更新的契约已并入下表（T17 / T18 / T19 / T23 / T27 行）。
 
 | 任务 | 提交 | 不许改回的契约 | 回归测试 |
 |---|---|---|---|
@@ -1167,4 +1267,7 @@ S2 之后（批次 3 其余）
 | T5b note 文案 | `7e87c6c` | note 写明"保留最新 200 条（另加本说明条）"，与实际 201 条一致 | `tests/test_truncate.py`（追加断言） |
 | **T16 回边 reducer** | `df757a5` | `results` 按 `(tool, arguments)`、`evidence` 按 `id`、`findings` 按 `analyst` 去重（同键保留最新，不同键追加以支持并行 analyst）；`errors` 仍追加；**`state.tool_results` 已删，不要再加回** | `tests/test_graph_state_reducers.py` |
 | **T17 news_search TTL** | `2bf11b7` + `b1b06fa`（T17T） | `_resolve_ttl(tool, settings=None)`；`news_search` → `settings.news_search_ttl_seconds`（21600），`execute()` 不得把它覆盖成 30s；测试必须 patch **模块全局** `app.graph.tool_runtime._search_news`（实例属性无效） | `tests/test_tool_runtime_ttl.py` |
-| **T18 analyst 级复用 Gateway** | `44c307f` + `5647a4a`（T18b）+ `f2e4da1`（T18T） | 一次 analyst 运行复用同一个 Gateway 客户端，异常时保证关闭；**连接必须按需**（进入会话不建连）；stub 必须提供 `gateway_session`；**会话状态还要改成每请求一份（见 T18c）** | `tests/test_gateway_reuse.py` |
+| **T18 analyst 级复用 Gateway** | `44c307f` + `5647a4a`（T18b）+ `f2e4da1`（T18T）+ `f3b76e4`（T18c） | 一次 analyst 运行复用同一个 Gateway 客户端，异常时保证关闭；**连接必须按需**（进入会话不建连）；stub 必须提供 `gateway_session`；**会话状态必须在模块级 ContextVar 里（每 asyncio task 一份），不许放回 `self.*`**（单例图的节点实例被并发请求共享） | `tests/test_gateway_reuse.py`（8 条） |
+| **T19 缓存容量与 TTL** | `bc4849d` | `set` 用 `ttl if ttl is not None else default`（`ttl=0` = 立即过期，不许落回默认）；`max_entries=512` + LRU 淘汰；`set` 时清理过期条目；`stats` 含 `max_entries`/`evictions`（**该行为的测试是假阳性，须由 T19b 修好**） | `tests/test_cache_capacity.py` |
+| **T23 重试感知预算** | `f119f51` + `7dce255` | `deadline` 全链路下发（analyst 均分 → `execute` → `gateway.call`）；HTTP 重试前/退避前检查剩余时间，MCP 每次尝试前检查；超预算返回 `error` ToolResult（不抛异常炸链）；**预算起算点是本节点而非整次调查（T23b 修）** | `tests/test_http_client_budget.py`（4 条） |
+| **T27 called_signatures** | `e6a04e5` | 签名在**真实执行成功后立即**登记；同签名重复调用返回 `status="partial"` + `note`（不许静默成功、不许绕过缓存再打网关）；`_execute_tools` 用 `seen` 集合在 route 层提前跳过 | `tests/test_tool_runtime_dedup.py`（3 条） |
