@@ -275,21 +275,43 @@ def _matches_metric(rule: _Rule, metric: str) -> bool:
     return _metric_basename(metric) in aliases
 
 
-def _prev_key(metric: str) -> str:
-    return f"__anomaly_prev__:{metric.strip().lower()}"
+def _prev_scope(result: Any, domain: str) -> str:
+    """前值的作用域 symbol（T22c）：不同币种/股票的调查互不可比。
+
+    symbol 在 ``result.arguments`` 里可能是 ``"BTCUSDT"``，也可能是
+    ``";".join(stocks)`` 之类——按原样使用；拿不到就用 domain，
+    再拿不到用 ``"unknown"``。
+    """
+    args = getattr(result, "arguments", None)
+    if isinstance(args, dict):
+        symbol = args.get("symbol")
+        if symbol:
+            return str(symbol)
+    return domain or "unknown"
 
 
-def _load_prev_value(metric: str) -> float | None:
-    """取同一 metric 上一次快照的值（存放在 market_cache，跨调查可用）。"""
-    prev = market_cache.get(_prev_key(metric))
+def _prev_key(metric: str, symbol: str) -> str:
+    return f"__anomaly_prev__:{metric.strip().lower()}|{symbol}"
+
+
+def _load_prev_value(metric: str, symbol: str) -> float | None:
+    """取同一 (metric 基名, symbol) 上一次快照的值，跨调查可用。
+
+    权衡说明（T22c）：前值是**有状态的业务数据**，却借用了 ``market_cache``
+    存储——会被 T19 的 LRU 淘汰、也会被任何 ``market_cache.clear()`` 清掉。
+    保留现方案是因为前值本来就该"过期即不可比"（拿一小时前的 OI 算变化率
+    没有意义），LRU/TTL 的淘汰语义与业务语义一致；代价是偶尔丢前值、少报
+    一次异常——宁可不报不要误报，方向是对的。
+    """
+    prev = market_cache.get(_prev_key(metric, symbol))
     if isinstance(prev, (int, float)):
         return float(prev)
     return None
 
 
-def _store_prev_value(metric: str, value: float) -> None:
+def _store_prev_value(metric: str, symbol: str, value: float) -> None:
     # 1 小时：足够覆盖"下次调查拿到上次快照"的场景，又不至于拿太旧的数据算变化率
-    market_cache.set(_prev_key(metric), float(value), ttl=3600.0)
+    market_cache.set(_prev_key(metric, symbol), float(value), ttl=3600.0)
 
 
 def _extract_numeric(value: Any) -> float | None:
@@ -329,13 +351,17 @@ def detect_anomalies(
     rules = [r for r in ALL_RULES if r.domain == domain or r.domain == "cross"]
     # T22：pct_change 规则的前值——优先用同一次调用里更早出现的同 metric datum
     # （前后两个快照），否则取 market_cache 里上一次调查留下的值；都没有就不触发。
-    prev_in_call: dict[str, float] = {}
+    # T22c：前值按 (metric 基名, symbol) 作用域隔离——同一次调用里混入多个
+    # symbol 的结果，也绝不能拿 A 币种的值当 B 币种的前值。
+    prev_in_call: dict[tuple[str, str], float] = {}
     tracked_metrics: set[str] = set()
 
     for result in tool_results:
         normalized = getattr(result, "normalized", [])
         if not normalized:
             continue
+
+        symbol = _prev_scope(result, domain)
 
         for datum in normalized:
             metric = getattr(datum, "metric", "") or ""
@@ -345,8 +371,6 @@ def detect_anomalies(
             if num_value is None:
                 continue
 
-            # 同一 datum 同一 rule_type 只保留最高严重级（旧实现 OI 一条 datum
-            # 同时过 high 和 critical 两条规则 → 报两条重复）
             best_by_type: dict[str, tuple[int, AnomalyRecord, _Rule]] = {}
             severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -354,12 +378,19 @@ def detect_anomalies(
                 if not _matches_metric(rule, metric):
                     continue
                 if rule.value_semantics == "pct_change":
-                    tracked_metrics.add(metric.strip().lower())
-                    prev = prev_in_call.get(metric)
+                    base = _metric_basename(metric)
+                    tracked_metrics.add(base)
+                    prev = prev_in_call.get((base, symbol))
                     if prev is None:
-                        prev = _load_prev_value(metric)
+                        prev = _load_prev_value(base, symbol)
                     if prev is None or prev == 0:
-                        # 拿不到前值就不触发：宁可不报不要误报
+                        # 拿不到前值就不触发：宁可不报不要误报（可见性：留 debug）
+                        logger.debug(
+                            "pct_change rule %s skipped for metric=%r symbol=%r: no previous value",
+                            rule.rule_id,
+                            metric,
+                            symbol,
+                        )
                         continue
                     compare_value = (num_value - prev) / abs(prev) * 100.0
                 elif rule.value_semantics == "ratio_to_percent":
@@ -407,10 +438,12 @@ def detect_anomalies(
                     record.possible_meaning,
                 )
 
-            # 更新前值：本调用内后续同 metric 的 datum 与它配对，并存入 market_cache
-            if metric.strip().lower() in tracked_metrics:
-                prev_in_call[metric] = num_value
-                _store_prev_value(metric, num_value)
+            # 更新前值：本调用内后续同 (基名, symbol) 的 datum 与它配对，
+            # 并存入 market_cache 供下一次调查使用
+            base = _metric_basename(metric)
+            if base in tracked_metrics:
+                prev_in_call[(base, symbol)] = num_value
+                _store_prev_value(base, symbol, num_value)
 
     # Sort by severity: critical > high > medium > low
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}

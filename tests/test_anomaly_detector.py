@@ -314,3 +314,49 @@ class TestMetricPathNormalization:
         """基名归一化不是子串匹配：长得像的指标名依然不命中。"""
         result = normalize_tool_result(_CRYPTO_OI_TOOL, {}, payload)
         assert detect_anomalies([result], domain="crypto") == []
+
+
+class TestPrevValueSymbolScope:
+    """T22c：前值按 (metric 基名, symbol) 隔离。
+
+    旧实现前值只按 metric 名存放——不同币种的两次独立调查互相当成"前值"，
+    报出『OI 剧烈增长 200.0%』这类用户可见的错误结论（D3 之后会写进报告
+    与 daily_states）。"""
+
+    def test_three_investigations_different_symbols_no_pollution(self):
+        """复现验收脚本：三次独立调查（不同 symbol、各自都是当前快照）必须全部不触发。
+
+        注意必须在**同一个用例内**顺序执行——跨用例的 autouse fixture 会清
+        market_cache，前值污染根本不会发生，用例就成了假阳性。"""
+        out = []
+        for symbol, oi in (("BTCUSDT", 1e9), ("ETHUSDT", 3e9), ("SOLUSDT", 3.3e9)):
+            result = normalize_tool_result(_CRYPTO_OI_TOOL, {"symbol": symbol}, {"openInterest": oi})
+            out.append(detect_anomalies([result], domain="crypto"))
+        all_anomalies = [a for anomalies in out for a in anomalies]
+        assert all_anomalies == [], f"跨 symbol 前值污染：{[(a.type, a.description) for a in all_anomalies]}"
+
+    def test_same_symbol_still_compares_across_investigations(self):
+        """防"隔离过头"：同 symbol 两次调查（1e9 → 1.2e9）仍必须报 oi_spike。"""
+        first = normalize_tool_result(_CRYPTO_OI_TOOL, {"symbol": "BTCUSDT"}, {"openInterest": 1e9})
+        assert detect_anomalies([first], domain="crypto") == []
+        second = normalize_tool_result(_CRYPTO_OI_TOOL, {"symbol": "BTCUSDT"}, {"openInterest": 1.2e9})
+        anomalies = detect_anomalies([second], domain="crypto")
+        assert [a.type for a in anomalies] == ["oi_spike"]
+        assert anomalies[0].severity == "critical"
+
+    def test_multiple_symbols_in_one_call_are_isolated(self):
+        """同一次调用混入多个 symbol：ETH 3e9 不许拿前一条 BTC 1e9 当同 symbol 前值。"""
+        btc = normalize_tool_result(_CRYPTO_OI_TOOL, {"symbol": "BTCUSDT"}, {"openInterest": 1e9})
+        eth = normalize_tool_result(_CRYPTO_OI_TOOL, {"symbol": "ETHUSDT"}, {"openInterest": 3e9})
+        assert detect_anomalies([btc, eth], domain="crypto") == []
+
+    @pytest.mark.parametrize("arguments", [{}, {"pair": "BTCUSDT"}, {"symbol": None}])
+    def test_missing_symbol_falls_back_to_domain(self, arguments):
+        """拿不到 symbol → 退回 domain 作用域：自身可跨调查比较，与显式 symbol 互不可比。"""
+        first = normalize_tool_result(_CRYPTO_OI_TOOL, arguments, {"openInterest": 1e9})
+        assert detect_anomalies([first], domain="crypto") == []
+        second = normalize_tool_result(_CRYPTO_OI_TOOL, arguments, {"openInterest": 1.2e9})
+        assert [a.type for a in detect_anomalies([second], domain="crypto")] == ["oi_spike"]
+        # 显式 symbol 是另一个作用域，domain 作用域的前值不许漏进去
+        third = normalize_tool_result(_CRYPTO_OI_TOOL, {"symbol": "BTCUSDT"}, {"openInterest": 3e9})
+        assert detect_anomalies([third], domain="crypto") == []
