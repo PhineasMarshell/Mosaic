@@ -40,4 +40,4 @@ Thumbs.db
 
 # Temp debug scripts with hardcoded keys
 test_api.py
-.temp
+.tmp/
