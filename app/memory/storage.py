@@ -9,6 +9,8 @@
 
 import json
 import logging
+import sqlite3
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection as SQLite3Connection
@@ -100,17 +102,48 @@ class MarketMemory:
         # 默认存到项目根目录下 memory/memory.db（P5：从 ~/.mosaic 迁入项目目录）
         _project_root = Path(__file__).resolve().parents[2]
         self.db_path = db_path or (_project_root / "memory" / "memory.db")
-        self._conn: SQLite3Connection | None = None
+        # T21：连接按线程各取一条。SQLite 连接默认只能在创建它的线程里使用，
+        # 而本实例是进程级单例（get_memory()），async 端点可能运行在另一个
+        # 线程——跨线程复用同一条连接会抛 ProgrammingError。
+        self._local = threading.local()
+        # 所有线程的连接登记表：threading.local 只能看到当前线程，
+        # close() 靠它才能覆盖全部连接。
+        self._all_conns: list[SQLite3Connection] = []
+        self._conns_lock = threading.Lock()
+        # close() 后自增：其它线程手里缓存的是已关闭的旧连接，
+        # 下次访问 conn 时按代数检测并重建。
+        self._generation = 0
         # Ensure directory exists and initialize schema eagerly (before any caller uses conn)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
     @property
     def conn(self) -> SQLite3Connection:
-        if self._conn is None:
-            self._conn = _sqlite_connection_factory(self.db_path)
-            self._conn.row_factory = None  # return tuples, not dicts
-        return self._conn
+        conn = getattr(self._local, "conn", None)
+        if conn is not None and getattr(self._local, "generation", -1) == self._generation:
+            return conn
+        conn = _sqlite_connection_factory(self.db_path)
+        conn.row_factory = None  # return tuples, not dicts
+        self._local.conn = conn
+        self._local.generation = self._generation
+        with self._conns_lock:
+            self._all_conns.append(conn)
+        return conn
+
+    def close(self) -> None:
+        """关闭**所有**线程的连接（T21：threading.local 只能看到当前线程，靠登记表覆盖全部）。
+
+        close() 后任何线程再访问 conn 都会拿到新连接（按代数检测重建）。
+        """
+        with self._conns_lock:
+            conns = self._all_conns
+            self._all_conns = []
+            self._generation += 1
+        for conn in conns:
+            try:
+                conn.close()
+            except sqlite3.Error as exc:
+                logger.debug("Ignored error closing sqlite connection: %s", exc)
 
     def _ensure_schema(self) -> None:
         """初始化数据库 schema（幂等）。"""

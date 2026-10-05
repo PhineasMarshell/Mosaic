@@ -5,6 +5,9 @@
 market_state。这里用真实的 ResearchResponse + 临时 SQLite 库验证统一持久化。
 """
 
+import logging
+import sqlite3
+
 import pytest
 
 from app.agent.persistence import _answer_summary, persist_research
@@ -82,3 +85,17 @@ async def test_none_report_does_not_clear_daily_state(mem):
 def test_answer_summary_format():
     summary = _answer_summary(_make_report())
     assert summary == "Neutral：指数普跌，成交额萎缩…"
+
+
+async def test_save_failure_logs_warning(mem, caplog, monkeypatch):
+    """T21 防回归：落库失败必须 WARNING 可见，不许静默降回 debug（旧实现即如此）。"""
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(mem, "save_research", boom)
+    result = _make_good_response()
+    with caplog.at_level(logging.WARNING, logger="app.agent.persistence"):
+        await persist_research(result, result.question, CONV_ID, memory=mem)
+
+    assert "Research save failed (non-fatal)" in caplog.text
