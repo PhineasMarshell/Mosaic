@@ -176,6 +176,7 @@
   .anomaly-severity{font-size:10px;padding:2px 6px;border-radius:999px;font-weight:500;
                     background:var(--surface);border:1px solid var(--border);color:var(--text-muted)}
   .anomaly-severity.high{border-color:var(--red);color:var(--red)}
+  .anomaly-severity.critical{border-color:var(--red);color:#fff;background:var(--red)}
   .anomaly-severity.medium{border-color:var(--orange);color:var(--orange)}
   .anomaly-severity.low{border-color:var(--green);color:var(--green)}
   .anomaly-detail{color:var(--text-dim);line-height:1.5}
@@ -238,7 +239,11 @@
 <script>
 // ── State ────────────────────────────────────
 let currentConversationId = null;
-let lastErrorTimeout = null;
+// T25：当前进行中的请求（{controller, errorTimeout, loaderRow, superseded}）。
+// 计时器/AbortController 改为**按请求持有**——旧实现用全局单值计时器，
+// 并发两条 SSE 时先结束者的 finally 会 clearTimeout 掉后到者的唯一中止手段。
+// 现在 ask() 开头防重入：调查中追问 → 静默中止旧请求，绝不并发跑两条。
+let activeRequest = null;
 // 服务端一次调查的总预算（秒）。启动时从 /health 读，读不到就用默认值。
 // 客户端的放弃时限必须 **大于** 它，否则超时标记会先于真实错误置位，
 // 把「上游模型坏了」这类错误一律显示成「请求超时」。
@@ -326,6 +331,7 @@ function addAILoader(message) {
   </div>`;
   getMessages().appendChild(row);
   scrollToBottom(false);
+  return row;  // T25：调用方持有自己的 loader 行，removeLoader 只删自己的
 }
 
 function updateLoader(index, text) {
@@ -365,9 +371,9 @@ function updateProgress(data) {
   scrollToBottom(true);
 }
 
-function removeLoader() {
-  const row = document.getElementById('ai-loading');
-  if (row) row.remove();
+function removeLoader(row) {
+  // T25：只移除调用方自己的 loader 行——按 id 全局删会把别的请求的 loader 误删
+  if (row && row.parentNode) row.remove();
 }
 
 function addErrorBubble(message, canRetry) {
@@ -388,16 +394,35 @@ function addAIResponse(report) {
   const badgeCls = stateBadgeClass(report.state_label);
   const pct = confidencePct(report.confidence);
 
-  const anomalies = (report.anomalies || []).map(a => `
+  // T25：severity 是后端透传的自由字段——数字/布尔会让 toUpperCase() 抛
+  // TypeError，旧实现的 catch 会把整份三分钟报告当"调查失败"丢掉。
+  // 白名单渲染：不认识的值不显示徽章（而不是炸掉）。
+  const SEVERITY_STYLES = { low: 'low', medium: 'medium', high: 'high', critical: 'critical' };
+  function severityBadge(sev) {
+    const key = String(sev ?? '').toLowerCase();
+    return SEVERITY_STYLES[key]
+      ? `<span class="anomaly-severity ${SEVERITY_STYLES[key]}">${key.toUpperCase()}</span>`
+      : '';
+  }
+
+  const anomalies = (report.anomalies || []).map(a => {
+    // T25：单条坏数据只降级自己这一张卡，绝不毁掉整份报告
+    try {
+      return `
     <div class="anomaly-card"><div class="anomaly-header">
       <span class="anomaly-type">🚨 ${esc(a.description || a.type || 'Anomaly')}</span>
-      ${a.severity?`<span class="anomaly-severity ${esc(a.severity)}">${esc(a.severity.toUpperCase())}</span>`:''}
+      ${severityBadge(a.severity)}
     </div><div class="anomaly-detail">
       ${a.metric?`<div><strong>指标:</strong> ${esc(a.metric)}</div>`:''}
       ${a.value!=null?`<div><strong>当前值:</strong> ${esc(String(a.value))}</div>`:''}
       ${a.normal_range?`<div><strong>正常范围:</strong> ${esc(a.normal_range)}</div>`:''}
       ${a.possible_meaning?`<div><strong>可能含义:</strong> ${esc(a.possible_meaning)}</div>`:''}
-    </div><div class="anomaly-status">状态: ${esc(a.status||'Investigating...')}</div></div>`).join('');
+    </div><div class="anomaly-status">状态: ${esc(a.status||'Investigating...')}</div></div>`;
+    } catch (e) {
+      console.warn('anomaly card render failed, degrading single card:', e);
+      return `<div class="anomaly-card"><div class="anomaly-header"><span class="anomaly-type">🚨 一条异常记录渲染失败，已跳过</span></div></div>`;
+    }
+  }).join('');
 
   const tools = (report.used_tools || []).map(t => `<span class="tool-tag">${esc(t)}</span>`).join('');
   const strongHtml = report.strong_areas?.length
@@ -551,6 +576,16 @@ async function ask() {
   if (!currentConversationId) currentConversationId = crypto.randomUUID();
   lastQuestion = q;
 
+  // T25 防重入：调查中回车追问 → 静默中止旧请求（不清错误气泡、不留 loader），
+  // 新请求接管。绝不并发跑两条。
+  if (activeRequest) {
+    activeRequest.superseded = true;
+    clearTimeout(activeRequest.errorTimeout);
+    activeRequest.controller.abort();
+    removeLoader(activeRequest.loaderRow);
+    activeRequest = null;
+  }
+
   const btn = document.getElementById('askBtn');
   btn.disabled = true;
 
@@ -560,14 +595,17 @@ async function ask() {
   ta.style.height = 'auto';
   autoResizeTa();
 
-  // Show loading
-  addAILoader('正在调查…');
+  // Show loading（T25：调用方持有自己的 loader 行）
+  const loaderRow = addAILoader('正在调查…');
 
   // 客户端兜底时限 = 服务端预算 + 余量。真的到点了就 abort，
   // 而不是像以前那样只置一个标记、让 fetch 永远挂着。
+  // T25：计时器是**本请求的局部变量**，finally 只清自己的。
   const controller = new AbortController();
   const limitS = serverBudgetS + CLIENT_TIMEOUT_MARGIN_S;
-  lastErrorTimeout = setTimeout(() => controller.abort(), limitS * 1000);
+  const errorTimeout = setTimeout(() => controller.abort(), limitS * 1000);
+  const state = { controller, errorTimeout, loaderRow, superseded: false };
+  activeRequest = state;
 
   try {
     let resultData = null;
@@ -577,6 +615,7 @@ async function ask() {
                (data) => { resultData = data; resolve(data); }, reject, controller.signal);
       });
     } catch(e) {
+      if (state.superseded) return;  // 已被新请求接替：静默收场，finally 里只恢复自己的资源
       if (e && e.name === 'AbortError') throw new Error(`调查超过 ${limitS}s，已中止`);
       if (e && e.kind === 'transport' && e.retryableViaSync) {
         // 流式通道压根没建立起来（多半是代理不支持 SSE）→ 退回同步接口
@@ -586,14 +625,18 @@ async function ask() {
         throw e;
       }
     }
-    removeLoader();
+    removeLoader(loaderRow);
     renderResult(resultData);
   } catch(e) {
-    removeLoader();
-    addErrorBubble(e.message || String(e), true);
+    if (!state.superseded) {
+      removeLoader(loaderRow);
+      addErrorBubble(e.message || String(e), true);
+    }
   } finally {
-    btn.disabled = false;
-    clearTimeout(lastErrorTimeout);
+    clearTimeout(errorTimeout);  // T25：只清自己的兜底计时器
+    if (activeRequest === state) activeRequest = null;
+    // 新请求已接管时不解锁按钮（接管方自己会再禁用）
+    if (!activeRequest) btn.disabled = false;
     // Reset hint for follow-up
     const hint = document.getElementById('hint');
     if (hint) hint.textContent = '追问…（例如：那茅台呢？）';
