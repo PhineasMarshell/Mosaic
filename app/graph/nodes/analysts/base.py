@@ -229,9 +229,7 @@ class MarketAnalystNode:
                 remaining_tools = max(total_calls - idx, 1)
                 deadline = time.monotonic() + max(remaining_budget / remaining_tools, 0.0)
 
-            results.append(
-                await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
-            )
+            results.append(await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline))
 
         return results
 

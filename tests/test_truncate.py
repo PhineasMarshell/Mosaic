@@ -48,7 +48,7 @@ def test_truncate_under_cap_unchanged():
 async def test_cache_not_polluted_by_truncate():
     runtime = ToolRuntime(Settings())
 
-    async def fake_do_execute(tool_name, arguments):
+    async def fake_do_execute(tool_name, arguments, deadline=None):
         return _full_result()
 
     runtime._do_execute = fake_do_execute

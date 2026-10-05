@@ -8,7 +8,6 @@
 import time
 
 import httpx
-import pytest
 
 from app.config import Settings
 from app.gateway.http_client import MarketGatewayHttpClient

@@ -127,7 +127,7 @@ class MarketGatewayClient:
             # T23：与 HTTP client 相同的预算语义——总预算用尽就不再重试。
             if deadline is not None and deadline - time.monotonic() <= 0:
                 logger.warning("MCP call %s stopped: budget exhausted before attempt %d", tool_name, attempt + 1)
-                reason = f"budget exhausted: no time left for another attempt"
+                reason = "budget exhausted: no time left for another attempt"
                 if last_error:
                     reason = f"{last_error}; {reason}"
                 return normalize_tool_result(tool_name, arguments, None, error=reason)

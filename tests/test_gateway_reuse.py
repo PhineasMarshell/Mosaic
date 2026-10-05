@@ -313,9 +313,7 @@ async def test_concurrent_requests_get_isolated_sessions():
 
 async def test_session_close_does_not_kill_concurrent_inflight():
     """交错验证：A 结束并关闭自己的客户端后，B 的在途调用必须仍然成功。"""
-    _reset_slow(
-        release={"600519": asyncio.Event(), "000001": asyncio.Event()}
-    )
+    _reset_slow(release={"600519": asyncio.Event(), "000001": asyncio.Event()})
     node = TechnicalAnalystNode(Settings())
     node._runtime._gateway_class = lambda: _SlowGateway
 

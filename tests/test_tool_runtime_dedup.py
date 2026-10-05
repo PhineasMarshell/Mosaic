@@ -60,9 +60,7 @@ async def test_same_signature_called_three_times_hits_gateway_once():
     results = []
     async with rt.gateway_session():
         for _ in range(3):
-            results.append(
-                await rt.execute("quote_tencent_quote_get", {"symbol": "600519"}, sigs)
-            )
+            results.append(await rt.execute("quote_tencent_quote_get", {"symbol": "600519"}, sigs))
 
     # 旧实现这里是 2（第 3 次绕过缓存再打一次真实网关）
     assert CountingGateway.calls == 1
