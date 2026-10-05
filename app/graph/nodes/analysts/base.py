@@ -186,7 +186,19 @@ class MarketAnalystNode:
 
         stocks = self._extract_stocks(state)
         results: list[ToolResult] = []
-        budget = int(mine.get("budget") or len(mine["tool_calls"]))
+        # D4：budget 语义三件事——
+        # ① 显式值优先：只有 route 没给 budget 时才回退 len(tool_calls)。
+        #    旧的 `int(mine.get("budget") or len(...))` 把显式 budget=0 吞成"全部执行"。
+        # ② config.max_tool_calls 是真实硬上限（此前只有 /health 一个消费点），与 budget 取 min。
+        # ③ 扣减时机：`budget -= 1` 在**真正 execute 之前**才扣——语义是"真实执行次数"，
+        #    unknown tool_key / 缺 symbol / T27 重复签名这些 continue 不再消耗预算
+        #    （旧实现在循环顶部扣减，budget=n 可能只执行 1 次，取决于跳过了多少条）。
+        raw_budget = mine.get("budget")
+        budget = len(mine["tool_calls"]) if raw_budget is None else int(raw_budget)
+        max_calls = int(getattr(self.settings, "max_tool_calls", 0) or 0)
+        if max_calls > 0 and max_calls < budget:
+            logger.info("%s: max_tool_calls=%d 生效，budget %d → %d", self.category, max_calls, budget, max_calls)
+            budget = max_calls
         # T27：route 里重复的 (tool, arguments) 在这里真正跳过，
         # 不再依赖下游 execute 的签名集合（那只挡得住"已成功执行过"的）。
         seen: set[tuple[str, tuple]] = set()
@@ -211,8 +223,12 @@ class MarketAnalystNode:
 
         for idx, tc in enumerate(mine["tool_calls"]):
             if budget <= 0:
+                logger.info(
+                    "%s: budget 用尽，剩余 %d 个 route 条目跳过",
+                    self.category,
+                    len(mine["tool_calls"]) - idx,
+                )
                 break
-            budget -= 1
             tool_key = tc.get("tool_key", "")
             try:
                 meta = resolve_tool(tool_key)
@@ -245,6 +261,8 @@ class MarketAnalystNode:
                 remaining_tools = max(total_calls - idx, 1)
                 deadline = time.monotonic() + max(remaining_budget / remaining_tools, 0.0)
 
+            # D4：只在真正执行前扣减——被跳过的调用（上面那些 continue）不消耗预算
+            budget -= 1
             results.append(await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline))
 
         return results

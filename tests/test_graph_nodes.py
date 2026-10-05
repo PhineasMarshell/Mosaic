@@ -120,13 +120,135 @@ async def test_analyst_with_no_matching_tools_returns_empty(node: MarketAnalystN
 # ------------------------------------------------------------------ #
 
 
+# D4 语义裁决（写进测试，不许再含糊）：budget 计**真实执行次数**——
+# unknown tool_key / 缺 symbol / T27 重复签名这些被跳过的调用**不消耗**预算；
+# 显式 budget=0 = 不执行；config.max_tool_calls 是真实硬上限。
+_ROUTE_TOOLS = [
+    {"tool_key": "sentiment", "arguments": {}},
+    {"tool_key": "limit_up_count", "arguments": {}},
+    {"tool_key": "limit_up_sectors", "arguments": {}},
+]
+
+# T30/D4 专用：实例级 FakeRuntime（记录真实执行的工具名）——
+# mock_runtime 打的是 ToolRuntime 类补丁，而 _execute_tools 走
+# self._runtime.execute，实例属性替换后类补丁根本不会被触到
+# （旧 test_budget_respected 恒真的根源之一：连执行路径都没接上）。
+
+
+def _make_budget_node(max_tool_calls: int = 12):
+    """构造 (node, executed_tool_names)：node 的 _runtime 是记录执行的 stub。"""
+    executed: list[str] = []
+
+    class _RecordingRuntime(_NoGatewayRuntime):
+        async def execute(self, tool_name, arguments, called_signatures, deadline=None):
+            executed.append(tool_name)
+            return types.SimpleNamespace(
+                tool=tool_name,
+                arguments=arguments,
+                status="success",
+                normalized=[],
+                error=None,
+            )
+
+    node = object.__new__(MarketAnalystNode)
+    node.settings = Settings(max_tool_calls=max_tool_calls)
+    node.category = "nonexistent"
+    node._runtime = _RecordingRuntime()
+    return node, executed
+
+
 @pytest.mark.asyncio
-async def test_budget_respected(node: MarketAnalystNode, mock_runtime, monkeypatch):
-    """当工具数 > budget 时应只执行 budget 个。当前 budget=default(len(tools))，
-    所以直接传入 len(tools) 的 scenario 需自定义执行逻辑。这里验证 budget 参数
-    确实从 meta_list 长度推断。"""
-    assert node._execute_tools.__code__.co_varnames  # method exists
-    # budget 守卫在循环中检查 budget <= 0，默认 = len(meta_list)
+async def test_budget_limits_real_executions():
+    """budget=1、route 有 3 个不同工具 → 只真实执行 1 次。
+
+    T30：旧实现只断言 `__code__.co_varnames` 恒真，budget 守卫删掉也不报错。"""
+    node, executed = _make_budget_node()
+    route = [{"analyst": "nonexistent", "budget": 1, "tool_calls": _ROUTE_TOOLS}]
+    results = await node._execute_tools({"route": route}, set())
+    assert len(results) == 1
+    assert executed == ["public_sentiment_ashare_master_sentiment_get"]
+
+
+@pytest.mark.asyncio
+async def test_budget_defaults_to_all_calls():
+    """route 未给 budget → 默认全部执行（D4 的 None 分支）。"""
+    node, executed = _make_budget_node()
+    route = [{"analyst": "nonexistent", "tool_calls": _ROUTE_TOOLS}]
+    results = await node._execute_tools({"route": route}, set())
+    assert len(results) == 3
+    assert len(executed) == 3
+
+
+@pytest.mark.asyncio
+async def test_budget_zero_means_execute_nothing():
+    """D4：显式 budget=0 表示"不执行"——旧实现 `int(x or len(...))` 把 0 吞成全部执行
+    （探针实测：budget=0、2 个调用执行了 2 个）。"""
+    node, executed = _make_budget_node()
+    route = [{"analyst": "nonexistent", "budget": 0, "tool_calls": _ROUTE_TOOLS}]
+    results = await node._execute_tools({"route": route}, set())
+    assert results == []
+    assert executed == []
+
+
+@pytest.mark.asyncio
+async def test_max_tool_calls_caps_budget():
+    """D4：config.max_tool_calls 成为真实上限（此前只有 /health 一个消费点），
+    与 route budget 取 min（探针实测：max_tool_calls=2、3 个不同工具执行了 3 个）。"""
+    node, executed = _make_budget_node(max_tool_calls=2)
+    route = [{"analyst": "nonexistent", "budget": 10, "tool_calls": _ROUTE_TOOLS}]
+    results = await node._execute_tools({"route": route}, set())
+    assert len(results) == 2
+    assert len(executed) == 2
+
+
+@pytest.mark.asyncio
+async def test_skipped_calls_do_not_consume_budget():
+    """D4 语义①：被跳过的调用（unknown tool_key）不消耗预算。
+
+    旧实现在循环顶部 `budget -= 1`：budget=3、[未知,未知,有效,有效] 只执行 1 个；
+    新语义执行 2 个。"""
+    node, executed = _make_budget_node()
+    route = [
+        {
+            "analyst": "nonexistent",
+            "budget": 2,
+            "tool_calls": [
+                {"tool_key": "no_such_tool_a", "arguments": {}},
+                {"tool_key": "no_such_tool_b", "arguments": {}},
+                {"tool_key": "sentiment", "arguments": {}},
+                {"tool_key": "limit_up_count", "arguments": {}},
+            ],
+        }
+    ]
+    results = await node._execute_tools({"route": route}, set())
+    assert [r.tool for r in results] == [
+        "public_sentiment_ashare_master_sentiment_get",
+        "public_limit_up_count_ashare_master_limit_up_count_get",
+    ]
+    assert len(executed) == 2
+
+
+@pytest.mark.asyncio
+async def test_duplicate_calls_do_not_consume_budget():
+    """D4 语义①：T27 的重复签名跳过同样不消耗预算。
+
+    budget=2、[有效, 重复, 有效] → 新语义执行 2 个；
+    旧实现在顶部扣减：idx0 扣到 1、idx1 重复跳过但已扣到 0、idx2 break → 只执行 1 个。"""
+    node, executed = _make_budget_node()
+    route = [
+        {
+            "analyst": "nonexistent",
+            "budget": 2,
+            "tool_calls": [
+                {"tool_key": "sentiment", "arguments": {}},
+                {"tool_key": "sentiment", "arguments": {}},  # 同签名重复
+                {"tool_key": "limit_up_count", "arguments": {}},
+            ],
+        }
+    ]
+    results = await node._execute_tools({"route": route}, set())
+    assert len(results) == 2
+    assert len(executed) == 2
 
 
 # ------------------------------------------------------------------ #
