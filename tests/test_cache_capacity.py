@@ -55,11 +55,24 @@ def test_capacity_enforced_and_lru_keeps_recently_used():
 
 
 def test_expired_entries_purged_on_set():
-    """set 时顺带清理过期条目：过期键从 _store 消失，而不是等读到同键才删。"""
+    """set 时顺带清理过期条目：过期键从 _store 消失，而不是等读到同键才删。
+
+    T19b：本用例此前在断言前先 `get("old")`，读路径本来就会删过期键，
+    导致断言恒真（停用 purge 仍然全绿）——断言只能被 set 里的 purge 满足，
+    所以这里**不能**先 get。
+    """
     c = Cache()
     c.set("old", 1, ttl=0.01)
     time.sleep(0.02)
-    assert c.get("old") is None  # 读路径也会删，这里只做前置确认
-    c.set("new", 2)
-    assert "old" not in c._store
+    c.set("new", 2)  # 只有这里的 _purge_expired 能让 old 消失
+    assert "old" not in c._store  # 停用 purge → True → 必红
     assert c.get("new") == 2
+
+
+def test_expired_entries_removed_on_get():
+    """读路径也会删过期键（与 purge-on-set 分开覆盖，避免互相掩护）。"""
+    c = Cache()
+    c.set("old", 1, ttl=0.01)
+    time.sleep(0.02)
+    assert c.get("old") is None
+    assert "old" not in c._store
