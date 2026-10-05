@@ -12,12 +12,17 @@
 > **S7 执行结论（执行方自记）**：T32 / T33 / T34（不含注册表条目，已并入 S4）/ T35 / T12b 全部完成，双模式 **506 passed + 0 skipped**，无新立任务；T35 的 conftest 约定与 `tests/test_conventions.py` 机械检查自 S7 起对所有新增/修改的测试文件生效。
 > **S7 验收结论：无新立任务**（5 个任务全部通过；T32 反向验证与声明精确一致，T33 的 A 方向实测 3 红、
 > 已在 §0.4 更正，T34② 标注为未改坏复跑；**双模式 506 passed + 0 skipped**，详见 §0.4 "S7 验收复核记录"）。
+> **S8 执行与收尾结论（执行方自记，待主 Agent 验收）**：T37 → T36 → 最终全量验收全部完成，
+> **双模式 520 passed + 0 skipped**（506 → T37 +4 → T36 +10），三道门禁全绿，
+> `pip install -e ".[dev]"` 在最终提交状态实跑成功。**移交主 Agent 裁决 1 条**：T36 查实
+> `MarketMemory.get_context_for_question` 无生产调用方（README 原先承诺"Reasoning 自动注入 7 天
+> Market State"不成立），已把文档改准但**未擅自接线**——见 §0.4 "S8 执行记录"。
 > 另把四条"测试假阳性/反向验证"教训汇总进了 **§4 的 T35**（做 conftest 约定时一并落地）。
 > **行号基准**：`44c307f`（S1/S2 的改动未影响未完成任务的锚点；`tool_runtime.py` 的
 > `execute`/`_do_execute`/`_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > 动手时以锚点片段 grep 为准）。若行号漂移，以「定位锚点」里的代码片段为准。
-> **当前 HEAD**：S7 任务提交链的最后一个为 `55b9973`（其后依次是 S7 收尾 chore `2b4ea4a` 与本条
-> "S7 验收复核记录"的 §0.4 chore）；精确 hash 以 `git log --oneline -3` 为准，见 §0.4 "S7 验收复核记录"。
+> **当前 HEAD**：S8 任务提交链 = `19861fd`（T37）、`9ebd6a6`（T36），其后是 S8 收尾 chore；
+> 精确 hash 以 `git log --oneline -3` 为准，见 §0.4 "S8 执行记录"。
 > **怎么用这份文档**：**§0.5 决定"你这一轮做哪一段"——先看它，再读你那段指定的章节，不要通读全文。**
 > §1 是验收结论（谁改了什么、还差什么、哪些结论不要动），
 > §2 是**必须先做完的修红**，§3 是批次 3 剩余任务，§4 是批次 4，§5 是收尾。
@@ -82,16 +87,18 @@
 
 ### 0.4 当前进展
 
-> **当前 HEAD：`1840f6b`（S6 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）
-> + S4（T22b/T22c/T24）+ S5（T24b/T21/T26/T25）+ S6（T28/T29/T30+D4/T31）均已完成：
-> **499 passed + 0 skipped（全量再无 skip），`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S6 会话实测）。
+> **当前 HEAD：`9ebd6a6`（S8 收尾，T36 完成）。** S1（修红）+ S2（T18c/T19/T27/T23）+ S3（T19b/T23b/T22/T20/T15）
+> + S4（T22b/T22c/T24）+ S5（T24b/T21/T26/T25）+ S6（T28/T29/T30+D4/T31）
+> + S7（T32/T33/T34/T35/T12b）**+ S8（T37/T36/最终全量验收）**均已完成：
+> **520 passed + 0 skipped（全量再无 skip），`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S8 会话实测）。
 > ruff check / ruff format --check 全绿。T28–T31 每条都先探针证实假阳性、改后做「改坏必红」反向验证（详见 §0.4 表格与 S6 执行记录）。
 > 行号基准 = `44c307f`（S1–S6 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
 > `execute` / `_do_execute` / `_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
 > T20/T15 等动手时仍以锚点片段 grep 为准）。
 > 备注：S1/S2 执行会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在这些会话不出现；
 > 验收者已在受限会话复跑确认连带红消失（见"S1 验收复核记录"）。
-> `pip install -e .` 的 flat-layout 失败 = 既有问题（**T37**）；`requirements.txt` 漏改 = **T12b**。
+> `requirements.txt` 漏改 = T12b（已在 S7 修完）；`pip install -e .` 的 flat-layout 失败 = **T37（S8 已修，
+> `pip install -e ".[dev]"` 在最终状态实跑通过）**。
 
 | 任务 | 状态 | 提交 | 备注 |
 |---|---|---|---|
@@ -119,8 +126,8 @@
 | **T26 SSE 错误分支** | ✅ 完成并验收（S5） | `7f635ff` | ①ask_stream 在返回 StreamingResponse 前 eager `_get_orchestrator()`+`_ensure_graph()` → 图构建失败 HTTP 层 500（死分支 except ValueError 删除；_parse_ask_payload 留 try 外以免 400 被改写 500）；②finally 在 cancel 后 `await gather(task, return_exceptions=True)` 收尸；运行期错误走 200+SSE 事件的契约保留；新增 2 条用例旧实现下均必红（**教训**：预算超时路径的 task.cancel() 会清掉 Future 未检索标记、掩盖 warning——测试必须用客户端断开 aclose 场景才暴露） |
 | **T25 前端健壮化** | ✅ 完成并验收（S5） | `fe837b1` | ①计时器/AbortController 按请求持有（局部变量），finally 只清自己的；②ask() 防重入：追问 → superseded+abort 静默接管旧请求，不并发两条，接管期不解锁按钮；③addAILoader 返回行、removeLoader(row) 只删自己的；④severity 白名单渲染（low/medium/high/critical，未知不显示徽章），异常卡逐条 try/catch 降级；补 .critical 样式；新建 tests/test_web_frontend_contract.py 6 条文本契约，退回旧 index.html 全红；node --check 语法校验过 |
 | **T12b** requirements 同步 | ✅ 完成（S7） | `55b9973` | `requirements.txt:8` `mcp>=1.12` → `mcp>=2,<3`；脚本抽取两份清单逐条 diff **完全一致**（其余 9 行本就无漂移）；纯清单同步无必补测试（按 §3 规格） |
-| **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
-| **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
+| **T37** 打包/CI flat-layout | ✅ 完成（S8，**待主 Agent 验收**） | `19861fd` | 复现（pip 本体）`error: Multiple top-level packages discovered in a flat-layout: ['app', 'memory'].`；加 `[tool.setuptools.packages.find] include=["app*"] exclude=["memory*","tests*","scripts*"]` + `[tool.setuptools.package-data] "app.web"=["index.html"]`（`app/main.py:96` 的 INDEX 运行时依赖）；验收 `pip install -e ".[dev]"` 实跑成功、version()=0.1.0、import app/memory 不变、`pip wheel` 实测含 index.html 且零 memory 条目；新增 `test_packaging_config.py` 4 条，反向验证（退回旧 pyproject）**4 条全红**；未改 `.github/workflows/ci.yml`、未拆 src/ 布局 |
+| **T36 文档同步** | ✅ 完成（S8，**待主 Agent 验收**） | `9ebd6a6` | 改 6 处：①prompts.py evidence id 示例 `evidence-001` → `technical-001`（实测 `build_evidence` 生成格式）；②tool_registry docstring "33 个工具" → 40（实测 `len(ALL_TOOLS)`）；③补 Critic 内部 `verdict="error"` 安全终止语义（T11）到两份文档；④README 的 `~/.mosaic/memory/{daily,anomalies,research}/` 三个目录**P5 后已不存在**，改 `memory/memory.db` + 四张表（architecture 表清单漏 anomalies、research_records 写成 research，一并更正）；⑤补证据上限 80（T6）；⑥补 `mcp>=2,<3`（D1）。T24 的域过滤注释已与实现一致，只核对未改。新增 `test_docs_contract.py` 10 条跨代码/文档交叉断言，反向验证（四个文件全 checkout 回旧状态）**10 条全红**。⚠️ 查实一条未擅自改代码的移交项：见下 "S8 执行记录" |
 | **T28 finding 结构用例** | ✅ 完成（S6） | `efef499` | 旧 fake 是非 awaitable 的 lambda → 走异常降级分支 failed=True，isinstance 断言照过（探针证实）；改 MethodType 绑定 async fake，断言 `failed is False` / `tools_used == []` / `errors == []`，去 skip；反向验证（fake 改回 lambda）必红 |
 | **T29 reasoning 副本** | ✅ 完成（S6） | `5495702` | 删 `_ensure_lists` 副本（把非法 confidence 置 medium、与生产置 low 相反），复用 `_stub_reasoning_engine` 真调 `reason()`，6 条用例全部走生产后处理；`defaults_to_low` 断言 low；反向验证（生产兜底改回 medium）必红 |
 | **T30 budget 守卫 + D4** | ✅ 完成（S6） | `3a890a1` | ①显式 budget 优先（None 才回退 len），budget=0 = 不执行；②`max_tool_calls` 与 budget 取 min 成为真实上限（此前只有 /health 消费点）；③**语义裁决：budget 计真实执行次数**——`budget -= 1` 移到 execute 之前，跳过的调用（unknown key/缺 symbol/T27 重复）不消耗预算（探针实测旧实现 budget=n 可能只执行 1 次）；删恒真 co_varnames 断言，新增 6 条走真实 `_execute_tools` 的用例（实例级 RecordingRuntime），旧实现下 4 条必红 |
@@ -606,6 +613,89 @@
   另移交 S8/T36 一条线索：`app/agent/prompts.py:78` 与 `:89` 的 evidence id 示例仍是 `evidence-001`，
   与生产实际格式不一致。
 
+**S8 执行记录（打包与收尾，S8 会话自记，2026-10-05；待主 Agent 验收）**
+
+- **开工基线自查**：`git status --porcelain` 为空、`git log --oneline -6` 与 §0.4 "S7 验收复核记录"
+  对得上。**基线 HEAD 实为 `d47d398`**（开工指令写的 `2b4ea4a` 是 S7 收尾 chore，其后还有一条
+  §0.4 验收记录 chore），无未提交残留，S1–S7 结论未被触碰。
+- **顺序**：T37 → T36 → 最终全量验收，未调换（T37 动 `pyproject.toml`，在所有代码改动之后；
+  T36 文档按 T37 之后的真实状态写）。
+- **T37（`19861fd`）**
+  - 复现（pip 本体，非推断）：`pip install -e . --no-deps --dry-run` →
+    `error: Multiple top-level packages discovered in a flat-layout: ['app', 'memory'].` +
+    `ERROR: Failed to build 'file:///D:/Mosaic' when getting requirements to build editable`。
+    **证伪实验（已实跑，`.tmp/verify_t37_falsify.py`）**：把**修复前**的 `pyproject.toml`
+    （`git show HEAD~2:pyproject.toml`，确认无 `[tool.setuptools]` 段）的
+    `[project].dependencies` 整段清空（`optional-dependencies` 段逐字不动、`tomllib` 验证仍是
+    合法 TOML）后复跑 → **两条报错一字不变** → 失败与 `mcp>=2,<3` 无关，是仓库既有问题。
+    ⚠️ **两个坑（下次复现 T37 必看）**：
+    ① **必须加 `--no-cache-dir`**。pip 会缓存本地目录构建出的 wheel，不加就直接复用上一次
+    的成功产物、根本不重新构建——我第一版探针就因此测出"错误消失了"的假结论。
+    ② 用 `.*?\]` 截依赖列表会先撞上 `"uvicorn[standard]"` 的方括号，把 `pyproject.toml`
+    改成非法 TOML，报错变成 `TOMLDecodeError`（与本题无关）。结束方括号必须要求独占一行（`^]`）。
+    PowerShell 的 `Set-Content -Encoding UTF8` 还会写 BOM，同样会让 TOML 解析失败。
+  - 根因：flat-layout 多顶层目录（`app` 代码包 + `memory` 简报 JSON 数据目录，被 PEP 420 当
+    命名空间包），`[build-system]` 在但 `[tool.setuptools]` 缺。
+  - 改：`[tool.setuptools.packages.find] include=["app*"] exclude=["memory*","tests*","scripts*"]`；
+    `[tool.setuptools.package-data] "app.web"=["index.html"]`。
+  - **非 editable 场景已实测确认需要 package-data**（计划书里是"顺手确认"，这里做实了）：
+    `pip wheel . --no-deps` 实测产物 **59 个文件、含 `app/web/index.html`、`memory` 零条目**。
+    `app/web/__init__.py` 存在（`app.web` 确为包）；`app` 下 12 个子目录全部有 `__init__.py`，
+    都被 `app*` 覆盖。
+  - 验收证据：`pip install -e ".[dev]"` **实跑成功**（`Successfully installed
+    mosaic-market-intelligence-0.1.0`）；`importlib.metadata.version("mosaic-market-intelligence")`
+    = `0.1.0`；`import app` → `D:\Mosaic\app\__init__.py`、`import memory` → 仍是
+    `_NamespacePath(['D:\Mosaic\memory'])`（行为不变）；`app.main.INDEX.is_file()` = True。
+  - 必补测试 `tests/test_packaging_config.py` 4 条；**反向验证：`git checkout -- pyproject.toml`
+    退回旧状态 → 4 条全红**（`4 failed`），还原后 `4 passed`。
+  - 未提交 `mosaic_market_intelligence.egg-info/`（`.gitignore` 第 6 行 `*.egg-info/` 已覆盖，
+    `git status` 全程未出现）；未改 `.github/workflows/ci.yml`；未拆 `src/` 布局。
+- **T36（`9ebd6a6`）**
+  - 改的 6 处都是**先测代码真值再改文档**，不是凭印象：evidence id 用真调
+    `build_evidence(id_prefix="technical")` 得到 `technical-001`；工具数用 `len(ALL_TOOLS)`=40
+    （technical 20 / moneyflow 10 / fundamental 7 / cross 4 / crypto 9 / commodities 3 /
+    hk_stock 4 / a_share 18 / unknown 2）；四张表与落盘路径用 `storage.py` 源码核对；
+    mcp 区间用 `tomllib` 读 `pyproject.toml` + 读 `requirements.txt` 双向核对。
+  - 计划书点名的四处全局承诺，核对结论：
+    | 承诺 | 结论 | 出处 |
+    |---|---|---|
+    | `has_evidence`（T15 降级不短路） | ✅ 文档已有且与代码一致，本次未改 | `docs/architecture.md:53`、`:152`、`README.md:29` ↔ `app/agent/evidence_gate.py` + reasoning 消费 `state["gate"]` |
+    | `anomalies`（D3 代码填） | ⚠️ 文档**没有**这条；已补。README 原写的 `~/.mosaic/memory/anomalies/` 目录是另一回事且早已不存在 | 补在 `README.md` Anomaly Radar 段 + `docs/architecture.md` 设计约定 7 ↔ `app/models/response.py:84-98`（`detect_anomalies` 覆盖写 `report["anomalies"]`，失败进 `errors`） |
+    | 证据条数上限（T6） | ⚠️ 文档**完全没写**；已补 80 条 + 截断 note 语义 | `README.md` 关键设计 + `docs/architecture.md` 设计约定 6 ↔ `app/research/evidence.py:22` `_MAX_EVIDENCE_ITEMS = 80`、`:381` 统一截断 |
+    | MCP 模式与版本区间（D1） | ⚠️ 文档只说"默认走 MCP"，**没写版本区间**；已补 `mcp>=2,<3` | `README.md` 环境要求 + `docs/architecture.md` §7 ↔ `pyproject.toml:14` 与 `requirements.txt:8` |
+  - `app/gateway/tool_registry.py` 域过滤注释：**已与实现一致**（T24 修完的形态——health 始终附加、
+    无 `or ALL_TOOLS` 静默回退、空域 warning），按计划书要求"核对即可"，本次未改逻辑，只改了
+    docstring 里的工具总数 33→40。
+  - 必补测试 `tests/test_docs_contract.py` 10 条（跨代码/文档交叉断言，不是文本 grep 摆设：
+    真调 `build_evidence`、真 `import ALL_TOOLS`、真 `tomllib` 读清单）；**反向验证：四个文件
+    全部 `git checkout` 回旧状态 → 10 条全红**（`10 failed`），还原后 `10 passed`。
+- **⚠️ 移交主 Agent 裁决的 1 条（本次未擅自改代码）**
+  - README 原承诺："用户问'今天和昨天有什么不同？'时，**Reasoning Engine 会自动注入最近 7 天的
+    Market State 上下文**"。全仓 grep 查实：`MarketMemory.get_context_for_question()`
+    （`app/memory/storage.py:353`）**只有 `tests/test_market_memory.py` 在调用，没有任何生产调用方**；
+    `app/research/reasoning.py` 里没有任何 memory / daily_state 引用。该能力目前只在
+    `app/scheduler/briefs.py` 的晨报/晚报模板里成立（`get_recent_states(days=7)`）。
+  - 这是又一条"文档承诺、代码没有"。**本次只把文档改准**（写明"尚未接进 Reasoning 链路"、
+    属待接入项），**没有接线**——补接线是改运行时行为（要决定注入到哪个 prompt、怎么控 token、
+    什么时候注入），超出 T36 文档同步范围，且按 §0.1 规则 7/9 不该由本段自行扩权。
+  - 请主 Agent 裁决：立新任务接线，还是维持"文档已注明未接入"的现状。
+- **最终全量验收（S8 收尾，2026-10-05 实测）**
+  - `ruff check --no-cache app/ tests/` → **All checks passed!**
+  - `ruff format --check --no-cache app/ tests/` → **106 files already formatted**
+  - `pytest -q`（默认 `mcp` 模式）→ **520 passed, 1 warning in 10.67s**
+  - `MARKET_GATEWAY_MODE=http pytest -q` → **520 passed, 1 warning in 9.54s**
+  - 数字账：506 → T37 `test_packaging_config.py` +4 → 510 → T36 `test_docs_contract.py` +10
+    → **520**，步数与文件对得上。
+  - 0 skipped 独立核查（不采信汇总行）：
+    `git grep -nE "pytest\.skip|pytest\.xfail|@pytest\.mark\.(skip|xfail|skipif)" -- tests/ app/`
+    → **0 命中**。1 warning 是 starlette TestClient 的第三方 anyio 弃用提示，与 S8 无关。
+  - CI 安装步骤（`pip install -e ".[dev]"`）在**最终提交状态**复跑一次：
+    `Successfully built mosaic-market-intelligence` → `Successfully installed
+    mosaic-market-intelligence-0.1.0`；`version()=0.1.0`；`import app` / `import memory` 行为不变。
+  - `git status --porcelain` 干净；`.tmp/` 里的探针与备份未被提交（`.gitignore` 第 43 行覆盖）。
+- **对 S8 之外的生效项**：`tests/test_conventions.py` 两条机械检查对本次两个新测试文件同样生效
+  （两个文件都写了模块 docstring 声明 mock 范围；都没有整体替换节点 `__call__`），已随全量一起跑过。
+
 ---
 
 ### 0.5 执行分段与会话交接（**每个子 agent 只做一段**）
@@ -624,7 +714,7 @@
 | **S5 请求生命周期** | ✅ **已完成并验收**：T24b（一行） → T21 → T26 → T25 | — | 见 §0.4 "S5 验收复核记录"（T25 的**浏览器手工验证已通过**，2026-10-05） | `492 passed + 2 skipped`（双模式）；5 个提交；**无新立任务** |
 | **S6 测试有效性（上）** | ✅ **已完成并验收**：T28 → T29 → T30（含 D4 budget）→ T31 | — | 见 §0.4 "S6 验收复核记录" | `499 passed + 0 skipped`（双模式）；4 个提交；**无新立任务** |
 | **S7 测试有效性（下）** | ✅ **已完成并验收**：T32 → T33 → T34（不含注册表条目，已并入 S4 的 T24）→ T35 → T12b | — | 见 §0.4 "S7 执行记录" + "S7 验收复核记录"（T33 的 A 方向条数已更正） | `506 passed + 0 skipped`（双模式）；5 个任务提交 + 2 个 §0.4 chore；**无新立任务** |
-| **S8 打包与收尾** | T37 → T36 → 最终全量验收 | §0 + §5 + §3 的 T37 | T37（打包/CI）会动 `pyproject.toml`，必须在所有代码改动之后；T36 文档同步放最后 | 全绿；`§0.4` 定稿；CI 安装步骤可通过 |
+| **S8 打包与收尾** | ✅ **执行方完成，待主 Agent 验收**：T37 → T36 → 最终全量验收 | — | 见 §0.4 "S8 执行记录"（含 1 条移交主 Agent 裁决项：`get_context_for_question` 无生产调用方） | `520 passed + 0 skipped`（双模式）；`pip install -e ".[dev]"` 最终状态实跑通过；2 个任务提交 + 1 个 §0.4 chore；**1 条待裁决** |
 
 **硬性顺序约束（不要打乱）**：
 1. **S1 必须最先**（✅ 已完成并验收）；S2 ✅、S3 ✅、S4 ✅、S5 ✅。
