@@ -75,7 +75,9 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 "why": 数组，每个元素是字符串（原因/解释）
 
 "evidence": 数组，每个元素是一个完整证据对象，包含：
-   - id: 唯一标识符，格式 "evidence-001", "evidence-002" 等
+   - id: 唯一标识符，格式 "technical-001", "fundamental-002" 等（前缀是产出该证据的
+     analyst category，编号三位从 001 起；这条是最终 evidence 账本的 id，由代码
+     build_evidence(id_prefix=<analyst category>) 生成）
    - source_tool: 数据来源工具名
    - domain: 市场域字符串
    - metric: 指标名称
@@ -86,7 +88,7 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
    - partial: 是否 partial 数据（true/false）
    - note: 备注说明（可选）
 
-例如：[{{"id":"evidence-001","source_tool":"public_sentiment_ashare_master_sentiment_get","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
+例如：[{{"id":"technical-001","source_tool":"public_sentiment_ashare_master_sentiment_get","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
 
 "strong_areas": 强势方向列表（What's Moving）
 

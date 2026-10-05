@@ -33,12 +33,14 @@ Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
                         Critic (LLM 结论-证据审计)
                           pass │  revise / research_more（≤ critic_max_revisions 轮）
                            ↓   └──────► 回 Reasoning 重写 / 回 Supervisor 补研究
+                          error（仅审计自身失败时内部产生 → 安全终止）
                          END
 ```
 
 关键设计：
 - **证据账本是唯一契约**：各 analyst 只往 `state.evidence` 追加 Evidence 条目，不写结论；结论由 Reasoning 统一产出
-- **Critic 闭环**：证据不足时打回 Reasoning 重写（revise）或回 Supervisor 补充研究（research_more），最多 N 轮
+- **证据条数硬上限 80**：`build_evidence` 统一截断，超出时按来源保留最新 80 条，并在最后一条 `note` 注明"截断 N 条"
+- **Critic 闭环**：证据不足时打回 Reasoning 重写（revise）或回 Supervisor 补充研究（research_more），最多 N 轮；审计自身失败时产出内部 `verdict="error"` 安全终止（不当成 pass，也不伪造 research_more）
 - **可选节点**：news / sentiment analyst 由配置开关控制，关闭时行为与三 analyst 基线完全一致
 
 ## 支持的市场域
@@ -109,12 +111,20 @@ Researching...
 
 ### Market Memory（PRD §38-39）
 
-持久化市场记忆，支持跨日历史比较：
-- `~/.mosaic/memory/daily/` — 每日 Market State 快照
-- `~/.mosaic/memory/anomalies/` — 异常事件记录
-- `~/.mosaic/memory/research/` — 用户研究历史记录
+持久化市场记忆，支持跨日历史比较。全部落在**项目内单个 SQLite 文件** `memory/memory.db`
+（四张表：`daily_states` / `anomalies` / `research_records` / `conversations`）：
+- `daily_states` — 每日 Market State 快照
+- `anomalies` — 持久化的历史异常事件（`record_anomaly`）
+- `research_records` — 用户研究历史记录
+- `conversations` — 多轮对话历史
 
-用户问"今天和昨天有什么不同？"时，Reasoning Engine 会自动注入最近 7 天的 Market State 上下文。
+> 早期版本写的是 `~/.mosaic/memory/{daily,anomalies,research}/` 三个目录，**P5 已迁到
+> 项目内 SQLite**，那三个路径现在不存在。
+
+跨日比较的快照读取器是 `MarketMemory.get_context_for_question(question, days_back=7)`
+（取最近 7 天 Market State 摘要）。**当前它只被简报模板与测试调用，尚未接进
+Reasoning 链路**——也就是说"问'今天和昨天有什么不同'时 Reasoning 自动注入 7 天上下文"
+目前只在简报里成立，交互式提问还没有。属于待接入项。
 
 ### Anomaly Radar（PRD §29-30）
 
@@ -123,6 +133,11 @@ Researching...
 - **A 股**: 涨停数量异常扩张/收缩、市场宽度极差、情绪骤降
 - 分级：Low / Medium / High / Critical
 - 每条异常包含指标、正常范围、可能含义、当前状态
+
+报告里的 `anomalies` 字段**由代码填充**：`build_response_from_state` 用 `detect_anomalies`
+现算后覆盖模型输出（模型自己填的也会被覆盖，避免双写），同步与 SSE 两条路径共用这个组装点。
+检测失败不静默——报告照常产出，但原因会出现在响应的 `errors` 里。
+（与上面 `anomalies` 表不是一回事：表里存的是被持久化的历史异常事件。）
 
 ### Daily Briefs（PRD §35-37）
 
@@ -182,6 +197,9 @@ source .venv/bin/activate
 
 pip install -e ".[dev]"
 ```
+
+MCP 客户端固定在 `mcp>=2,<3`（`pyproject.toml` 与 `requirements.txt` 同一区间），
+装其它版本会在运行时踩到协议不兼容。
 
 ### 配置 LLM
 

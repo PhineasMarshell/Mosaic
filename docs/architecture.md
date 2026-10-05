@@ -52,15 +52,17 @@ iiix mcp serve market-gateway
 | **SentimentAnalyst** | 工具执行 + LLM | 评论爬取 + 清洗 + 聚合 + LLM 打分，开关控制，默认关闭（依赖评论 MCP） |
 | **Evidence Gate** | 纯代码 | 检查 ToolResult 状态（success/partial/error），判定证据是否具备基本可用性；`has_evidence=False` 时 Reasoning **降级不短路**：报告照常产出，但强制 confidence=low + data_caveats + errors（T15/D2） |
 | **Reasoning** | LLM | 汇总所有 Evidence + findings，生成结构化 MarketIntelligence 报告 |
-| **Critic** | LLM | 审计报告结论是否有证据支撑，输出 pass/revise/research_more |
+| **Critic** | LLM | 审计报告结论是否有证据支撑，输出 pass/revise/research_more；**另有节点内部产生的 `error`**（T11）：模型审计自身失败（LLM 超时 / 输出无法解析）或返回无法识别的 verdict 时，节点产出 `verdict="error"` + `errors`，路由层据此**安全终止**，既不当成 pass，也不伪造 research_more 再烧一到两轮完整工具 + LLM。`error` 不允许模型自己返回 |
 
 ### 关键设计约定
 
 1. **证据账本是唯一契约**：各 analyst 只往 `state.evidence` 追加 Evidence 条目（来源工具、指标、数值、时间戳），不写结论；结论由 Reasoning 统一产出。
 2. **节点函数兼容 Pydantic 与 dict 两种 state**：LangGraph v1.x 可能传入 ResearchState 或 dict，所有节点第一行统一 `model_dump()` 归一化。
 3. **新增字段走返回字典写入**：禁止直接修改 state 对象，所有写入通过节点返回值 `{"field": value}` 完成。
-4. **Critic 闭环**：revise 时回 Reasoning 重写（≤ `critic_max_revisions` 轮）；research_more 时带 missing_points 回 Supervisor 补充研究（最多 1 次）。
+4. **Critic 闭环**：revise 时回 Reasoning 重写（≤ `critic_max_revisions` 轮）；research_more 时带 missing_points 回 Supervisor 补充研究（最多 1 次）。审计自身失败 → 内部 `verdict="error"` 安全终止（见上表 T11）。
 5. **可选节点**：news / sentiment analyst 由配置开关控制，关闭时对应 category 的工具归入 technical，行为与三 analyst 基线完全一致。
+6. **证据条数硬上限 80**（T6）：`build_evidence` 最后一步统一截断，超出时按来源保留最新 80 条，并在保留的最后一条 `note` 里写明"截断 N 条"；报告因此不会因证据过载而膨胀。
+7. **报告里的 `anomalies` 字段由代码填**（D3）：`build_response_from_state` 用 `detect_anomalies` 计算后覆盖模型输出（模型填了也会被覆盖，避免双写）；检测失败不静默——报告照常产出但往 `errors` 追加原因。它与存储层 `anomalies` 表（`record_anomaly` 持久化的历史异常事件）是两回事。
 
 ## 3. 配置项
 
@@ -155,6 +157,8 @@ iiix mcp serve market-gateway
     → pass: END
     → revise: 回 Reasoning 重写（≤ N 轮）
     → research_more: 回 Supervisor 补充研究（最多 1 次）
+    → error（仅节点内部产生，T11）: 审计自身失败 / verdict 无法识别 → 写 errors 并安全终止
+  → anomalies: 代码用 detect_anomalies 覆盖 report["anomalies"]（D3，不依赖模型输出）
   → 落库：research 记录 + daily_state 快照
 ```
 
@@ -162,10 +166,15 @@ iiix mcp serve market-gateway
 
 | 数据 | 位置 | 格式 |
 |------|------|------|
-| Market Memory | `memory/memory.db` | SQLite（daily_states / research / conversations） |
+| Market Memory | `memory/memory.db` | SQLite，四张表：`daily_states` / `anomalies` / `research_records` / `conversations` |
 | 晨间简报 | `memory/morning/YYYY-MM-DD.json` | JSON |
 | 晚间简报 | `memory/evening/YYYY-MM-DD.json` | JSON |
-| 工具缓存 | 内存（TTL） | `market_cache` |
+| 工具缓存 | 内存（TTL + LRU，上限 512 条） | `market_cache` |
+
+> 早期版本把记忆写进 `~/.mosaic/memory/{daily,anomalies,research}/` 三个目录，
+> **P5 已迁到项目内单个 SQLite 文件**；代码与本文档均以 `memory/memory.db` 为准。
+> 注意区分两个 anomalies：报告响应里的 `anomalies` 字段是 `detect_anomalies` 每次现算的
+> （D3，代码填充），`anomalies` 表才是被 `record_anomaly` 持久化的历史异常事件。
 
 ## 7. MCP 与 HTTP API
 
@@ -178,6 +187,9 @@ iiix mcp serve market-gateway
 ```
 
 Mosaic 不重新实现 Market Gateway，也不把 API Key 写进代码。
+
+MCP 客户端依赖 `mcp>=2,<3`（D1，已与 `pyproject.toml` / `requirements.txt` 对齐）；
+`pip install -e ".[dev]"` 会装上该区间内的版本。
 
 HTTP API 可以作为备选数据通道（`MARKET_GATEWAY_MODE=http`）。
 
