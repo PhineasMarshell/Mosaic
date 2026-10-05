@@ -741,6 +741,15 @@
   无调用点；`hasattr(MarketMemory, "get_context_for_question")` = False、
   `hasattr(..., "get_recent_states")` = True；跨日**快照读取**的覆盖未丢（`TestRecentStates` 的 4 条
   `get_recent_states` 用例仍在）。
+- **验收后补正（仓库主人复查 README 时发现的漏网项，2026-10-05，提交 `1f47e8d`）**：主 Agent 这次
+  验收只 grep 了方法名 `get_context_for_question`，漏掉 README 目录树里**不写方法名、只写能力的**
+  同源残留——`README.md:393` 原写「reasoning.py # 推理引擎（注入 Market Memory 上下文）」。
+  逐行核对真实链路：`app/graph/nodes/supervisor.py:76` 读对话历史 →
+  `app/graph/nodes/reasoning.py:84` 传 revision context → `app/research/reasoning.py:188-213`
+  把各 analyst findings 拼在 history_context 前 → 填进 `app/agent/prompts.py:59` 的
+  `{history_context}`。即 Reasoning 拿到的是**对话历史 + analyst 中间结论**，
+  **没有任何 Market Memory / daily_state 上下文**。已把该行改为「推理引擎（注入对话历史 +
+  各 analyst 中间结论）」。**教训：删能力后要按"能力描述"而不只是"符号名"复查文档。**
 - **最终状态（本次验收后的实测）**：`ruff check` 全绿、`ruff format --check` 106 files、
   mcp 与 http 双模式 **517 passed + 0 skipped**（520 − 3 条被删用例）；`tests/test_docs_contract.py`
   10 条无回退（含 mcp 区间、证据上限、四张表、旧路径不得出现等交叉断言）。

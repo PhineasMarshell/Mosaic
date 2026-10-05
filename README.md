@@ -390,7 +390,7 @@ Mosaic/
 │   │   └── stock_codes.py     # 股票代码映射表
 │   │
 │   ├── research/
-│   │   ├── reasoning.py       # 推理引擎（注入 Market Memory 上下文）
+│   │   ├── reasoning.py       # 推理引擎（注入对话历史 + 各 analyst 中间结论）
 │   │   ├── evidence.py        # 证据构建
 │   │   ├── news_search.py     # DDGS 新闻搜索
 │   │   └── hk_northbound.py   # 港股通北向资金（东财直连，不走 Gateway）
