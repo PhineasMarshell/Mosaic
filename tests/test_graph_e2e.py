@@ -159,9 +159,15 @@ async def test_stream_emits_node_events(graph):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="P3 特性 — MarketAnalystNode 依赖 by_category")
 async def test_analysis_finding_structure():
-    """finding 的结构应符合 spec：{analyst, digest, tools_used, failed}。"""
+    """finding 的结构应符合 spec：{analyst, digest, tools_used, failed}，且**成功分支** failed=False。
+
+    T28：旧实现的 fake 是非 awaitable 的 lambda（`lambda *a, **k: []`）→
+    `await` 抛 TypeError 被 base.py 的兜底 except 吞掉 → 走异常降级分支
+    failed=True，而断言只有 isinstance(...)——失败分支也"通过"，成功分支
+    从未被覆盖（假阳性，已用探针证实）。现在 fake 必须可 await，
+    并断言 failed is False / errors == []（防止再次静默滑进降级分支）。
+    """
     from contextlib import asynccontextmanager
 
     from app.graph.nodes.analysts.base import MarketAnalystNode
@@ -186,11 +192,16 @@ async def test_analysis_finding_structure():
     node.category = "test"
     node.settings = Settings()
     node._runtime = _NoGatewayRuntime()
-    node._execute_tools = lambda *a, **k: ([])
+
+    async def _fake_execute_tools(self, state, sigs):
+        return []
+
+    node._execute_tools = types.MethodType(_fake_execute_tools, node)
 
     result = await node({})
     f = result["findings"][0]
     assert f["analyst"] == "test"
     assert isinstance(f["digest"], str)
-    assert isinstance(f["tools_used"], list)
-    assert isinstance(f["failed"], bool)
+    assert f["tools_used"] == []
+    assert f["failed"] is False, f"应走成功分支，实际走了降级分支: {result}"
+    assert result["errors"] == []
