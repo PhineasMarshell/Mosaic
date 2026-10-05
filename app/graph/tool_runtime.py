@@ -13,6 +13,7 @@ analyst 节点通过此层执行分配给自己的工具。
 
 import logging
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 
 from app.cache import _make_cache_key, _resolve_ttl, market_cache
 from app.config import Settings
@@ -25,6 +26,13 @@ from app.research.news_search import extract_news_entries as _extract_news_entri
 from app.research.news_search import search_news as _search_news
 
 logger = logging.getLogger(__name__)
+
+# T18c：会话状态必须"每请求一份"。单例图的节点实例（及其 ToolRuntime）被并发请求共享，
+# 会话状态放实例属性上会串台——第二个请求进入 gateway_session 被当成"嵌套会话"复用
+# 第一个请求的客户端，先结束者关闭客户端后，后到者在途的调用随即失败。
+# ContextVar 语义天然"每个 asyncio task 一份"：asyncio.create_task 复制当前 context，
+# 子任务看到会话、兄弟任务看不到。gateway/available 成组放 dict，一次 set 成组读写。
+_session: ContextVar[dict | None] = ContextVar("gateway_session", default=None)
 
 
 def _normalize_hk_entries(hk_data: dict) -> list[NormalizedDatum]:
@@ -53,15 +61,11 @@ class ToolRuntime:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        # T18：analyst 运行级别复用的 Gateway 客户端（gateway_session 打开期间非 None）。
+        # T18：analyst 运行级别复用的 Gateway 客户端（gateway_session 打开期间按需建连）。
         # 旧实现每个工具调用都 async with 新建客户端——MCP 模式下等于每次 spawn
         # 子进程 + 握手 + list_tools，一轮 12 个工具就是 12 次。
-        self._gateway = None
-        self._available_tools: set[str] | None = None
-        # T18b：gateway_session 只标记"会话打开"，连接由 _ensure_gateway 按需建立。
-        # 旧实现在会话进入时就连接——只用内部工具（news_search / hk）的 analyst
-        # 也会白付一次 spawn + 握手，且网关不可用时整个 analyst 直接失败。
-        self._in_session = False
+        # T18c：会话状态放在模块级 ContextVar `_session`（每 asyncio task 一份），
+        # 不要再往 self.* 上放会话状态——单例图的节点实例被并发请求共享。
 
     @asynccontextmanager
     async def gateway_session(self):
@@ -70,44 +74,47 @@ class ToolRuntime:
         用法：``async with runtime.gateway_session(): ... execute(...) ...``。
         进入时**只标记会话**、不连接；首个需要 Gateway 的工具调用触发
         ``_ensure_gateway`` 建连并解析可用工具集。只执行内部工具的 analyst
-        因此完全不碰 Gateway。退出（含异常）时若已建连则关闭。可重入。
+        因此完全不碰 Gateway。退出（含异常）时若已建连则关闭。可重入
+        （同一 task 内嵌套开两次会话 → 复用，由外层负责关闭）。
         未在会话内直接调 execute() 仍走旧的逐次新建路径（兼容单工具调用方）。
         """
-        if self._in_session:  # 可重入
-            yield self._gateway
+        if _session.get() is not None:  # 同一 task 内嵌套 → 复用
+            yield
             return
-        self._in_session = True
+        token = _session.set({"gateway": None, "available": None})
         try:
-            yield self._gateway  # 进入时是 None，由 _ensure_gateway 按需建立
+            yield
         finally:
-            self._in_session = False
-            await self._close_gateway()
+            session = _session.get()
+            _session.reset(token)
+            if session is not None and session["gateway"] is not None:
+                await self._close_gateway(session)
 
-    async def _ensure_gateway(self):
-        """按需创建并连接 Gateway 客户端，解析可用工具集。
+    async def _ensure_gateway(self, session: dict):
+        """按需创建并连接 Gateway 客户端，解析可用工具集（状态存入 session dict）。
 
-        ``__aenter__`` 失败时把 ``self._gateway`` 复位为 None 并把异常抛出去，
+        ``__aenter__`` 失败时把 ``session["gateway"]`` 复位为 None 并把异常抛出去，
         不吞成默认值；失败路径由 T12 的 ``mcp_client.close()`` 自清理。
         """
-        if self._gateway is None:
+        if session["gateway"] is None:
             gateway = self._gateway_class()(self.settings)
-            self._gateway = gateway
+            session["gateway"] = gateway
             try:
                 await gateway.__aenter__()
             except Exception:
-                self._gateway = None
+                session["gateway"] = None
                 raise
             if self.settings.market_gateway_mode.lower() == "mcp":
-                self._available_tools = {tool.name for tool in gateway.tools}
+                session["available"] = {tool.name for tool in gateway.tools}
             else:
-                self._available_tools = {t.tool_name for t in self._http_allowed_tools()}
-        return self._gateway
+                session["available"] = {t.tool_name for t in self._http_allowed_tools()}
+        return session["gateway"]
 
-    async def _close_gateway(self):
-        """关闭按需建立的 Gateway 客户端（未建连则无事发生）。"""
-        gateway = self._gateway
-        self._gateway = None
-        self._available_tools = None
+    async def _close_gateway(self, session: dict):
+        """关闭本请求会话内按需建立的 Gateway 客户端（未建连则无事发生）。"""
+        gateway = session["gateway"]
+        session["gateway"] = None
+        session["available"] = None
         if gateway is None:
             return
         try:
@@ -209,10 +216,12 @@ class ToolRuntime:
         if getattr(meta, "http_method", None) == "INTERNAL":
             return await self._execute_internal(tool_name, arguments)
 
-        # T18：gateway_session 打开期间复用同一个客户端；T18b：按需建连
-        if self._in_session:
-            gateway = await self._ensure_gateway()
-            return await self._call_gateway(gateway, self._available_tools, tool_name, arguments)
+        # T18：gateway_session 打开期间复用同一个客户端；T18b：按需建连；
+        # T18c：会话状态在 ContextVar 里，每请求一份
+        session = _session.get()
+        if session is not None:
+            gateway = await self._ensure_gateway(session)
+            return await self._call_gateway(gateway, session["available"], tool_name, arguments)
 
         gateway_cls = self._gateway_class()  # 会话外：保持旧的逐次新建路径
         async with gateway_cls(self.settings) as gateway:
