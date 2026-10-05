@@ -70,15 +70,15 @@
 
 ### 0.4 当前进展
 
-> **当前 HEAD：`0965da6`（T12 收尾）。** 修红段（S1）已完成：**421 passed + 2 skipped，`mcp` 与 `http`
-> 两种 gateway 模式下全量测试均全绿**（2026-10-05，S1 会话实测）。ruff check / ruff format --check 全绿。
-> 行号基准 = `44c307f`（S1 的改动未影响 §2 以后任务的锚点；T18b 重写了 `tool_runtime.py` 的
-> `gateway_session` / `_do_execute`，T27 动手时以锚点片段 grep 为准）。
-> 备注：S1 执行会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在该会话不出现；
-> **验收者已在自己的受限会话（spawn 被拒）里复跑，确认那 6 条连带红同样消失**（详见下面的"S1 验收复核记录"）。
-> `pip install -e .` 在本仓库因 flat-layout 多顶层包（app + memory）**本来就失败**（与 T12 的依赖行无关），
-> 验收者已用系统 setuptools 81 直接复现该条件 → 另立 **T37**；T12 的版本区间验收以
-> "已装 mcp 2.1.1 满足 `>=2,<3` + test_data_integrity.py 全绿"代替（`requirements.txt` 漏改 → **T12b**）。
+> **当前 HEAD：`7dce255`（S2 收尾）。** S1（修红）+ S2（T18c/T19/T27/T23）均已完成：
+> **436 passed + 2 skipped，`mcp` 与 `http` 两种 gateway 模式下全量测试均全绿**（2026-10-05，S2 会话实测）。
+> ruff check / ruff format --check 全绿。
+> 行号基准 = `44c307f`（S1/S2 的改动未影响 §3 以后任务的锚点；但 `tool_runtime.py` 的
+> `execute` / `_do_execute` / `_call_gateway` 已带 `deadline` 参数、会话状态在模块级 ContextVar `_session`，
+> T20/T15 等动手时仍以锚点片段 grep 为准）。
+> 备注：S1/S2 执行会话是**完全访问**会话（MCP 子进程可 spawn），§1.2 所述"mcp 模式下 6 条连带红"在这些会话不出现；
+> 验收者已在受限会话复跑确认连带红消失（见"S1 验收复核记录"）。
+> `pip install -e .` 的 flat-layout 失败 = 既有问题（**T37**）；`requirements.txt` 漏改 = **T12b**。
 
 | 任务 | 状态 | 提交 | 备注 |
 |---|---|---|---|
@@ -88,9 +88,12 @@
 | **T5b truncate note 文案** | ✅ 已实现并**验收通过** | `7e87c6c` | 实测 250 条 → 保留 201（200+说明条），`status=partial` |
 | **T16 回边 reducer 去重** | ✅ 已实现并**验收通过** | `df757a5` | 已独立复现"改回 `add` 必红" |
 | **T17 news_search TTL** | ✅ 产品修复 + 测试已修（T17T） | `2bf11b7` / `b1b06fa` | patch 目标改为模块全局 `_search_news`，离线可跑；反向验证（改回无 settings 版 TTL 解析）必红 |
-| **T18 analyst 级复用 Gateway** | ✅ 完成并验收（T18b 修掉急切连接 + T18T 修 stub） | `44c307f` / `5647a4a` / `f2e4da1` | `gateway_session` 只标记会话、按需建连；3 条新用例含"建连挪回进入点必红"的反向防线 |
-| **T12 收尾（D1）** | ✅ 完成（但漏了 `requirements.txt`，见 **T12b**） | `0965da6` | `mcp>=2,<3`；已装 2.1.1；pip install -e . 的 flat-layout 失败是既有问题（见 **T37**，已被验收者直接复现） |
-| **T19–T27** | ⬜ 未开始 | — | 下一段 S2：**T18c**（新发现的并发缺陷）→ T19 → T27 → T23 |
+| **T18 analyst 级复用 Gateway** | ✅ 完成并验收（T18b 按需连接 + T18T stub + **T18c 每请求会话**） | `44c307f` / `5647a4a` / `f2e4da1` / `f3b76e4` | 会话状态在模块级 `ContextVar _session`；并发复现脚本 `实例数 1→2`、B 的在途调用不再被关；反向验证（换回实例属性实现）①②必红 |
+| **T12 收尾（D1）** | ✅ 完成（但漏了 `requirements.txt`，见 **T12b**） | `0965da6` | `mcp>=2,<3`；已装 2.1.1；pip install -e . 的 flat-layout 失败是既有问题（见 **T37**） |
+| **T19 缓存** | ✅ 完成 | `bc4849d` | `ttl=0` 立即过期（`ttl or` 反向验证必红）；`max_entries=512` + LRU 淘汰 + set 顺带清理过期 + stats 加 `max_entries`/`evictions` |
+| **T27 去重** | ✅ 完成 | `e6a04e5` | 同签名 3 次调用真实网关 2→1 次；重复调用返回 `partial` + note；route 层 seen 集合提前跳过；stash 旧实现 3 条全红 |
+| **T23 重试预算** | ✅ 完成 | `f119f51` + `7dce255` | deadline 全链路下发（base 均分 → execute → gateway.call）；忽略 deadline 反向验证 3/4 条红；测试 stub 的 call/execute 签名已补 `deadline=None` |
+| **T20–T22、T24–T26、T15** | ⬜ 未开始 | — | 下一段 S3：T22 → T20（含 anomalies）→ T15 |
 | **T12b** requirements 同步 | ⬜ 未做（S7） | — | `requirements.txt:8` 仍是 `mcp>=1.12` |
 | **T37** 打包/CI flat-layout | ⬜ 未做（S8） | — | 已被验收者直接复现：flat-layout 发现 `app` + `memory` 两个顶层包 |
 | **T36 文档同步** | ⬜ 未做 | — | §5，S8 |
@@ -1111,11 +1114,11 @@ pytest tests/test_brief_scheduler.py -q
 [x] T12 pyproject 收成 mcp>=2,<3（D1）
     验收已过：mcp + http 双模式全绿；反向验证必红；记录见 §0.4 "S1 验收复核记录"
 
-S2 运行时 / 缓存 / 成本（T18c 必须最先）
-[ ] T18c 会话状态改每请求一份（P1-b 并发串台，ContextVar）  ← 验收者新发现，优先
-[ ] T19 缓存上限 + ttl=0
-[ ] T27 called_signatures 真去重
-[ ] T23 重试感知预算
+S2 运行时 / 缓存 / 成本 — ✅ 完成并双模式全绿（f3b76e4 / bc4849d / e6a04e5 / f119f51+7dce255）
+[x] T18c 会话状态改每请求一份（P1-b 并发串台，ContextVar）
+[x] T19 缓存上限 + ttl=0
+[x] T27 called_signatures 真去重
+[x] T23 重试感知预算
 
 S2 之后（批次 3 其余）
 [ ] T12b requirements.txt 同步 mcp>=2,<3（S7，一行）
