@@ -51,7 +51,7 @@ Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
 | **Crypto** | ✅ 完整支持 | K线、快照、衍生品(OI/Funding)、清算地图、大户持仓 |
 | **港股** | ✅ 基础支持 | 实时行情(腾讯API)、证券搜索(雪球)、**北向资金净流入**(东财直连)、恒生指数 |
 | **大宗商品** | 🟡 贵金属就绪 | OKX 永续合约：黄金(XAU)、白银(XAG)、铂金(XPT)，铜/原油待接入 |
-| **美股** | 🔴 Placeholder | 预留 domain 和 registry，第三方 API 待接入 |
+| **美股** | 🟡 行情就绪 | 雪球通道：历史K线(us_klines)、复盘时间窗(us_window)，symbol 用裸代码(AAPL)；实时快照/基本面待接入 |
 | **宏观** | 🔴 Placeholder | 预留 domain，CPI/PMI/利率数据待接入 |
 
 ## 核心特性
@@ -167,7 +167,7 @@ Researching...
 }
 ```
 
-### 35+ 个工具覆盖 4 大市场
+### 42 个工具覆盖 5 大市场
 
 | 类别 | 数量 | 覆盖领域 |
 |------|------|----------|
@@ -179,6 +179,7 @@ Researching...
 | CoinGlass/Hyperliquid | 7 | 符号列表、清算地图、持仓榜、地址数、金库、爆仓、费率 |
 | 港股北向资金 | 2 | **沪深股通净流入**（东财直连）、恒生指数 |
 | 大宗商品贵金属 | 3 | **黄金(XAU)、白银(XAG)、铂金(XPT)** OKX 永续 |
+| 美股(雪球通道) | 2 | 历史K线(us_klines)、复盘时间窗(us_window)，裸代码 symbol |
 | 健康检查 | 2 | 网关进程、行情模块状态 |
 
 > 注：`klines`、`snapshot`、`window` 为跨域通用工具，被多个市场域复用。
@@ -500,7 +501,8 @@ Mosaic/
 当前已有 `hk_stock`、`commodities`、`us_stock`、`macro` 四个域就绪，其中：
 - `hk_stock` 可通过 `quote`(腾讯HK代码) + `search`(雪球) 直接获得行情，**北向资金由 `app/research/hk_northbound.py` 直连东财 KLineJSAPI 自动注入**
 - `commodities` 已接入 OKX 永续合约贵金属品种（黄金 XAU / 白银 XAG / 铂金 XPT），铜/原油待接入
-- `us_stock` 和 `macro` 需要后续接入专用第三方数据源
+- `us_stock` 已接入雪球通道行情：`us_klines`(历史K线) + `us_window`(复盘时间窗)，symbol 用裸代码如 AAPL；实测 `/market/snapshot` 不支持 `exchange=xueqiu`，实时快照与基本面数据待接入
+- `macro` 需要后续接入专用第三方数据源
 
 ### Internal Tools
 
