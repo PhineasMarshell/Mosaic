@@ -33,7 +33,8 @@
 | `GET /market/discussions` → **200**，返回 `{"source":"xueqiu","symbol":"SH600519","category":"discussion","page":1,"count":5,"items":[…],"max_page":100}` | HTTP 直连实测（`X-API-Key` header） |
 | 旧路径 `/xueqiu/timeline` → **403 `{"detail":"path_not_exposed"}`**（不是权限问题，是路径已不存在） | HTTP 实测：4 个 symbol × 4 种 source 口径 × page 1/2 × count 1/20/50 全 403 |
 | **新旧 OpenAPI 对比：43 条路径中 operationId 完全不变的有 0 条**（全部改名）；7 条路径消失、17 条新增 | 对比 `allowed_openapi.json`（33 条，旧）与 `%LOCALAPPDATA%\iiix\plugins\market-gateway\versions\3.2.1\extracted\api\openapi.json`（43 条，新） |
-| MCP 通道：`list_tools()` → **40 个工具**（新名），真实工具调用可用 | `MCP_ARGS="plugin serve market-gateway"` + 0.8.4 二进制实跑 |
+| MCP 通道：`list_tools()` → **40 个工具**（新名）；**但真实工具调用当前被 iiix 侧 OAuth 刷新超时挡住**（详见 §3 顶部的通道现状说明） | `MCP_ARGS="plugin serve market-gateway"` + 0.8.4 二进制实跑 |
+| **HTTP 模式是当前唯一能真正执行工具调用的通道**（`MARKET_GATEWAY_MODE=http` + `X-API-Key`），本文所有 payload 真值都来自它 | HTTP 直连实测 |
 
 **本计划涉及的工具新旧名对照**（只列情绪面要动的）：
 
