@@ -435,12 +435,19 @@ sentiment_cache_ttl_seconds: int = 900
 | `docs/architecture.md:63` | 「可选节点：news / sentiment analyst 由配置开关控制」保留，但补「sentiment 仅 A 股」 |
 | `docs/architecture.md:128` | SSE 标签行保持（`app/main.py:248` 已一致） |
 | README.md:44 | 同口径 |
-| README.md 工具表（170 行附近） | A 股市场生态一行数字与描述；总工具数 44 → 48；**注明 3.2.1 改名迁移尚未完成**（诚实标注） |
+| README.md 工具表（170 行附近） | A 股市场生态一行数字与描述；总工具数 **44 → 49**（净增 5：`post_comments`、`sentiment_index`、`internal_sentiment_index`、`internal_stock_discussions`、`internal_post_comments`；`discussions` 由 `timeline` 改名而来，不计数）；**注明 3.2.1 改名迁移尚未完成**（诚实标注） |
 | `app/gateway/tool_registry.py:9` | docstring 工具总数 |
 
 ---
 
 ## 3. Phase B：验证与提交
+
+> **⚠️ 2026-10-06 实测的通道现状（务必先读）**：
+> - **HTTP 模式（`MARKET_GATEWAY_MODE=http` + `MARKET_GATEWAY_API_KEY`）是当前唯一能真正执行工具调用的通道**，本次所有真值（讨论流、sentiment 指数、涨停池）都由它取得。
+> - **MCP 模式当前只能握手、不能执行调用**：`iiix plugin serve market-gateway` 能 `initialize()` + `list_tools()`（40 个工具），但任何真实 tool call 返回
+>   `{"code":"gateway_error","message":"刷新 OAuth Token: ... Post \"https://logto.x.iiix.dev/oidc/token\": context deadline exceeded"}`
+>   ；同一时刻 `iiix plugin verify market-gateway` 也在 `client_auth_ms` 后失败（有时曾通过）。**本机 Python 能 0.8s 打通该 URL**，属 iiix CLI（Go）侧的网络/代理路径问题，与本仓库代码无关。
+> - 因此 B3 的 e2e **在 HTTP 模式下跑**；mcp 模式只验「握手 + list_tools + 通道自检」，**不要把 MCP 真实 tool call 设为验收门槛**（否则会被环境卡住）。这是**已知边界**，要写进交付报告。
 
 1. 全量双模式：`.venv/Scripts/python.exe -m pytest . -q`，分别在 `MARKET_GATEWAY_MODE=mcp` 与 `=http` 下跑，记录数字（基线 **575**）。
 2. `ruff check . --no-cache` + `ruff format --check . --no-cache` 全绿。

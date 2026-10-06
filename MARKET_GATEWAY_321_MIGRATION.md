@@ -50,6 +50,25 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 | OAuth 发现文档不可达 | `iiix: 读取当前账号时取得调用凭据: 读取 OAuth 发现文档: Get "https://logto.x.iiix.dev/oidc/.well-known/openid-configuration": context deadline exceeded (Client.Timeout exceeded while awaiting headers)` |
 | 用旧命令 | `iiix: MCP 已停用: 服务器目录已移除或当前账号无权使用` |
 | 工具调用时登录失效 | `{"code":"gateway_error","message":"登录已失效，请重新执行 iiix login"}`（**参数校验先于鉴权**，所以参数错误仍会先返回 422） |
+| **OAuth Token 刷新超时**（工具调用） | `{"code":"gateway_error","message":"刷新 OAuth Token: OAuth Token 刷新失败: Post \"https://logto.x.iiix.dev/oidc/token\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}` |
+| **OAuth 发现文档超时**（工具调用） | `{"code":"gateway_error","message":"获取 OAuth 发现文档: Get \"https://logto.x.iiix.dev/oidc/.well-known/openid-configuration\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}` |
+
+#### 1.1.1 ⚠️ 2026-10-06 复测：MCP 能握手，但**不能执行调用**（阻塞项，需单独定位）
+
+| 阶段 | mcp 模式（`MCP_ARGS="plugin serve market-gateway"`，iiix 0.8.4） | http 模式（API Key） |
+|---|---|---|
+| spawn + `initialize()` 握手 | ✅ 通过 | — |
+| `list_tools()` | ✅ **40 个工具**（~44ms） | — |
+| 真实 tool call | ❌ `gateway_error` + OAuth 刷新/发现超时（见上表后两行） | ✅ 全部 200（讨论流、sentiment、涨停池、longhu…） |
+| `iiix plugin verify market-gateway` | ⚠️ **间歇**：曾 `status:"passed"`（`client_auth_ms` 5090ms），同日复测 3 次全 `status:"failed"` + `iiix: 登录已失效`（`client_auth_ms` 2833–5577ms） | — |
+| 同期 Python `httpx` 直连 `https://logto.x.iiix.dev/oidc/.well-known/openid-configuration` | ✅ **HTTP 200，0.8s**；`https://api.x.iiix.dev/.../health` → 401 `malformed_or_missing_key`（说明网络本身通） | — |
+
+**推断**：问题在 **iiix CLI（Go）侧的网络/代理/凭据刷新路径**，不是 Mosaic 代码、也不是本机整体断网。表现为「OAuth 端点在 Go 的 HTTP client 里超时，而 Python 里正常」。
+
+**处置（写进本计划与情绪面计划）**：
+1. **本轮所有真链路验证走 HTTP 模式**（它是当前唯一可执行通道）；MCP 只验「握手 + `list_tools` + 启动自检」。
+2. B3 的启动自检正好能**把这个问题在启动时暴露出来**（而不是等到工具调用才 500）—— 这是本计划要做的核心价值。
+3. **单独定位**（不属本计划范围，但要在交付报告注明）：查系统/用户级 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`（Go 会读环境变量，Python 的 httpx 默认也读，但**行为可能不同**：httpx 对 `NO_PROXY` 与 CIDR 的处理和 Go 不一致）；查是否有 IPv6 优先（两个域名都解析到 Cloudflare `172.67.145.246` / `104.21.49.140`）；试 `iiix login` 全流程能否走完（device flow 也需要访问同一域名）。
 
 ### 1.2 完整新旧 operationId 映射表（40 条）
 
@@ -281,8 +300,9 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 ## 3. Phase C：验证与提交
 
 1. 双模式全量 `pytest` + ruff check/format 全绿。
-2. **真链路**：HTTP 模式与 MCP 模式**各真调 ≥5 个不同域的工具**（A 股/港股/Crypto/美股/大宗），记录 status + datum 数 + 耗时。**MCP 模式必须真跑通**（这是本次事故的核心验证项；只跑 HTTP 不算闭环）。
-3. 启动自检实测：故意把 `MCP_ARGS` 改回 `mcp serve market-gateway` 跑一次 `python -m app.main`，确认**启动时就看到明确报错**而不是 575 绿 + 线上全 403。
+2. **真链路**：HTTP 模式真调 ≥5 个不同域的工具（A 股/港股/Crypto/美股/大宗），记录 status + datum 数 + 耗时。
+   **MCP 模式**：验证「spawn + `initialize()` 握手 + `list_tools()` 40 个工具 + 启动自检」全部通过；**真实 tool call 的闭环以 §1.1.1 的 OAuth 阻塞解除为先决条件** —— 若实施时仍未解除，允许阶段性交付，**但执行记录必须如实写明「MCP 真调未验证（OAuth 刷新超时）」**，不许写成「MCP 已闭环」。
+3. 启动自检实测：故意把 `MCP_ARGS` 改回 `mcp serve market-gateway` 跑一次 `python -m app.main`，确认**启动时就看到明确报错**而不是 575 绿 + 线上全 403（这一步不需要 OAuth，已验证会得到 `iiix: MCP 已停用…`）。
 4. 分 Phase commit，中文 + 前缀，**不要 push**。
 5. 追加执行记录。
 
@@ -303,7 +323,8 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 2. ~~8 条筹码工具是否本轮做~~ → **已定：本轮不注册**（实测全部 `not_collected`，见 §1.3 / B2）。
 3. ~~是否把 `verify_upstream` 注册为工具~~ → **已定：不注册**（诊断端点）。
 4. **两计划的执行顺序**：`SENTIMENT_PLAN.md`（情绪面）与本文都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**不可并行**。建议**先情绪面、再本文**（情绪面的 6 条也包含在本文的 40 条改名范围内，先做情绪面等于本文的 6/40 提前落地，两边不会互相踩）。若实施者认为先做本文更顺（一次性改完 40 条，情绪面只剩新增聚合工具），也可 —— **但必须串行，且第二份开工前先 rebase/确认第一份已 commit**。
-5. 工具总数会变：**44 → 44**（本轮只改名、不增删，8 条筹码不注册）。情绪面计划完成后是 **44 + 5 = 49**（6 条情绪面条目中 `discussions` 是从 `timeline` 改名而来，净增 5 条：`post_comments`、`sentiment_index`、`internal_discussions`、`internal_post_comments`、`ashare_sentiment_raw`）。**README/docs 的数字必须按最终状态写，不要写中间态。**
+5. 工具总数会变：**44 → 44**（本轮只改名、不增删，8 条筹码不注册）。情绪面计划完成后是 **44 + 5 = 49**（6 条情绪面条目中 `discussions` 是从 `timeline` 改名而来，净增 5 条：`post_comments`、`sentiment_index`、`internal_sentiment_index`、`internal_stock_discussions`、`internal_post_comments`）。**README/docs 的数字必须按最终状态写，不要写中间态。**
+6. **MCP 真调阻塞（§1.1.1）**：MCP 能握手/`list_tools`，但真实工具调用被 iiix CLI 侧 OAuth 刷新超时挡住。**HTTP 模式可正常执行**。需要实施者/用户确认：是等该环境问题解除后再闭环 MCP，还是本轮按「HTTP e2e + MCP 握手自检」阶段性交付。
 
 ---
 
