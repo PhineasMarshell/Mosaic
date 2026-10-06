@@ -31,6 +31,7 @@
 | 事实 | 取证方式 |
 |---|---|
 | `GET /market/discussions` → **200**，返回 `{"source":"xueqiu","symbol":"SH600519","category":"discussion","page":1,"count":5,"items":[…],"max_page":100}` | HTTP 直连实测（`X-API-Key` header） |
+| **⚠️ 上游会超时**：同日稍后复测，`/market/discussions` 与 `/market/post-comments` **返回 HTTP 504**（Cloudflare 页面，27–40s），**走不走代理都一样**；同刻 `/market/quotes` → 200 / 0.7s。即**「xueqiu 系」上游不稳定**，不是本机网络问题 | `trust_env=True/False` 对照实测 |
 | 旧路径 `/xueqiu/timeline` → **403 `{"detail":"path_not_exposed"}`**（不是权限问题，是路径已不存在） | HTTP 实测：4 个 symbol × 4 种 source 口径 × page 1/2 × count 1/20/50 全 403 |
 | **新旧 OpenAPI 对比：43 条路径中 operationId 完全不变的有 0 条**（全部改名）；7 条路径消失、17 条新增 | 对比 `allowed_openapi.json`（33 条，旧）与 `%LOCALAPPDATA%\iiix\plugins\market-gateway\versions\3.2.1\extracted\api\openapi.json`（43 条，新） |
 | MCP 通道：`list_tools()` → **40 个工具**（新名）；**但真实工具调用当前被 iiix 侧 OAuth 刷新超时挡住**（详见 §3 顶部的通道现状说明） | `MCP_ARGS="plugin serve market-gateway"` + 0.8.4 二进制实跑 |
@@ -151,7 +152,7 @@ MCP `input_schema`（`list_tools()` 实测）：
 
 ### A0. 探针闸门 —— `scripts/verify_sentiment.py`（必须最先做）
 
-风格仿 `scripts/verify_us_market.py`（143 行：`load_env()` 极简 .env 解析 + `probe_endpoint() -> (ok, note)` + 可用性表 + 闸门判定）与 `scripts/verify_xueqiu_timeline.py`（本工作区已有的一次性探针）。
+风格仿 `scripts/verify_us_market.py`（143 行：`load_env()` 极简 .env 解析 + `probe_endpoint() -> (ok, note)` + 可用性表 + 闸门判定）。
 
 **实测清单**（用 `MARKET_GATEWAY_HTTP_URL` + `X-API-Key` 直连，不要走应用层）：
 
@@ -164,10 +165,18 @@ MCP `input_schema`（`list_tools()` 实测）：
 7. 涨停池 3 条：`get_limit_up_count` / `list_limit_up_sectors` / `list_limit_up_stocks`，记录条数与字段。
 8. 域对照：对 `00700` / `AAPL` 测 `/market/discussions` 的 `discussion` feed，**记录是否真的无数据**（若港股/美股也有数据，交付报告里要如实推翻 §0 的排除结论）。
 
+**阈值与已知不稳定（重要，2026-10-06 实测）**：
+
+- 每个用例**最多重试 3 次、每次超时 30s**（`/market/discussions` 与 `/market/post-comments` 实测会返 504 或 40s＋ 不返回）。
+- **闸门加一条前置判定**：若 `/market/discussions` 在 3 次重试后**全部**失败，而 `/market/quotes`（同 domain 但走 tencent 源）**200**，则判定为**「上游 xueqiu 源不可用」而不是「本机网络/代理问题」** —— 二者处置完全不同：
+  - 上游源不可用 → **停止 Phase A**，报告交回主 Agent（今天就是这样：同日早先 200、稍后 504，且走不走代理都一样）。
+  - 本机网络问题 → 检查 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`（见 `MARKET_GATEWAY_321_MIGRATION.md` §1.1.1：MCP 子进程会丢代理变量）。
+- **不要把「某次 200 的响应结构」当成长期契约**：A2 的聚合工具必须按「上游可能整体失败」设计（status=partial/error + 可解释文案），不许返回空的「情绪中性」假结论。
+
 **闸门判定**：
 - **通过**（`/market/discussions` 对 A 股返回真实讨论 + `post-comments` 可下钻 + `sentiment` 指数结构可解析）→ 继续 A1。
 - **部分通过**（如 `post-comments` 不可用 / `feed=discussion` 无数据但 `all` 有）→ 按实测收缩能力，purpose 如实描述，交付报告注明。
-- **失败**（讨论流不可达或返回非讨论数据）→ **停止 Phase A**，不提交实现代码，探针脚本可选留档，报告交回主 Agent。
+- **失败**（讨论流 3 次重试后仍不可达或返回非讨论数据）→ **停止 Phase A**，不提交实现代码，探针脚本可选留档，报告交回主 Agent。
 
 ### A1. 注册表改名 + 情绪面条目（`app/gateway/tool_registry.py`）
 

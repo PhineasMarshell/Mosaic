@@ -53,22 +53,51 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 | **OAuth Token 刷新超时**（工具调用） | `{"code":"gateway_error","message":"刷新 OAuth Token: OAuth Token 刷新失败: Post \"https://logto.x.iiix.dev/oidc/token\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}` |
 | **OAuth 发现文档超时**（工具调用） | `{"code":"gateway_error","message":"获取 OAuth 发现文档: Get \"https://logto.x.iiix.dev/oidc/.well-known/openid-configuration\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"}` |
 
-#### 1.1.1 ⚠️ 2026-10-06 复测：MCP 能握手，但**不能执行调用**（阻塞项，需单独定位）
+#### 1.1.1 ⚠️ MCP 「能握手、不能调用」的**根因已定位并修复（2026-10-06）**：MCP 子进程丢失代理环境变量
 
 | 阶段 | mcp 模式（`MCP_ARGS="plugin serve market-gateway"`，iiix 0.8.4） | http 模式（API Key） |
 |---|---|---|
 | spawn + `initialize()` 握手 | ✅ 通过 | — |
 | `list_tools()` | ✅ **40 个工具**（~44ms） | — |
-| 真实 tool call | ❌ `gateway_error` + OAuth 刷新/发现超时（见上表后两行） | ✅ 全部 200（讨论流、sentiment、涨停池、longhu…） |
-| `iiix plugin verify market-gateway` | ⚠️ **间歇**：曾 `status:"passed"`（`client_auth_ms` 5090ms），同日复测 3 次全 `status:"failed"` + `iiix: 登录已失效`（`client_auth_ms` 2833–5577ms） | — |
-| 同期 Python `httpx` 直连 `https://logto.x.iiix.dev/oidc/.well-known/openid-configuration` | ✅ **HTTP 200，0.8s**；`https://api.x.iiix.dev/.../health` → 401 `malformed_or_missing_key`（说明网络本身通） | — |
+| 真实 tool call（修复前） | ❌ `gateway_error` + OAuth 刷新/发现超时（见 §1.1 表） | ✅ 全部 200 |
+| 真实 tool call（**注入代理变量后**） | ✅ `get_ashare_sentiment` 返回真实 `series`（`CIGAO/QX` 等） | ✅ |
+| `iiix plugin verify market-gateway` | ✅ `status:"passed"`（`req=1128ms`，需同时给 `HTTP_PROXY`**和**`HTTPS_PROXY`+`NO_PROXY`） | — |
 
-**推断**：问题在 **iiix CLI（Go）侧的网络/代理/凭据刷新路径**，不是 Mosaic 代码、也不是本机整体断网。表现为「OAuth 端点在 Go 的 HTTP client 里超时，而 Python 里正常」。
+**根因链（三段证据）**：
 
-**处置（写进本计划与情绪面计划）**：
-1. **本轮所有真链路验证走 HTTP 模式**（它是当前唯一可执行通道）；MCP 只验「握手 + `list_tools` + 启动自检」。
-2. B3 的启动自检正好能**把这个问题在启动时暴露出来**（而不是等到工具调用才 500）—— 这是本计划要做的核心价值。
-3. **单独定位**（不属本计划范围，但要在交付报告注明）：查系统/用户级 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`（Go 会读环境变量，Python 的 httpx 默认也读，但**行为可能不同**：httpx 对 `NO_PROXY` 与 CIDR 的处理和 Go 不一致）；查是否有 IPv6 优先（两个域名都解析到 Cloudflare `172.67.145.246` / `104.21.49.140`）；试 `iiix login` 全流程能否走完（device flow 也需要访问同一域名）。
+1. 本机系统代理开着（注册表 `HKCU:\…\Internet Settings` → `ProxyEnable=1`、`ProxyServer='127.0.0.1:7897'`），但**环境变量里没有** `HTTP_PROXY`/`HTTPS_PROXY`。Python 的 httpx 读系统代理，**iiix（Go）只认环境变量**。
+2. `logto.x.iiix.dev` 有 AAAA 记录而本机 **IPv6 完全不通** → Go 直连时先试 IPv6、耗尽超时预算 → `context deadline exceeded`。报文把它包装成「读取 OAuth 发现文档失败」，**看起来像登录问题，其实是网络路径问题**（这是本次排查最大的坑）。
+3. `mcp` SDK 的 `stdio_client` 在 `env=None` 时用 `get_default_environment()`，实测**只白名单继承 12 个变量**：
+   `APPDATA / HOMEDRIVE / HOMEPATH / LOCALAPPDATA / PATH / PATHEXT / PROCESSOR_ARCHITECTURE / SYSTEMDRIVE / SYSTEMROOT / TEMP / USERNAME / USERPROFILE`
+   → **`HTTPS_PROXY` 根本到不了 iiix 子进程**。
+
+**已落地的修复**（`app/gateway/mcp_client.py`）：
+
+```python
+PROXY_ENV_KEYS = ("HTTP_PROXY","HTTPS_PROXY","NO_PROXY","ALL_PROXY",
+                  "http_proxy","https_proxy","no_proxy","all_proxy")
+
+@staticmethod
+def _child_env() -> dict[str, str]:
+    env = dict(get_default_environment())
+    for key in PROXY_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    return env
+
+params = StdioServerParameters(command=..., args=args, env=self._child_env())  # 原来是 env=None
+```
+
+配套：`MCPConnectionError` 的 4 个分支（startup / handshake / `list_tools`）现在都带 `(command: <mcp_command> <mcp_args>)`，排查时一眼看出起的是哪个二进制、用了什么参数。测试：`tests/test_mcp_handshake.py` 新增 3 个（代理透传 / 未设时不注入 / 报错含 launch 命令）。
+
+**运维侧仍需做的事**（不在代码里）：
+```powershell
+setx HTTP_PROXY  "http://127.0.0.1:7897"
+setx HTTPS_PROXY "http://127.0.0.1:7897"
+setx NO_PROXY    "localhost,127.0.0.1"
+```
+然后**新开终端**执行 `iiix login`（否则 `iiix` 自己新起的进程也拿不到代理）。实测：只给 `HTTPS_PROXY` 时 `plugin verify` 仍 TLS 超时（`req=5178ms`），**必须同时有 `HTTP_PROXY`**；加了 `NO_PROXY=localhost,127.0.0.1` 后从 `req=6543ms` 降到 `1128ms`。
 
 ### 1.2 完整新旧 operationId 映射表（40 条）
 
