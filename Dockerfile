@@ -1,6 +1,9 @@
-# syntax=docker/dockerfile:1
-
 # Mosaic — 多阶段构建：builder 只负责出 wheel，runtime 只带运行期依赖，且不以 root 运行。
+#
+# 注意：不要加 "# syntax=docker/dockerfile:1" 指令——那会让 BuildKit 先去 Docker Hub
+# 拉 frontend 镜像才能开始构建；本文件用到的特性（多阶段/HEALTHCHECK/COPY --from）
+# 内置 frontend 全部支持，去掉它离线/弱网环境也能 build（2026-10-06 实测：
+# auth.docker.io 超时导致 build 卡死在 resolve image config，删掉后正常）。
 #
 # 运行要点（详见 README「部署（Docker）」）：
 #   1. 应用默认读 WORKDIR 下的 .env —— 容器里请用 compose 的 env_file / -e 注入，
