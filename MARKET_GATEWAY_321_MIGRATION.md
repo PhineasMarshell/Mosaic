@@ -2,7 +2,7 @@
 
 > 本文由主 Agent 基于**实测真值**编写（2026-10-06）。
 > **`SENTIMENT_PLAN.md` 与本文是两件独立的事**：情绪面接入只改情绪相关条目（6 条），本文负责**其余全部工具的 operationId 迁移**与**通道健壮性**。
-> 两文可以并行执行，但**同一个文件（`app/gateway/tool_registry.py`）会有交叉**，建议串行：先做情绪面，再做本文；或反之。**不要同时开工。**
+> **执行顺序（已定）：先做 `SENTIMENT_PLAN.md`，再做本文。** 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**严禁并行**；本文开工前必须确认情绪面那份已 commit，且本文的 40 条改名要**跳过情绪面已改的 6 条**（否则会二次改写）。
 > 执行纪律沿用 `US_STOCK_INTEGRATION_PLAN.md` §1.5。
 
 ---
@@ -103,24 +103,52 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 
 ### 1.3 新增工具（3.2.1 有、Mosaic 没有）
 
-**A 股筹码/股东（8 条全新能力，domain=`a_share`）**：
+**先回答一个容易误解的点**：这 8 条**既不是「Mosaic 已废弃的旧工具」，也不是「上游凭空多出的新工具」**，而是上游 3.2.1 新增的 **A 股筹码/股东数据域**（`/ashare/chips/*`）—— Mosaic 从来没有过，属于**新增能力**，不是改名。
+上游 3.2.1 的 MCP 暴露 40 个工具 = 31 个改名后的旧工具 + 8 条筹码 + `list_stock_post_comments`（情绪面计划已注册）+ `verify_upstream`（诊断端点）。
 
-| 新 operationId | 路径 | 建议 `key` | 建议 `category` | purpose 草稿 |
+**A 股筹码/股东（8 条，domain 全为 `a_share`）**：
+
+| 新 operationId | 路径 | 建议 `key` | 必填入参 | 语义（上游 description） |
 |---|---|---|---|---|
-| `get_ashare_capital_flow` | `/ashare/chips/capital` | `capital_flow` | moneyflow | 个股资金流向（筹码口径） |
-| `list_ashare_holders` | `/ashare/chips/holders` | `chips_holders` | fundamental | 个股股东/持股明细 |
-| `list_ashare_reductions` | `/ashare/chips/reductions` | `chips_reductions` | fundamental | 个股减持记录 |
-| `list_ashare_unlocks` | `/ashare/chips/unlocks` | `chips_unlocks` | fundamental | 个股解禁记录 |
-| `get_latest_ashare_capital_flow` | `/ashare/chips/latest/capital` | `latest_capital_flow` | moneyflow | 全市场最新资金流（无需 symbol） |
-| `get_latest_ashare_holders` | `/ashare/chips/latest/holders` | `latest_chips_holders` | fundamental | 全市场最新股东变动（无需 symbol） |
-| `get_latest_ashare_reductions` | `/ashare/chips/latest/reductions` | `latest_chips_reductions` | fundamental | 全市场最新减持（无需 symbol） |
-| `get_latest_ashare_unlocks` | `/ashare/chips/latest/unlocks` | `latest_chips_unlocks` | fundamental | 全市场最新解禁（无需 symbol） |
+| `get_ashare_capital_flow` | `/ashare/chips/capital` | `capital_flow` | `symbol`, **`as_of`** | 查询 as_of 时点**已采集入库**的最近一次股本状态 |
+| `list_ashare_holders` | `/ashare/chips/holders` | `chips_holders` | `symbol`, **`as_of`** | 查询 as_of 时点最新可见的十大股东、流通股东和股东户数 |
+| `list_ashare_reductions` | `/ashare/chips/reductions` | `chips_reductions` | `symbol`, **`as_of`** | 查询 as_of 时点采集的减持公告与已发生的股东减持事实 |
+| `list_ashare_unlocks` | `/ashare/chips/unlocks` | `chips_unlocks` | `symbol`, **`as_of`** | 查询 as_of 时点已知的历史与未来解禁记录（含 `scheduled`/`effective`） |
+| `get_latest_ashare_capital_flow` | `/ashare/chips/latest/capital` | `latest_capital_flow` | `symbol` | 返回查询时点**已经取得**的最新标准股本状态 |
+| `get_latest_ashare_holders` | `/ashare/chips/latest/holders` | `latest_chips_holders` | `symbol` | 返回查询时点**已经取得**的最新股东结构 |
+| `get_latest_ashare_reductions` | `/ashare/chips/latest/reductions` | `latest_chips_reductions` | `symbol` | 返回查询时点**已经取得**的最新减持事实 |
+| `get_latest_ashare_unlocks` | `/ashare/chips/latest/unlocks` | `latest_chips_unlocks` | `symbol` | 返回查询时点**已经取得**的最新解禁记录 |
+
+> ⚠️ **注意与本文档旧版的说法相反**：`latest_*` 四条**也需要 `symbol`**（实测：不给 symbol → **422**）。原表把它们写成「无需 symbol」是错的，已修正。
+
+**响应结构（8 条统一，实测）**：
+```
+{ source, symbol, as_of|snapshot_at|temporal_mode, queried_at, coverage_status, coverage[], record|records }
+```
+- `coverage[]` 每项：`{dataset, status, first_acquired_at, last_attempt_at, last_success_at, rows_seen, rows_normalized, error}`
+- `dataset` enum：`capital` / `top_holders` / `top_float_holders` / `holder_count` / `unlocks` / `holder_trades` / `reduction_notices`
+- `status` enum：`ok` / `partial` / `no_data` / `source_error` / `not_collected` / `not_observed`
+- `coverage_status` enum：`complete` / `partial` / `source_error` / `not_observed` / `not_collected`
+- `facts` 字段示例：`total_market_cap` / `circulating_a_market_cap` / `restricted_a_shares` / `close_price` / `rank` / `holder_name` / `holder_type` / `is_mainland_connect` / `share_change_ratio_pct` / `unlock_free_shares` / `event_state(scheduled|effective)` / `average_price` / `announced_at` / `effective_at` / `available_at`（**PIT 语义：数据按「当时可见」而非「事后修订」**）
+
+**❌ 实测结论：这 8 条当前全部无数据，不建议注册**
+
+| 实测 | 结果 |
+|---|---|
+| 5 个标的（`SH600519` / `SZ000001` / `SZ300750` / `SH601318` / `SH600036`）× 3 个端点 | 全部 **HTTP 200**，但 `coverage_status` 恒为 **`not_collected`**，`coverage[].status` 恒为 `not_collected`、`rows_seen=0`、`rows_normalized=0`，`record=null` / `records=[]` |
+| 即 | **端点存在、结构完整、参数校验正常，但上游采集侧尚未对该数据域入库**（本部署/本 key 上） |
+
+**因此 B2 的处置改为**：**本轮不注册这 8 条**，在 `MARKET_GATEWAY_321_MIGRATION.md` 的执行记录与 README 的「已知边界」里如实写明：
+
+> A 股筹码/股东数据域（`/ashare/chips/*`，8 个端点）在 Gateway 3.2.1 已暴露且参数/结构正确，但实测所有标的 `coverage_status=not_collected`（采集侧未入库）。Mosaic 暂不注册，待上游数据可用后再接入。
+
+若将来要接：`latest_*` 四条直接给了当前明细，但**注入时间语义必须靠 `snapshot_at`/`queried_at`**；`as_of` 四条是 PIT 查询（`as_of` 必填 RFC 3339），适合「当时能看到什么」的审计式提问。
 
 **其它新增**：
 - `list_stock_post_comments`（`/market/post-comments`）—— **情绪面计划已注册**，本文不重复。
-- `verify_upstream`（`/verify_upstream`）—— **建议不注册**（它是诊断端点，不是市场数据；注册进去只会浪费 planner 预算）。
+- `verify_upstream`（`/verify_upstream`）—— **建议不注册**（诊断端点，不是市场数据；注册只会浪费 planner 预算）。
 
-**⚠️ 这 8 条筹码工具的入参 schema（是否要 symbol、page/count 约束、响应结构）尚未实测** —— 必须先按 §2-B0 探针实测再注册，不要照抄本表。
+**⚠️ 若仍要注册**（例如上游随时可能开始采集）：8 条全部要 `symbol`（走 symbol 守卫），4 条 `as_of` 版还多一个必填时间参数 —— **planner 不会自发产生 `as_of`**，需要 supervisor prompt 明确指示（如「用当前 UTC 时间作为 as_of」），否则注册了也只会 422。这是不建议注册的第二个理由。
 
 ### 1.4 已消失的端点（7 条）
 
@@ -153,42 +181,82 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 
 ### B1. 注册表批量改名（`app/gateway/tool_registry.py`）
 
-1. 按 §1.2 表逐条替换 `tool_name`（**`key` 一律不动**，除情绪面计划里的 `timeline`→`discussions`）。
-2. 改了路径的 7 条（#12-#20 减去内部工具）**必须同步 `http_path`**。
-3. `SHARED_BY_NAME` 的共享条目（#23/#24/#25）全部改齐。
-4. 更新模块 docstring 的工具总数（契约测试 `tests/test_docs_contract.py` 守护）。
-5. grep 全仓 `tool_name` 字符串：**除注册表外**，`app/cache.py` 的 TTL 表按 operationId 建键（`app/cache.py:181`、`:186`）**必须一起改**，否则 TTL 静默退回默认值。
-6. grep 全仓 `public_*_get` / `*_xueqiu_*_get` / `*_eastmoney_*_get` / `*_coinglass_*_get` 模式，确认无遗漏（含 `WHITELIST_NO_SYMBOL`、测试、提示词）。
+**方式：全量替换，不留别名、不留旧名。** 用「旧 → 新」一一映射直接改写注册表（不是新增别名、不是双注册）。`key` 一律不动（Supervisor 的 `plan.steps` 与提示词按 `key` 引用；唯一例外是情绪面计划里的 `timeline` → `discussions`）。
 
-### B2. 启用 8 条筹码工具（**取决于 B0 实测**）
+理由：旧 operationId 在 3.2.1 上**已经不存在**，留着只会是「必然 403/404 的死条目」，且 MCP 的 `ToolRuntime` 对未注册名直接抛 `KeyError: Tool is not allowed by registry`。做别名等于把死代码留在仓库里。
 
-若实测通过，新增 `_ASHARE_CHIPS` 列表并在 `ALL_TOOLS` 拼装。分类建议见 §1.3。
-- `category` 选 `fundamental` / `moneyflow`：**不要**新造 category（`AnalystName` 是闭集，加新类要动 `app/graph/state.py:96` 与路由）。
-- 4 条 `latest_*` 无需 symbol → 加进 `WHITELIST_NO_SYMBOL`（`app/graph/nodes/analysts/base.py:47-68`）。
-- 若实测发现某条无数据 / 结构不可解析 → **不要注册**，报告注明。
+**实施步骤**：
+
+1. **先用工具生成精确的旧名清单**，不要靠肉眼 grep（`klines_market_klines_post` 之类的名字与缓存键 `market_cache` 极易混淆）：
+
+   ```bash
+   .venv/Scripts/python.exe -c "
+   from app.gateway.tool_registry import ALL_TOOLS
+   for t in ALL_TOOLS:
+       print(f'{t.tool_name}\t{t.key}\t{t.domain}\t{t.category}\t{t.http_path}')
+   "
+   ```
+
+   把输出与 §1.2 的映射表逐条对齐，产出「旧名 → 新名」的 40 行清单。
+2. 按清单**精确字符串替换**（不要用模糊正则；`market` 这个词同时出现在缓存变量名、模块名、路径里）。
+3. 改了路径的条目（§1.2 表中标「改名 + 改路径」的 #12–#20）**必须同步 `http_path`**。
+4. **共享 operationId 必须一次改齐**（实测精确清单，`ALL_TOOLS`=44 而 `BY_NAME`=37，差额 7 条正式来自这里）：
+
+   | 旧 operationId | 复用它的 key |
+   |---|---|
+   | `klines_market_klines_post` | `commodity_gold`(commodities)、`klines`(cross)、`us_klines`(us_stock) |
+   | `snapshot_market_snapshot_post` | `commodity_silver`(commodities)、`commodity_platinum`(commodities)、`snapshot`(cross) |
+   | `quote_tencent_quote_get` | `quote`(a_share)、`hk_quote`(hk_stock) |
+   | `search_xueqiu_search_get` | `search`(a_share)、`hk_search`(hk_stock) |
+   | `window_market_window_post` | `window`(cross)、`us_window`(us_stock) |
+
+   **改法是改 `tool_name` 常量本身**（这几条在代码里就是同一个字符串），所以只要不写死字面量、而是统一从常量引用，就不会漏；漏一条那个 key 就永久失败。
+5. **`app/cache.py` 的 TTL 表按 operationId 建键**（`app/cache.py:181` `"public_sentiment_ashare_master_sentiment_get": SENTIMENT_TTL`、`:186` `"longhu_xueqiu_longhu_get": LONGHU_TTL`）**必须一起改**，否则 TTL 静默退回默认值（测试要覆盖 `_resolve_ttl` 对新名字返回预期值）。
+6. `app/graph/nodes/analysts/base.py` 的 `WHITELIST_NO_SYMBOL`（`:47-68`）里所有旧名同步换成新名。**判断一个名字是否该留在白名单，看它是否真的能没有 symbol**（`get_ashare_sentiment` / `get_limit_up_*` / `news_search` / `internal_*` 留；`list_stock_discussions` / `list_stock_post_comments` / `get_market_quotes` 不留）。
+7. **测试里的旧名**：实测分布 14 个文件（`tests/test_anomaly_detector.py`、`test_cache_multi_domain.py`、`test_data_integrity.py`、`test_docs_contract.py`、`test_evidence.py`、`test_gateway_reuse.py`、`test_graph_nodes.py`、`test_normalizer_enhanced.py`、`test_normalizer_f10.py`、`test_normalizer_multi_domain.py`、`test_reasoning_parsing.py`、`test_stream_endpoint.py`、`test_tool_registry.py`、`test_tool_registry_multi_domain.py`），同名模式出现 **25 + 11 + 31 + 13 处**量级。**全部要改**。
+8. 更新模块 docstring 的工具总数（契约测试 `tests/test_docs_contract.py` 守护）。
+
+**⚠️ 改名后必须核对的隐性依赖**（这些地方通常「按名字」硬编码）：
+- `app/gateway/tool_registry.py` 的 `BY_NAME` 规范条目规则（cross 域优先，否则先注册者胜）—— 改名后同名共享关系是否仍成立
+- `SHARED_BY_NAME`（`app/gateway/tool_registry.py:655-668`）
+- `by_category` / `tools_by_category`（`:677-686`）、`registry_text(domains)`（`:694-715`）
+- `app/gateway/normalizer.py` 的 `_DOMAIN_HINTS` 与工具名相关的分支
+- supervisor / planner 提示词里若出现具体工具名
+
+### B2. 8 条筹码工具：**本轮不注册**
+
+依据 §1.3 的实测（5 个标的 × 3 个端点全部 `coverage_status=not_collected`，`record=null` / `records=[]`），**本轮不注册这 8 条**，只在文档里记录为已知边界。
+
+若上游数据可用后要接：
+- 全部 8 条都要 `symbol`（走 symbol 守卫，**不进** `WHITELIST_NO_SYMBOL`）。
+- 4 条 `as_of` 版要 supervisor prompt 明确指示时间参数，否则必 422。
+- `category` 建议 `moneyflow`（capital）与 `fundamental`（holders/reductions/unlocks）；**不要新造 category**（`AnalystName` 是闭集，加新类要动 `app/graph/state.py:96` 与路由）。
+- **必须先跑 B0 探针确认真有数据**再注册（防今天这种「注册了但必然空手而归」）。
 
 ### B3. 通道健壮性（本计划的核心增值，不只是改名）
 
 **问题**：今天的故障是「默认 mcp 模式下全部工具失败，但没有任何地方报错阻止启动」。必须让它在**启动时**就可见。
 
-实施（**需先确认设计，见 §5 开放问题**）：
+**设计已定（用户裁定）**：自检失败默认 **`warn`** —— 不阻塞启动，但必须**大声**：ERROR 级日志 + `/health` 暴露 `gateway_channel: "mcp_unavailable"`。理由：本地开发不该因为网关/登录挂了起不来，但「静默失败」绝不可接受（这正是今天 575 绿而线上全挂的成因）。
+
+实施：
 
 1. `app/config.py`：新增
    ```python
    #: 启动时是否对 Gateway 通道做一次自检（mcp 模式：spawn + 握手 + list_tools）
    gateway_startup_selfcheck: bool = True
-   #: 自检失败时的行为：warn（只记日志）/ fail（启动即失败）
-   gateway_selfcheck_on_failure: str = "warn"   # warn | fail
+   #: 自检失败时的行为：warn（默认，只记 ERROR 日志 + /health 标记）/ fail（启动即终止）
+   gateway_selfcheck_on_failure: str = "warn"
    ```
-2. `app/main.py` 的 lifespan：`market_gateway_mode == "mcp"` 且 `gateway_startup_selfcheck` 为真时做一次 `list_tools()`；失败时按 `gateway_selfcheck_on_failure` 记 **ERROR 级日志 + 在 `/health` 里暴露 `gateway_channel: "mcp_unavailable"`** 或直接抛异常终止。
+2. `app/main.py` 的 lifespan：`market_gateway_mode == "mcp"` 且 `gateway_startup_selfcheck` 为真时做一次 `list_tools()`；失败时按 `gateway_selfcheck_on_failure` 处理（`warn` → ERROR 日志 + `/health` 标记；`fail` → 抛异常终止启动）。
 3. **错误文案必须可操作**（用 §1.1 的原文匹配，不要泛化成「连接失败」）：
-   - 检测到 `MCP 已停用` / `Connection closed` → 提示「iiix CLI ≥ 0.8.0 请用 `plugin serve`，并确认 `MCP_ARGS`」
-   - 检测到 `登录已失效` → 提示「执行 `iiix login`，并用 `iiix plugin verify market-gateway` 确认」
-   - 检测到 `MCP initialize (handshake) timed out` → 提示检查 `RESEARCH_TIMEOUT_SECONDS` 与网络
-4. `app/gateway/mcp_client.py`：`connect()` 的 `MCPConnectionError` 消息里**带上 `mcp_command` + `mcp_args` 的实际值**（现在只说 "MCP server startup failed"，运维看不出配的是什么）。
+   - 检测到 `MCP 已停用` / `Connection closed` → 「iiix CLI ≥ 0.8.0 请用 `plugin serve`，并确认 `MCP_ARGS`」
+   - 检测到 `登录已失效` → 「执行 `iiix login`，再用 `iiix plugin verify market-gateway` 确认」
+   - 检测到 `handshake timed out` → 「检查 `RESEARCH_TIMEOUT_SECONDS` 与网络」
+4. `app/gateway/mcp_client.py`：`connect()` 的 `MCPConnectionError` 消息里**带上 `mcp_command` + `mcp_args` 的实际值**（现在只说 "MCP server startup failed"，运维看不出配的是什么），并把 CLI 的就绪自检命令写进提示。
 5. `/health` 增加 `gateway_mode` 与 `gateway_channel` 字段（若已有同类字段则复用）。
 
-**硬要求**：自检**不得**让 `http` 模式或纯内部工具链路变慢/失败；自检超时必须独立于 `research_timeout_seconds`（用更短的值，如 10s），否则启动会挂 30s。
+**硬要求**：自检**不得**让 `http` 模式或纯内部工具链路变慢/失败；自检超时必须独立于 `research_timeout_seconds`（建议 10s），否则启动会挂 30s。
 
 ### B4. 测试
 
@@ -202,7 +270,7 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 | 文件 | 改什么 |
 |---|---|
 | `README.md` §配置 Market Gateway MCP | **已改**（主 Agent 已完成：`plugin serve` + ≥0.8.0 警告 + verify 自检命令） |
-| `README.md` 工具表 | 工具数 44 → 44 + 筹码 8（实测通过才有）+ 情绪面 5（情绪面计划） |
+| `README.md` 工具表 | 工具总数 **不变（44）** —— 本轮只改名不增删；8 条筹码实测无数据、不注册（见 §1.3 / B2/5） |
 | `docs/architecture.md` §7 | **已改**（主 Agent 已完成） |
 | `docs/tools.md` | 全部 operationId 列改名 |
 | `.env.example` | **已改**；补 `GATEWAY_STARTUP_SELFCHECK` / `GATEWAY_SELFCHECK_ON_FAILURE` |
@@ -229,12 +297,13 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 
 ---
 
-## 5. 开放问题（需用户/主 Agent 确认）
+## 5. 开放问题
 
-1. **B3 自检的默认行为**：`warn`（默认，不阻塞启动）还是 `fail`（默认，启动即终止）？主 Agent 倾向 **`warn` 默认 + `/health` 暴露 `mcp_unavailable`**（本地开发不该因为网关挂了起不来），但要在 README 写明。
-2. **8 条筹码工具**是否本计划一起做，还是留给下一轮？（涉及新能力，不只是迁移）
-3. 是否把 `verify_upstream` 注册为工具？（主 Agent 倾向**不注册**）
-4. 情绪面计划与本文的**执行顺序**（同一文件交叉，不可并行）。
+1. ~~B3 自检的默认行为~~ → **已定：`warn`**（用户裁定，见 B3）。
+2. ~~8 条筹码工具是否本轮做~~ → **已定：本轮不注册**（实测全部 `not_collected`，见 §1.3 / B2）。
+3. ~~是否把 `verify_upstream` 注册为工具~~ → **已定：不注册**（诊断端点）。
+4. **两计划的执行顺序**：`SENTIMENT_PLAN.md`（情绪面）与本文都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**不可并行**。建议**先情绪面、再本文**（情绪面的 6 条也包含在本文的 40 条改名范围内，先做情绪面等于本文的 6/40 提前落地，两边不会互相踩）。若实施者认为先做本文更顺（一次性改完 40 条，情绪面只剩新增聚合工具），也可 —— **但必须串行，且第二份开工前先 rebase/确认第一份已 commit**。
+5. 工具总数会变：**44 → 44**（本轮只改名、不增删，8 条筹码不注册）。情绪面计划完成后是 **44 + 5 = 49**（6 条情绪面条目中 `discussions` 是从 `timeline` 改名而来，净增 5 条：`post_comments`、`sentiment_index`、`internal_discussions`、`internal_post_comments`、`ashare_sentiment_raw`）。**README/docs 的数字必须按最终状态写，不要写中间态。**
 
 ---
 

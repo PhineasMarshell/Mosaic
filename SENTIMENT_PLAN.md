@@ -4,6 +4,7 @@
 > 所有 Gateway 事实均来自本机实跑（HTTP 直连 + MCP `list_tools`），不是文档推断；每处实测结论都标了取证方式。
 > **执行时不必重新调研**；如实际代码与本文引用不符，以代码为准并在交付报告中说明差异。
 > 执行纪律（环境、基线、commit 规则）沿用 `US_STOCK_INTEGRATION_PLAN.md` §1.5，此处不重复，开工前先读那一节。
+> **执行顺序（已定）：本计划先做，`MARKET_GATEWAY_321_MIGRATION.md` 后做。** 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，严禁并行。
 
 ---
 
@@ -471,6 +472,7 @@ sentiment_cache_ttl_seconds: int = 900
 | 情绪面仅 A 股 | 港股/美股无可用情绪源 |
 | `get_ashare_sentiment` 原始序列极长 | 26,447 条 datum，必须用 `internal_sentiment_index` 聚合后再用 |
 | 改名迁移未完成 | 注册表里约 30 个工具仍是旧 operationId，**线上调用会失败**（见 `MARKET_GATEWAY_321_MIGRATION.md`） |
+| 上游筹码数据域为空 | `/ashare/chips/*`（8 条，含股东/减持/解禁/股本）已在 3.2.1 暴露且参数结构正确，但实测 5 个标的 `coverage_status=not_collected`、`record=null`，采集侧未入库 → 本轮不注册。**情绪面可用源仅：讨论流 + 情绪指数 + 涨停池/板块 + `news_search`** |
 
 ---
 
