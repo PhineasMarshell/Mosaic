@@ -156,7 +156,7 @@ Researching...
 
 ```json
 {
-  "domain": "a_share" | "crypto" | "hk_stock" | "commodities",
+  "domain": "a_share" | "crypto" | "hk_stock" | "commodities" | "us_stock",
   "instrument": "SH600519" | "BTCUSDT" | null,
   "metric": "...",
   "value": ...,
@@ -226,18 +226,27 @@ OPENAI_MODEL=你的模型
 
 ### 配置 Market Gateway MCP
 
-默认通过本地 Runtime 启动 MCP：
+默认通过本地 Runtime（iiix CLI）启动 MCP：
 
 ```bash
-iiix mcp serve market-gateway
+iiix plugin serve market-gateway
 ```
+
+> ⚠️ **iiix CLI 版本要求 ≥ 0.8.0**：旧语法 `iiix mcp serve <project>` 已在 0.8.0 删除
+> （`iiix mcp` 子命令不复存在），0.8.x 起统一改为 `iiix plugin` 系列命令。
+> 用旧版本会得到 `iiix: MCP 已停用: 服务器目录已移除或当前账号无权使用`，
+> 随后 Mosaic 侧报 `MCP initialize (handshake) failed: Connection closed`。
+> 先跑 `iiix plugin verify market-gateway` 确认 `status: passed`（它会同时验证登录态与上游连通性）。
 
 对应 `.env`：
 
 ```env
 MCP_COMMAND=iiix
-MCP_ARGS=mcp serve market-gateway
+MCP_ARGS=plugin serve market-gateway
 ```
+
+MCP 走 OAuth（`iiix login`），登录态失效时工具调用会返回
+`{"code":"gateway_error","message":"登录已失效，请重新执行 iiix login"}`。
 
 如果不想走 MCP，也可以直接用 HTTP API：
 
@@ -307,7 +316,7 @@ curl http://127.0.0.1:8000/health
 | 绑定地址 | `127.0.0.1:8000`（`app/main.py` 的 `__main__`） | `uvicorn --host 0.0.0.0`（compose 给 `HOST=0.0.0.0`） | 绑回环时宿主机的端口映射转发不进来 |
 | Market Memory | 项目根 `<repo>/memory/memory.db`（`storage.py` 默认） | `MOSAIC_MEMORY_DB=/data/memory.db`（compose 挂 `mosaic-data` 卷到 `/data`） | 镜像里代码在 `site-packages`，项目根之外属主是 root，非 root 进程写不进去 |
 | 简报 JSON | `<repo>/memory/{morning,evening}/`（`briefs.py` 默认） | `MOSAIC_DATA_DIR=/data` | 同上：定时简报也要写到可写卷，否则调度器到点保存静默失败 |
-| Gateway 模式 | 按 `.env`（`.env.example` 是 `http`，`Settings` 默认是 `mcp`） | 强制 `MARKET_GATEWAY_MODE=http` | MCP 模式要 spawn `iiix mcp serve market-gateway`，镜像里没有这个 CLI |
+| Gateway 模式 | 按 `.env`（`.env.example` 是 `http`，`Settings` 默认是 `mcp`） | 强制 `MARKET_GATEWAY_MODE=http` | MCP 模式要 spawn `iiix plugin serve market-gateway`，镜像里没有这个 CLI |
 
 其他部署注意事项：
 

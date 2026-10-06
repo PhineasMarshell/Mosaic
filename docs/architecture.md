@@ -37,7 +37,7 @@ Orchestrator（编译 + 运行 LangGraph）
       ↓
 Market Gateway (MCP / HTTP)
       ↓
-iiix mcp serve market-gateway
+iiix plugin serve market-gateway
 ```
 
 ## 2. 节点说明
@@ -182,9 +182,14 @@ iiix mcp serve market-gateway
 
 ```bash
 iiix login
-iiix mcp install market-gateway
-iiix mcp serve market-gateway
+iiix plugin install market-gateway
+iiix plugin serve market-gateway
 ```
+
+> ⚠️ iiix CLI ≥ 0.8.0：`iiix mcp` 子命令在 0.8.0 已被删除，改用
+> `iiix plugin login | list | status | verify | serve`。旧语法会得到
+> `iiix: MCP 已停用: 服务器目录已移除或当前账号无权使用`。
+> 自检命令：`iiix plugin verify market-gateway`（`status: passed` 表示登录态与上游都正常）。
 
 Mosaic 不重新实现 Market Gateway，也不把 API Key 写进代码。
 

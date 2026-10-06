@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     market_gateway_mode: str = "mcp"
 
     mcp_command: str = "iiix"
-    mcp_args: str = "mcp serve market-gateway"
+    #: iiix CLI >= 0.8.0 的语法：`plugin serve <project-code>`。
+    #: 旧语法 `mcp serve market-gateway` 在 0.8.0 已被删除（`iiix mcp` 不再存在）。
+    mcp_args: str = "plugin serve market-gateway"
 
     # HTTP 模式使用 X-API-Key；不要把真实 key 写入代码或提交到 Git。
     market_gateway_http_url: str = "https://api.x.iiix.dev/v1/d/market-gateway"
