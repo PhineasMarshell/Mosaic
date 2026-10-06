@@ -167,7 +167,7 @@ Researching...
 }
 ```
 
-### 42 个工具覆盖 5 大市场
+### 44 个工具覆盖 5 大市场
 
 | 类别 | 数量 | 覆盖领域 |
 |------|------|----------|
@@ -180,6 +180,7 @@ Researching...
 | 港股北向资金 | 2 | **沪深股通净流入**（东财直连）、恒生指数 |
 | 大宗商品贵金属 | 3 | **黄金(XAU)、白银(XAG)、铂金(XPT)** OKX 永续 |
 | 美股(雪球通道) | 2 | 历史K线(us_klines)、复盘时间窗(us_window)，裸代码 symbol |
+| 美股基本面(SEC EDGAR) | 2 | 营收/净利/EPS/毛利年报+季报(us_fundamentals)、近期申报(us_filings_recent)，XBRL 直连 |
 | 健康检查 | 2 | 网关进程、行情模块状态 |
 
 > 注：`klines`、`snapshot`、`window` 为跨域通用工具，被多个市场域复用。
@@ -501,14 +502,17 @@ Mosaic/
 当前已有 `hk_stock`、`commodities`、`us_stock`、`macro` 四个域就绪，其中：
 - `hk_stock` 可通过 `quote`(腾讯HK代码) + `search`(雪球) 直接获得行情，**北向资金由 `app/research/hk_northbound.py` 直连东财 KLineJSAPI 自动注入**
 - `commodities` 已接入 OKX 永续合约贵金属品种（黄金 XAU / 白银 XAG / 铂金 XPT），铜/原油待接入
-- `us_stock` 已接入雪球通道行情：`us_klines`(历史K线) + `us_window`(复盘时间窗)，symbol 用裸代码如 AAPL；实测 `/market/snapshot` 不支持 `exchange=xueqiu`，实时快照与基本面数据待接入
+- `us_stock` 已接入雪球通道行情：`us_klines`(历史K线) + `us_window`(复盘时间窗)，symbol 用裸代码如 AAPL；实测 `/market/snapshot` 不支持 `exchange=xueqiu`，实时快照待接入。基本面由 `app/research/sec_edgar.py` 直连 SEC EDGAR XBRL 提供：`us_fundamentals`(营收/净利/EPS/毛利的最新年报与季报值，含申报溯源) + `us_filings_recent`(最近 10 份 10-K/10-Q/8-K)，需配置 `SEC_EDGAR_CONTACT`
 - `macro` 需要后续接入专用第三方数据源
 
 ### Internal Tools
 
-Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过 Market Gateway 直接调用内部函数。当前内置了两个内部工具：
+Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过 Market Gateway 直接调用内部函数。当前内置了五个内部工具：
 - `internal_hk_northbound` — 港股通北向资金净流入数据（直连东方财富）
 - `internal_hk_index` — 恒生指数 & 恒生科技指数快照（直连东方财富）
+- `news_search` — DDGS 新闻舆情搜索（跨域通用）
+- `internal_us_fundamentals` — 美股基本面：营收/净利/EPS/毛利（直连 SEC EDGAR XBRL，需 `SEC_EDGAR_CONTACT`）
+- `internal_us_filings_recent` — 美股近期 SEC 申报文件元信息（直连 SEC EDGAR，需 `SEC_EDGAR_CONTACT`）
 
 这为不经过统一网关的外部数据源提供了干净的集成方式，当未来这些接口迁移到 Gateway 后只需更新 tool_name 即可无缝切换。
 

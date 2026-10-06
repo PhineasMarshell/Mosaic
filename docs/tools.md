@@ -1,6 +1,6 @@
 # Tool Registry
 
-第一阶段不是把全部 42 个 Tool 无约束交给 Planner。
+第一阶段不是把全部 44 个 Tool 无约束交给 Planner。
 
 核心逻辑工具：
 
@@ -16,8 +16,10 @@
 | abnormal_reasons | abnormal_reasons_xueqiu_abnormal_reasons_get | 异动 |
 | us_klines | klines_market_klines_post | 美股历史K线(雪球通道, 裸代码) |
 | us_window | window_market_window_post | 美股复盘时间窗(雪球通道) |
+| us_fundamentals | internal_us_fundamentals | 美股基本面：营收/净利/EPS/毛利年报+季报(SEC EDGAR XBRL 直连，需 SEC_EDGAR_CONTACT) |
+| us_filings_recent | internal_us_filings_recent | 美股近期 SEC 申报：最近 10 份 10-K/10-Q/8-K(直连，需 SEC_EDGAR_CONTACT) |
 
-完整清单见 `app/gateway/tool_registry.py`（42 个工具，覆盖 A股/Crypto/港股/大宗商品/美股）。
+完整清单见 `app/gateway/tool_registry.py`（44 个工具，覆盖 A股/Crypto/港股/大宗商品/美股）。
 
 后续新增 Tool 时：
 
