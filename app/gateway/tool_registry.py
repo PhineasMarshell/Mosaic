@@ -6,7 +6,7 @@
 - 新增市场域只需添加新 ToolMeta 条目并更新 DEFAULT_DOMAINS
 - 兼容旧版 resolve_tool(key) → ToolMeta 查询
 
-所有 42 个 Market Gateway Tool 均在此声明，按域分组。
+所有 44 个 Market Gateway Tool 均在此声明，按域分组。
 后续 Tool 名变化时，优先修改这里，而不是 Planner。
 """
 
@@ -509,7 +509,9 @@ _CRYPTO_COINGLASS = [
 ]
 
 # ------------------------------------------------------------------ #
-# 美股 —— 雪球通道（A0 实测：klines/window 可用，snapshot 不支持）      #
+# 美股 —— 雪球通道行情 + SEC EDGAR 基本面                               #
+# （行情 A0 实测：klines/window 可用，snapshot 不支持；                   #
+#  基本面 A0 实测：EDGAR 三类端点带合规 UA 均 200，AAPL/NVDA 核心概念齐全）#
 # ------------------------------------------------------------------ #
 
 _US_STOCK_PLACEHOLDERS = [
@@ -538,6 +540,30 @@ _US_STOCK_PLACEHOLDERS = [
         http_method="POST",
         http_path="/market/window",
         category="technical",
+    ),
+    # A0 实测（2026-10-06，scripts/verify_sec_edgar.py）：EDGAR 三类端点带合规
+    # UA 均 200、无 UA 403；AAPL/NVDA 营收/净利/EPS/毛利候选 tag 齐全（EPS 单位
+    # 是 USD/shares；营收 tag 有新旧口径，研究模块按最新 end 选优）。内部直连，
+    # 需 SEC_EDGAR_CONTACT 配置（SEC 公平访问政策），未配置时运行时返回 error。
+    ToolMeta(
+        "us_fundamentals",
+        "internal_us_fundamentals",
+        "美股基本面（SEC EDGAR XBRL，必填: symbol=美股裸代码如 AAPL；返回营收/净利/EPS/毛利的最新年报与季报值，含申报文件溯源）",
+        domain="us_stock",
+        priority="high",
+        http_method="INTERNAL",
+        http_path="",
+        category="fundamental",
+    ),
+    ToolMeta(
+        "us_filings_recent",
+        "internal_us_filings_recent",
+        "美股近期 SEC 申报（必填: symbol=美股裸代码如 AAPL；返回最近 10 份 10-K/10-Q/8-K 的类型/申报日/文件链接）",
+        domain="us_stock",
+        priority="medium",
+        http_method="INTERNAL",
+        http_path="",
+        category="fundamental",
     ),
 ]
 

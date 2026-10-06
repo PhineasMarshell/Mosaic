@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     #: DDGS 搜索结果缓存时长（秒），缓解限流
     news_search_ttl_seconds: int = 21600
 
+    # ── SEC EDGAR（美股基本面） ────────────────────
+    #: SEC 公平访问政策要求所有请求声明访问身份，格式 "YourName your@email.com"。
+    #: 留空 = 美股基本面工具（us_fundamentals/us_filings_recent）直接返回 error。
+    sec_edgar_contact: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

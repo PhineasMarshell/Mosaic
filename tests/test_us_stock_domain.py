@@ -43,10 +43,10 @@ class TestUsStockRegistry:
     """注册表含美股域条目，且与 allowed 端点匹配。"""
 
     def test_us_stock_domain_has_entries(self):
-        # A0 部分通过：snapshot 不支持雪球通道，只注册 klines + window（2 条）
+        # 行情 2 条（A0 部分通过：snapshot 不支持雪球通道）+ 基本面 2 条（SEC EDGAR 内部工具）
         tools = _us_stock_tools()
-        assert len(tools) == 2, f"期望 2 个美股工具（us_klines/us_window），实际 {[t.key for t in tools]}"
-        assert {t.key for t in tools} == {"us_klines", "us_window"}
+        assert len(tools) == 4, f"期望 4 个美股工具，实际 {[t.key for t in tools]}"
+        assert {t.key for t in tools} == {"us_klines", "us_window", "us_fundamentals", "us_filings_recent"}
 
     def test_us_stock_keys_not_duplicated(self):
         keys = [t.key for t in ALL_TOOLS]
@@ -55,9 +55,15 @@ class TestUsStockRegistry:
         assert len(keys) == len(set(keys)), "美股条目导致全局 key 冲突"
 
     def test_http_path_matches_allowed_openapi(self):
-        """us_* 条目的 http_method/http_path 必须是 allowed_openapi.json 里真实存在的 POST 端点。"""
+        """us_* 的 Gateway 条目 http_method/http_path 必须是 allowed_openapi.json 里真实存在的 POST 端点。
+
+        INTERNAL 条目（us_fundamentals/us_filings_recent）不走 Gateway，跳过本断言
+        （其接线由 tests/test_sec_edgar.py 验证）。
+        """
         spec = _load_allowed_openapi()
         for tool in _us_stock_tools():
+            if tool.http_method == "INTERNAL":
+                continue
             op = spec.get("paths", {}).get(tool.http_path, {}).get(tool.http_method.lower(), {})
             assert op, f"{tool.key}: {tool.http_method} {tool.http_path} 不在 allowed_openapi.json 中"
             assert op.get("operationId") == tool.tool_name, (

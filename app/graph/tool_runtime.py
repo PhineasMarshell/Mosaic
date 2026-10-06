@@ -7,6 +7,7 @@
 - 结果截断（K 线防 prompt 失控）
 - HK 北向内部工具执行
 - DDGS 新闻舆情内部工具执行
+- SEC EDGAR 美股基本面内部工具执行（us_fundamentals / us_filings_recent）
 
 analyst 节点通过此层执行分配给自己的工具。
 """
@@ -24,8 +25,77 @@ from app.models.market import STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, Norm
 from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
 from app.research.news_search import extract_news_entries as _extract_news_entries
 from app.research.news_search import search_news as _search_news
+from app.research.sec_edgar import fetch_us_fundamentals as _fetch_us_fundamentals
+from app.research.sec_edgar import fetch_us_recent_filings as _fetch_us_filings_recent
 
 logger = logging.getLogger(__name__)
+
+#: SEC EDGAR XBRL 数据日级更新 → 基本面缓存 12h
+_US_FUNDAMENTALS_TTL_SECONDS = 12 * 3600
+#: 8-K 可能日内新增 → 申报文件缓存 1h
+_US_FILINGS_TTL_SECONDS = 3600
+
+#: SEC_EDGAR_CONTACT 未配置时的错误文案（SEC 公平访问政策要求声明访问身份）
+_SEC_EDGAR_CONTACT_MISSING = "SEC_EDGAR_CONTACT 未配置（SEC 公平访问政策要求声明访问身份，见 .env.example）"
+
+
+def _normalize_us_fundamentals(data: dict) -> list[NormalizedDatum]:
+    """将 sec_edgar.fetch_us_fundamentals 返回的 dict 转换为 NormalizedDatum。"""
+    symbol = str(data.get("symbol") or "")
+    entries: list[NormalizedDatum] = []
+    for metric in ("revenue", "net_income", "eps", "gross_profit"):
+        value = data.get(metric)
+        if value is None:
+            continue
+        entries.append(
+            NormalizedDatum(
+                source="sec_edgar_xbrl",
+                tool="us_fundamentals",
+                metric=metric,
+                value=value,
+                domain="us_stock",
+                instrument=symbol,
+            )
+        )
+    caveats = data.get("caveats") or []
+    if caveats:
+        entries.append(
+            NormalizedDatum(
+                source="sec_edgar_xbrl",
+                tool="us_fundamentals",
+                metric="_caveats",
+                value=caveats,
+                domain="us_stock",
+                instrument=symbol,
+            )
+        )
+    entries.append(
+        NormalizedDatum(
+            source="sec_edgar_xbrl",
+            tool="us_fundamentals",
+            metric="_meta",
+            value={"cik": data.get("cik"), "source_urls": data.get("source_urls") or []},
+            domain="us_stock",
+            instrument=symbol,
+        )
+    )
+    return entries
+
+
+def _normalize_us_filings(filings: list[dict]) -> list[NormalizedDatum]:
+    """将 sec_edgar.fetch_us_recent_filings 返回的 list 转换为 NormalizedDatum。"""
+    return [
+        NormalizedDatum(
+            source="sec_edgar_submissions",
+            tool="us_filings_recent",
+            metric=f"sec_filing_{f.get('form', 'unknown')}",
+            value=f,
+            domain="us_stock",
+            instrument=None,
+        )
+        for f in filings
+    ]
+
 
 # T18c：会话状态必须"每请求一份"。单例图的节点实例（及其 ToolRuntime）被并发请求共享，
 # 会话状态放实例属性上会串台——第二个请求进入 gateway_session 被当成"嵌套会话"复用
@@ -399,6 +469,103 @@ class ToolRuntime:
                 logger.warning("Internal tool news_search failed: %s", exc)
                 return ToolResult(
                     tool="news_search",
+                    arguments=arguments,
+                    status=STATUS_ERROR,
+                    normalized=[],
+                    error=f"Internal fetch failed: {exc}",
+                )
+
+        if tool_name == "internal_us_fundamentals":
+            # SEC 公平访问政策门闩：未声明访问身份不得发起任何网络请求
+            if not self.settings.sec_edgar_contact:
+                return ToolResult(
+                    tool="us_fundamentals",
+                    arguments=arguments,
+                    status=STATUS_ERROR,
+                    normalized=[],
+                    error=_SEC_EDGAR_CONTACT_MISSING,
+                )
+            cache_key = _make_cache_key(tool_name, arguments)
+            cached = market_cache.get(cache_key)
+            if cached is not None:
+                logger.info("Cache hit for us_fundamentals")
+                return cached
+            try:
+                symbol = str(arguments.get("symbol", "")).strip()
+                if not symbol:
+                    return ToolResult(
+                        tool="us_fundamentals",
+                        arguments=arguments,
+                        status=STATUS_ERROR,
+                        normalized=[],
+                        error="缺少必填参数 symbol（美股裸代码，如 AAPL）",
+                    )
+                data = await _fetch_us_fundamentals(symbol)
+                normalized = _normalize_us_fundamentals(data)
+                # 有至少一个财务指标才算成功（单指标缺失走 caveat，不整体失败）
+                has_metric = any(e.metric in ("revenue", "net_income", "eps", "gross_profit") for e in normalized)
+                logger.info("Internal tool us_fundamentals: %s → %d entries", symbol, len(normalized))
+                result = ToolResult(
+                    tool="us_fundamentals",
+                    arguments=arguments,
+                    status=STATUS_SUCCESS if has_metric else STATUS_ERROR,
+                    normalized=normalized,
+                    error=None if has_metric else "SEC EDGAR 无该公司的有效 10-K/10-Q 财务数据（见 caveats）",
+                )
+                if result.status == STATUS_SUCCESS:
+                    market_cache.set(cache_key, result, ttl=_US_FUNDAMENTALS_TTL_SECONDS)
+                return result
+            except Exception as exc:
+                logger.warning("Internal tool us_fundamentals failed: %s", exc)
+                return ToolResult(
+                    tool="us_fundamentals",
+                    arguments=arguments,
+                    status=STATUS_ERROR,
+                    normalized=[],
+                    error=f"Internal fetch failed: {exc}",
+                )
+
+        if tool_name == "internal_us_filings_recent":
+            if not self.settings.sec_edgar_contact:
+                return ToolResult(
+                    tool="us_filings_recent",
+                    arguments=arguments,
+                    status=STATUS_ERROR,
+                    normalized=[],
+                    error=_SEC_EDGAR_CONTACT_MISSING,
+                )
+            cache_key = _make_cache_key(tool_name, arguments)
+            cached = market_cache.get(cache_key)
+            if cached is not None:
+                logger.info("Cache hit for us_filings_recent")
+                return cached
+            try:
+                symbol = str(arguments.get("symbol", "")).strip()
+                if not symbol:
+                    return ToolResult(
+                        tool="us_filings_recent",
+                        arguments=arguments,
+                        status=STATUS_ERROR,
+                        normalized=[],
+                        error="缺少必填参数 symbol（美股裸代码，如 AAPL）",
+                    )
+                filings = await _fetch_us_filings_recent(symbol, limit=10)
+                normalized = _normalize_us_filings(filings)
+                logger.info("Internal tool us_filings_recent: %s → %d filings", symbol, len(normalized))
+                result = ToolResult(
+                    tool="us_filings_recent",
+                    arguments=arguments,
+                    status=STATUS_SUCCESS if normalized else STATUS_ERROR,
+                    normalized=normalized,
+                    error=None if normalized else "SEC EDGAR 未返回符合条件的申报文件",
+                )
+                if result.status == STATUS_SUCCESS:
+                    market_cache.set(cache_key, result, ttl=_US_FILINGS_TTL_SECONDS)
+                return result
+            except Exception as exc:
+                logger.warning("Internal tool us_filings_recent failed: %s", exc)
+                return ToolResult(
+                    tool="us_filings_recent",
                     arguments=arguments,
                     status=STATUS_ERROR,
                     normalized=[],
