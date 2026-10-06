@@ -47,8 +47,6 @@ async def verify_symbols() -> dict[str, dict[str, bool]]:
             is_future = symbol.endswith(":USDT")
             if is_future and symbol in markets:
                 market = markets[symbol]
-                is_perpetual = market.get("swap", {}).get("future", False) or \
-                               market.get("type") == "swap"
                 results[exchange_name][symbol] = True
                 status = f"✅ swap={market.get('type')}"
             elif symbol in markets:
