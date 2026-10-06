@@ -6,7 +6,7 @@
 - 新增市场域只需添加新 ToolMeta 条目并更新 DEFAULT_DOMAINS
 - 兼容旧版 resolve_tool(key) → ToolMeta 查询
 
-所有 40 个 Market Gateway Tool 均在此声明，按域分组。
+所有 42 个 Market Gateway Tool 均在此声明，按域分组。
 后续 Tool 名变化时，优先修改这里，而不是 Planner。
 """
 
@@ -371,12 +371,6 @@ _COMMODITIES_PLACEHOLDERS = [
     ),
 ]
 
-# ------------------------------------------------------------------ #
-# US Stock 占位符 — 接入第三方 API 后替换真实 operationId             #
-# ------------------------------------------------------------------ #
-
-_US_STOCK_PLACEHOLDERS = []
-
 _CRYPTO_MARKET = [
     ToolMeta(
         "klines",
@@ -515,12 +509,36 @@ _CRYPTO_COINGLASS = [
 ]
 
 # ------------------------------------------------------------------ #
-# US Stock 占位符 — 接入第三方 API 后替换真实 operationId             #
+# 美股 —— 雪球通道（A0 实测：klines/window 可用，snapshot 不支持）      #
 # ------------------------------------------------------------------ #
 
 _US_STOCK_PLACEHOLDERS = [
-    # TODO: 接入 real market data provider (如 AlphaVantage, Finnhub, Polygon)
-    # 当前 key 命名预留，operationId 待填充
+    # A0 实测（2026-10-06，scripts/verify_us_market.py）：exchange=xueqiu 支持美股
+    # 裸代码（AAPL/NVDA/TSLA/SPCX 均返回真实 OHLCV）；但 /market/snapshot 对
+    # exchange=xueqiu 服务端 422「不支持实时快照」，故不注册 us_snapshot。
+    # symbol 格式：裸代码，如 AAPL；港股式前缀/后缀均不需要。
+    ToolMeta(
+        "us_klines",
+        "klines_market_klines_post",
+        "美股历史 K 线（雪球通道，必填: symbol=裸代码如 AAPL, exchange=xueqiu, interval=1d, "
+        "start/end=ISO 日期范围如 2026-09-20/2026-10-05）",
+        domain="us_stock",
+        priority="high",
+        http_method="POST",
+        http_path="/market/klines",
+        category="technical",
+    ),
+    ToolMeta(
+        "us_window",
+        "window_market_window_post",
+        "美股复盘时间窗聚合（雪球通道，必填: symbol=裸代码如 AAPL, exchange=xueqiu, "
+        "interval=1d, anchor=锚定日期如 2026-10-02）",
+        domain="us_stock",
+        priority="medium",
+        http_method="POST",
+        http_path="/market/window",
+        category="technical",
+    ),
 ]
 
 # ------------------------------------------------------------------ #
@@ -657,8 +675,8 @@ def registry_text(domains: list[MarketDomain] | None = None) -> str:
         tools = ALL_TOOLS
     else:
         # T24：按注释的承诺实现——unknown（health 工具）**始终附加**，不受域名限制；
-        # 删掉旧的 `or ALL_TOOLS`：域过滤为空时静默回退成全量注册表，
-        # us_stock（尚未接入工具）域拿到的是全部 40 个工具。
+        # 删掉旧的 `or ALL_TOOLS`：域过滤为空时静默回退成全量注册表。
+        # （历史上 us_stock 曾因未接入工具而拿到全部 40 个工具，即此行为要修的 bug。）
         filtered = [t for t in ALL_TOOLS if t.domain in domains and t.domain != "unknown"]
         health = [t for t in ALL_TOOLS if t.domain == "unknown"]
         if not filtered:
