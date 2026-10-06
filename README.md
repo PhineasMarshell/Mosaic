@@ -51,7 +51,7 @@ Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
 | **Crypto** | ✅ 完整支持 | K线、快照、衍生品(OI/Funding)、清算地图、大户持仓 |
 | **港股** | ✅ 基础支持 | 实时行情(腾讯API)、证券搜索(雪球)、**北向资金净流入**(东财直连)、恒生指数 |
 | **大宗商品** | 🟡 贵金属就绪 | OKX 永续合约：黄金(XAU)、白银(XAG)、铂金(XPT)，铜/原油待接入 |
-| **美股** | 🟡 行情就绪 | 雪球通道：历史K线(us_klines)、复盘时间窗(us_window)，symbol 用裸代码(AAPL)；实时快照/基本面待接入 |
+| **美股** | 🟢 基础支持 | 雪球通道：历史K线(us_klines)、复盘时间窗(us_window)，symbol 用裸代码(AAPL)；基本面：SEC EDGAR XBRL 直连(us_fundamentals 营收/净利/EPS/毛利 + us_filings_recent 近期申报)，需 `SEC_EDGAR_CONTACT`；实时快照无源（`/market/snapshot` 不支持 `exchange=xueqiu`） |
 | **宏观** | 🔴 Placeholder | 预留 domain，CPI/PMI/利率数据待接入 |
 
 ## 核心特性
