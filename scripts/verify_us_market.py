@@ -1,4 +1,4 @@
-"""一次性探针：实测 Market Gateway 雪球通道的美股可用性（US_STOCK_INTEGRATION_PLAN §A0）。
+"""一次性探针：实测 Market Gateway 雪球通道的美股可用性（美股行情接入的 A0 闸门）。
 
 用法：
     .venv/Scripts/python.exe scripts/verify_us_market.py

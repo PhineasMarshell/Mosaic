@@ -48,8 +48,7 @@ testpaths = ["tests"]
 target-version = "py311"
 line-length = 120
 # 较新版本的 ruff formatter（本机 0.16.10 实测）会格式化 Markdown 里的 ```python
-# 代码块；docs/ 与 AUDIT_FIX_PLAN.md 里的嵌入代码是文档示例/已验收归档记录，
-# 不参与格式化门禁。
+# 代码块；docs/ 里的嵌入代码是文档示例，不参与格式化门禁。
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]

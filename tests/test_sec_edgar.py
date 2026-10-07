@@ -1,6 +1,6 @@
 """tests/test_sec_edgar.py — SEC EDGAR 美股基本面接入测试。
 
-SEC_EDGAR_PLAN §A6：
+SEC EDGAR 美股基本面接入测试（源自已完成的 SEC EDGAR 接入，计划文档已归档删除）：
 - 纯函数直测（对齐 test_hk_northbound 模式）：_pick_concept / _summarize_metric /
   _parse_recent_filings / _parse_ticker_map，不真连网；
 - 注册表断言：us_stock 域含 2 条新工具（category=fundamental、INTERNAL、key 无冲突）；

@@ -1,6 +1,7 @@
 """tests/test_us_stock_domain.py — 美股域注册表与域过滤测试。
 
-US_STOCK_INTEGRATION_PLAN §A3：
+美股域注册表与域过滤测试（源自已完成的美股行情接入，计划文档已归档删除）：
+
 - A0 实测（2026-10-06）：雪球通道 klines/window 对美股裸代码可用，
   snapshot 服务端 422「不支持实时快照」→ 只注册 us_klines / us_window（2 条）；
 - 注册表含 us_stock 域条目、key 无重复、http_path 与 allowed_openapi.json 匹配；

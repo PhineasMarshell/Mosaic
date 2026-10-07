@@ -1,4 +1,4 @@
-"""一次性探针：实测 SEC EDGAR 三类端点可用性（SEC_EDGAR_PLAN §A0）。
+"""一次性探针：实测 SEC EDGAR 三类端点可用性（SEC EDGAR 接入的 A0 闸门）。
 
 用法：
     SEC_EDGAR_CONTACT="Mosaic research agent admin@example.com" \
@@ -29,7 +29,7 @@ TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 CONCEPT_URL = "https://data.sec.gov/api/xbrl/companyconcept/CIK{cik:0>10}/us-gaap/{tag}.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:0>10}.json"
 
-# A0 实测对象与候选 tag（SEC_EDGAR_PLAN §1.2）
+# A0 实测对象与候选 tag（旧 SEC EDGAR 接入计划 §1.2，该文档已归档删除）
 COMPANIES = {"AAPL": 320193, "NVDA": 1045810}
 REVENUE_TAGS = ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"]
 EPS_TAGS = ["EarningsPerShareDiluted", "EarningsPerShareBasic"]
