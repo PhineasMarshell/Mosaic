@@ -98,6 +98,7 @@ INDEX = Path(__file__).parent / "web" / "index.html"
 
 @app.get("/health")
 async def health():
+    from app.net_env import proxy_env_warnings
     from app.scheduler.briefs import is_running as scheduler_running
 
     _s = _get_settings()
@@ -109,6 +110,8 @@ async def health():
         "max_tool_calls": _s.max_tool_calls,
         "research_budget_seconds": _s.research_budget_seconds,
         "brief_scheduler": "running" if scheduler_running() else "stopped",
+        #: 非空 = 本进程启动时归一化过 NO_PROXY（否则 httpx 连 client 都构造不出来）
+        "proxy_env_warnings": proxy_env_warnings(),
     }
 
 

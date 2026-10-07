@@ -2,6 +2,14 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.net_env import install_proxy_env_normalization
+
+#: `NO_PROXY` 里形如 `[::1]` 的方括号 IPv6 会让 httpx **构造 client 就崩**
+#: （`InvalidURL: Invalid port: ':1]'`），HTTP 模式与内部直连工具会全线失败。
+#: 这里是一次「唯一必经点」安装：任何要发网络请求的进程都会先 import app.config，
+#: 早于任何 httpx client 的构造。只归一化本进程环境变量，不动用户机器。
+install_proxy_env_normalization()
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
