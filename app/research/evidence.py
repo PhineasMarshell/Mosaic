@@ -14,12 +14,25 @@
 import re
 from typing import Any
 
-from app.gateway.normalizer import _is_eastmoney_f10_tool
+from app.gateway.normalizer import _is_eastmoney_f10_tool, infer_domain_from_tool
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
 
 # ── 上限常量 ────────────────────────────────────
 _MAX_EVIDENCE_ITEMS = 80
+
+
+def _evidence_domain(result: ToolResult) -> str:
+    """B7：证据 domain 按数据/工具推断，禁止硬编码。
+
+    K 线摘要与快照摘要兜底分支曾写死 ``domain="crypto"`` —— 任何域的
+    K 线/快照证据都被标成 crypto（A 股、美股全中）。这里先取 datum 自带
+    的 domain（同非 K 线分支的取法），拿不到再按 operationId 推断
+    （``infer_domain_from_tool`` 自带 "unknown" 兜底，不会返回 None/空串）。
+    """
+    datum_domain = result.normalized[0].domain if result.normalized else None
+    return datum_domain or infer_domain_from_tool(result.tool)
+
 
 # ── 过滤键：原始工具参数（不是证据）─────────────
 _FILTERED_PARAM_KEYS = {
@@ -306,7 +319,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                         Evidence(
                             id=f"{id_prefix}-{counter:03d}",
                             source_tool=result.tool,
-                            domain="crypto",
+                            domain=_evidence_domain(result),
                             metric="candle_summary",
                             value=summary,
                             timestamp=None,
@@ -361,7 +374,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                             Evidence(
                                 id=f"{id_prefix}-{counter:03d}",
                                 source_tool=result.tool,
-                                domain="crypto",
+                                domain=_evidence_domain(result),
                                 metric=metric,
                                 value=value,
                                 timestamp=None,
