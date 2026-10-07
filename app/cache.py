@@ -177,26 +177,26 @@ def _resolve_ttl(tool: str, settings=None) -> float:
         return float(settings.news_search_ttl_seconds)
     mapping = {
         # A 股
-        "quote_tencent_quote_get": QUOTE_TTL,
-        "public_sentiment_ashare_master_sentiment_get": SENTIMENT_TTL,
-        "public_limit_up_count_ashare_master_limit_up_count_get": LIMIT_UP_TTL,
-        "public_limit_up_sectors_ashare_master_limit_up_sectors_get": LIMIT_UP_TTL,
-        "public_limit_up_pool_ashare_master_limit_up_pool_get": LIMIT_UP_TTL,
-        "overview_eastmoney_overview_get": OVERVIEW_TTL,
-        "longhu_xueqiu_longhu_get": LONGHU_TTL,
+        "get_market_quotes": QUOTE_TTL,
+        "get_ashare_sentiment": SENTIMENT_TTL,
+        "get_limit_up_count": LIMIT_UP_TTL,
+        "list_limit_up_sectors": LIMIT_UP_TTL,
+        "list_limit_up_stocks": LIMIT_UP_TTL,
+        "get_company_overview": OVERVIEW_TTL,
+        "get_stock_longhu": LONGHU_TTL,
         # Crypto — K 线 & 快照
-        "klines_market_klines_post": KLINE_TTL,
-        "snapshot_market_snapshot_post": SNAPSHOT_TTL,
+        "get_market_klines": KLINE_TTL,
+        "get_market_snapshot": SNAPSHOT_TTL,
         # Crypto — 衍生品
-        "derivatives_history_market_derivatives_history_post": DERIVATIVES_TTL,
-        "funding_rate_coinglass_funding_rate_get": FUNDING_RATE_TTL,
-        "liquidation_today_coinglass_liquidation_today_get": LIQUIDATION_TTL,
-        "hyperliquid_liqmap_coinglass_hyperliquid_liqmap_get": LIQMAP_TTL,
-        "hyperliquid_top_position_coinglass_hyperliquid_top_position_get": TOP_POSITION_TTL,
-        "exchanges_market_exchanges_get": EXCHANGES_TTL,
+        "get_derivatives_history": DERIVATIVES_TTL,
+        "list_crypto_funding_rates": FUNDING_RATE_TTL,
+        "get_crypto_liquidation_today": LIQUIDATION_TTL,
+        "get_hyperliquid_liquidation_map": LIQMAP_TTL,
+        "get_hyperliquid_top_position": TOP_POSITION_TTL,
+        "list_exchanges": EXCHANGES_TTL,
         # Health checks — 较长缓存（不频繁调用）
-        "health_health_get": 600.0,
-        "health_market_health_get": 300.0,
+        "get_service_health": 600.0,
+        "get_market_health": 300.0,
     }
     return mapping.get(tool, 30.0)
 

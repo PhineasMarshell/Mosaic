@@ -241,10 +241,10 @@ def test_stream_converts_toolresult_objects_to_dicts(monkeypatch):
     report = _make_report()
     tool_result_objs = [
         ToolResult(
-            tool="quote_tencent_quote_get", arguments={"symbol": "600519"}, status="success", normalized=[], error=None
+            tool="get_market_quotes", arguments={"symbol": "600519"}, status="success", normalized=[], error=None
         ),
         ToolResult(
-            tool="public_sentiment_ashare_master_sentiment_get",
+            tool="get_ashare_sentiment",
             arguments={},
             status="partial",
             normalized=[],
@@ -270,7 +270,7 @@ def test_stream_converts_toolresult_objects_to_dicts(monkeypatch):
     assert len(final["tool_results"]) == 2
     for tr in final["tool_results"]:
         assert isinstance(tr, dict), f"tool_results 元素应为 dict，实际 {type(tr)}"
-    assert final["tool_results"][0]["tool"] == "quote_tencent_quote_get"
+    assert final["tool_results"][0]["tool"] == "get_market_quotes"
 
 
 # ------------------------------------------------------------------ #

@@ -274,14 +274,13 @@ def _deep_flatten_value(obj):
 def _is_eastmoney_f10_tool(tool_name):
     """判断是否是 Eastmoney F10 工具（可能有嵌套数据）。"""
     f10_patterns = [
-        "eastmoney_overview_get",
-        "finance_eastmoney",
-        "business_eastmoney",
-        "concept_eastmoney",
-        "shareholders_eastmoney",
-        "survey_eastmoney",
-        "detail_eastmoney",
-        "overview_eastmoney",
+        "get_company_overview",
+        "get_company_finance",
+        "get_company_business",
+        "get_company_concepts",
+        "get_company_shareholders",
+        "get_company_survey",
+        "get_company_detail",
     ]
     return any(p in tool_name for p in f10_patterns)
 

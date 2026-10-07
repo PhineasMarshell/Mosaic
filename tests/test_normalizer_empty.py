@@ -14,7 +14,7 @@ from app.agent.evidence_gate import run_evidence_gate
 from app.gateway.normalizer import normalize_tool_result
 from app.research.evidence import build_evidence
 
-TOOL = "quote_tencent_quote_get"
+TOOL = "get_market_quotes"
 
 
 @pytest.mark.parametrize("raw", [{}, [], "", "Server busy", 0, False])

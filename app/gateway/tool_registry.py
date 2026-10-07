@@ -76,7 +76,7 @@ class ToolMeta:
 _ASHARE_MASTERTOOLS = [
     ToolMeta(
         "sentiment",
-        "public_sentiment_ashare_master_sentiment_get",
+        "get_ashare_sentiment",
         "A股市场情绪时间序列（风险偏好、涨跌比等）",
         domain="a_share",
         priority="high",
@@ -86,7 +86,7 @@ _ASHARE_MASTERTOOLS = [
     ),
     ToolMeta(
         "limit_up_count",
-        "public_limit_up_count_ashare_master_limit_up_count_get",
+        "get_limit_up_count",
         "A股当日涨停家数（活跃指标）",
         domain="a_share",
         priority="high",
@@ -96,7 +96,7 @@ _ASHARE_MASTERTOOLS = [
     ),
     ToolMeta(
         "limit_up_sectors",
-        "public_limit_up_sectors_ashare_master_limit_up_sectors_get",
+        "list_limit_up_sectors",
         "A股当日涨停题材与板块分布（题材强度）",
         domain="a_share",
         priority="high",
@@ -106,7 +106,7 @@ _ASHARE_MASTERTOOLS = [
     ),
     ToolMeta(
         "limit_up_pool",
-        "public_limit_up_pool_ashare_master_limit_up_pool_get",
+        "list_limit_up_stocks",
         "A股当日涨停股票明细（深入调查用）",
         domain="a_share",
         priority="medium",
@@ -123,7 +123,7 @@ _ASHARE_MASTERTOOLS = [
 _ASHARE_FUNDAMENTALS = [
     ToolMeta(
         "overview",
-        "overview_eastmoney_overview_get",
+        "get_company_overview",
         "A股全市场估值/市值、涨跌、两融、未来解禁的一览",
         domain="a_share",
         priority="high",
@@ -133,7 +133,7 @@ _ASHARE_FUNDAMENTALS = [
     ),
     ToolMeta(
         "detail",
-        "detail_eastmoney_detail_get",
+        "get_company_detail",
         "A股公司股东、两融、解禁、减持时间表线",
         domain="a_share",
         priority="medium",
@@ -143,7 +143,7 @@ _ASHARE_FUNDAMENTALS = [
     ),
     ToolMeta(
         "business",
-        "business_eastmoney_f10_business_get",
+        "get_company_business",
         "A股公司主营业务信息",
         domain="a_share",
         priority="low",
@@ -153,7 +153,7 @@ _ASHARE_FUNDAMENTALS = [
     ),
     ToolMeta(
         "concept",
-        "concept_eastmoney_f10_concept_get",
+        "get_company_concepts",
         "A股公司概念标签",
         domain="a_share",
         priority="low",
@@ -163,7 +163,7 @@ _ASHARE_FUNDAMENTALS = [
     ),
     ToolMeta(
         "finance",
-        "finance_eastmoney_f10_finance_get",
+        "get_company_finance",
         "A股公司财务信息",
         domain="a_share",
         priority="low",
@@ -173,7 +173,7 @@ _ASHARE_FUNDAMENTALS = [
     ),
     ToolMeta(
         "shareholders",
-        "shareholders_eastmoney_f10_shareholders_get",
+        "get_company_shareholders",
         "A股公司股东信息",
         domain="a_share",
         priority="low",
@@ -183,7 +183,7 @@ _ASHARE_FUNDAMENTALS = [
     ),
     ToolMeta(
         "survey",
-        "survey_eastmoney_f10_survey_get",
+        "get_company_survey",
         "A股公司资料/调查信息",
         domain="a_share",
         priority="low",
@@ -200,72 +200,72 @@ _ASHARE_FUNDAMENTALS = [
 _ASHARE_MICRO = [
     ToolMeta(
         "quote",
-        "quote_tencent_quote_get",
+        "get_market_quotes",
         "多市场实时行情与五档盘口（腾讯 API，支持 A 股 / 港股 / US Stock 代码）",
         domain="a_share",
         priority="medium",
         http_method="GET",
-        http_path="/tencent/quote",
+        http_path="/market/quotes",
         category="technical",
     ),
     ToolMeta(
         "longhu",
-        "longhu_xueqiu_longhu_get",
+        "get_stock_longhu",
         "A 股龙虎榜资金流向",
         domain="a_share",
         priority="medium",
         http_method="GET",
-        http_path="/xueqiu/longhu",
+        http_path="/market/longhu",
         category="moneyflow",
     ),
     ToolMeta(
         "abnormal_reasons",
-        "abnormal_reasons_xueqiu_abnormal_reasons_get",
+        "get_stock_abnormal_reasons",
         "雪球日K异常涨跌与趋势区间归因",
         domain="a_share",
         priority="medium",
         http_method="GET",
-        http_path="/xueqiu/abnormal-reasons",
+        http_path="/market/abnormal-reasons",
         category="technical",
     ),
     ToolMeta(
         "orderbook",
-        "orderbook_xueqiu_orderbook_get",
+        "get_market_orderbook",
         "盘口挂单数据",
         domain="a_share",
         priority="low",
         http_method="GET",
-        http_path="/xueqiu/orderbook",
+        http_path="/market/orderbook",
         category="technical",
     ),
     ToolMeta(
         "trades",
-        "trades_xueqiu_trades_get",
+        "list_market_trades",
         "逐笔成交数据",
         domain="a_share",
         priority="low",
         http_method="GET",
-        http_path="/xueqiu/trades",
+        http_path="/market/trades",
         category="technical",
     ),
     ToolMeta(
         "timeline",
-        "timeline_xueqiu_timeline_get",
+        "list_stock_discussions",
         "分时/时间线数据",
         domain="a_share",
         priority="low",
         http_method="GET",
-        http_path="/xueqiu/timeline",
+        http_path="/market/discussions",
         category="technical",
     ),
     ToolMeta(
         "search",
-        "search_xueqiu_search_get",
+        "search_stocks",
         "证券搜索（支持 A 股 + 港股，仅用于候选筛选，不替代身份确认）",
         domain="a_share",
         priority="low",
         http_method="GET",
-        http_path="/xueqiu/search",
+        http_path="/market/search",
         category="technical",
     ),
 ]
@@ -277,29 +277,29 @@ _ASHARE_MICRO = [
 
 _HK_STOCK_PLACEHOLDERS = [
     # TODO: 接入独立港股数据源（如 Wind、Bloomberg、Yahoo Finance API）
-    # 当前通过 quote_tencent_quote_get 传入 HK 股票代码（如 HK00700）获取行情
+    # 当前通过 get_market_quotes 传入 HK 股票代码（如 HK00700）获取行情
     # 后续专用工具: hk_quote, hk_realtime, hk_flow_southbound 等
     # T24：domain 修为 hk_stock —— 旧值 a_share 让港股工具被算进 A 股域、
     # 分派给错误的 analyst。注意这两个条目与 A 股 quote/search 复用同一
     # operationId：BY_NAME 的规范条目仍是 A 股原生的 quote/search（见索引区）。
     ToolMeta(
         "hk_quote",
-        "quote_tencent_quote_get",
+        "get_market_quotes",
         "港股实时行情（腾讯 API，传入 HK 代码如 HK03400/00700）",
         domain="hk_stock",
         priority="high",
         http_method="GET",
-        http_path="/tencent/quote",
+        http_path="/market/quotes",
         category="technical",
     ),
     ToolMeta(
         "hk_search",
-        "search_xueqiu_search_get",
+        "search_stocks",
         "港股证券搜索（雪球，支持 HK 股票代码和名称）",
         domain="hk_stock",
         priority="medium",
         http_method="GET",
-        http_path="/xueqiu/search",
+        http_path="/market/search",
         # 与 A 股同名工具（search → technical）对齐；旧值 moneyflow 漂移
         category="technical",
     ),
@@ -341,7 +341,7 @@ _COMMODITIES_PLACEHOLDERS = [
     # ⚠️ PALL（钯金）、铜、原油暂无主流 crypto 交易所标准 USDT 永续
     ToolMeta(
         "commodity_gold",
-        "klines_market_klines_post",
+        "get_market_klines",
         "黄金 XAU 价格 K 线（OKX 永续合约，需 symbol=XAU/USDT:USDT）",
         domain="commodities",
         priority="high",
@@ -351,7 +351,7 @@ _COMMODITIES_PLACEHOLDERS = [
     ),
     ToolMeta(
         "commodity_silver",
-        "snapshot_market_snapshot_post",
+        "get_market_snapshot",
         "白银 XAG 实时行情快照（OKX 永续合约，需 symbol=XAG/USDT:USDT）",
         domain="commodities",
         priority="medium",
@@ -361,7 +361,7 @@ _COMMODITIES_PLACEHOLDERS = [
     ),
     ToolMeta(
         "commodity_platinum",
-        "snapshot_market_snapshot_post",
+        "get_market_snapshot",
         "铂金 XPT 实时行情快照（OKX 永续合约，需 symbol=XPT/USDT:USDT）",
         domain="commodities",
         priority="low",
@@ -374,7 +374,7 @@ _COMMODITIES_PLACEHOLDERS = [
 _CRYPTO_MARKET = [
     ToolMeta(
         "klines",
-        "klines_market_klines_post",
+        "get_market_klines",
         "通用历史 K 线（POST，支持任意 symbol 如 BTC/USDT, XAU/USDT:USDT, SH600519，返回 UTC 毫秒时间戳）",
         domain="cross",
         priority="high",
@@ -384,7 +384,7 @@ _CRYPTO_MARKET = [
     ),
     ToolMeta(
         "snapshot",
-        "snapshot_market_snapshot_post",
+        "get_market_snapshot",
         "通用行情快照 POST（价格/24h量/涨跌幅，支持任意 symbol 如 XAU/USDT:USDT, BTC/USDT）",
         domain="cross",
         priority="high",
@@ -394,7 +394,7 @@ _CRYPTO_MARKET = [
     ),
     ToolMeta(
         "window",
-        "window_market_window_post",
+        "get_market_window",
         "复盘时间窗聚合数据（通用，支持任意 symbol）",
         domain="cross",
         priority="medium",
@@ -404,7 +404,7 @@ _CRYPTO_MARKET = [
     ),
     ToolMeta(
         "exchanges",
-        "exchanges_market_exchanges_get",
+        "list_exchanges",
         "交易所/周期能力查询（确认支持情况）",
         domain="crypto",
         priority="medium",
@@ -421,7 +421,7 @@ _CRYPTO_MARKET = [
 _CRYPTO_DERIVATIVES = [
     ToolMeta(
         "derivatives_history",
-        "derivatives_history_market_derivatives_history_post",
+        "get_derivatives_history",
         "永续历史资金费率、OI、多空指标",
         domain="crypto",
         priority="high",
@@ -438,7 +438,7 @@ _CRYPTO_DERIVATIVES = [
 _CRYPTO_COINGLASS = [
     ToolMeta(
         "hyperliquid_symbols",
-        "hyperliquid_symbols_coinglass_hyperliquid_symbols_get",
+        "list_hyperliquid_symbols",
         "Hyperliquid 可用结算币种列表",
         domain="crypto",
         priority="medium",
@@ -448,7 +448,7 @@ _CRYPTO_COINGLASS = [
     ),
     ToolMeta(
         "liqmap",
-        "hyperliquid_liqmap_coinglass_hyperliquid_liqmap_get",
+        "get_hyperliquid_liquidation_map",
         "大户仓位与清算价位地图",
         domain="crypto",
         priority="high",
@@ -458,7 +458,7 @@ _CRYPTO_COINGLASS = [
     ),
     ToolMeta(
         "top_position",
-        "hyperliquid_top_position_coinglass_hyperliquid_top_position_get",
+        "get_hyperliquid_top_position",
         "跨币种截断持仓榜",
         domain="crypto",
         priority="high",
@@ -468,7 +468,7 @@ _CRYPTO_COINGLASS = [
     ),
     ToolMeta(
         "user_count",
-        "hyperliquid_user_count_coinglass_hyperliquid_user_count_get",
+        "get_hyperliquid_user_count",
         "Hyperliquid 全站地址数时序",
         domain="crypto",
         priority="medium",
@@ -478,7 +478,7 @@ _CRYPTO_COINGLASS = [
     ),
     ToolMeta(
         "vaults",
-        "hyperliquid_vaults_coinglass_hyperliquid_vaults_get",
+        "list_hyperliquid_vaults",
         "金库 APR/回撤",
         domain="crypto",
         priority="low",
@@ -488,7 +488,7 @@ _CRYPTO_COINGLASS = [
     ),
     ToolMeta(
         "liquidation_today",
-        "liquidation_today_coinglass_liquidation_today_get",
+        "get_crypto_liquidation_today",
         "当日全网爆仓统计",
         domain="crypto",
         priority="high",
@@ -498,7 +498,7 @@ _CRYPTO_COINGLASS = [
     ),
     ToolMeta(
         "funding_rate",
-        "funding_rate_coinglass_funding_rate_get",
+        "list_crypto_funding_rates",
         "资金费率榜",
         domain="crypto",
         priority="high",
@@ -521,7 +521,7 @@ _US_STOCK_PLACEHOLDERS = [
     # symbol 格式：裸代码，如 AAPL；港股式前缀/后缀均不需要。
     ToolMeta(
         "us_klines",
-        "klines_market_klines_post",
+        "get_market_klines",
         "美股历史 K 线（雪球通道，必填: symbol=裸代码如 AAPL, exchange=xueqiu, interval=1d, "
         "start/end=ISO 日期范围如 2026-09-20/2026-10-05）",
         domain="us_stock",
@@ -532,7 +532,7 @@ _US_STOCK_PLACEHOLDERS = [
     ),
     ToolMeta(
         "us_window",
-        "window_market_window_post",
+        "get_market_window",
         "美股复盘时间窗聚合（雪球通道，必填: symbol=裸代码如 AAPL, exchange=xueqiu, "
         "interval=1d, anchor=锚定日期如 2026-10-02）",
         domain="us_stock",
@@ -603,7 +603,7 @@ _NEWS_SEARCH = [
 _HEALTH_TOOLS = [
     ToolMeta(
         "health",
-        "health_health_get",
+        "get_service_health",
         "网关进程和本机依赖健康状态",
         domain="unknown",
         priority="low",
@@ -613,7 +613,7 @@ _HEALTH_TOOLS = [
     ),
     ToolMeta(
         "market_health",
-        "health_market_health_get",
+        "get_market_health",
         "行情模块状态",
         domain="unknown",
         priority="low",

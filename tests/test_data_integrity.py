@@ -32,14 +32,14 @@ def _settings(**over):
 
 def test_raw_none_without_error_is_not_success():
     """HTTP 401 / MCP 失败以前会走到这里，产出 value="None" 的"成功"证据。"""
-    r = normalize_tool_result("quote_tencent_quote_get", {"symbol": "sh600519"}, None)
+    r = normalize_tool_result("get_market_quotes", {"symbol": "sh600519"}, None)
     assert r.status == "error"
     assert r.error
     assert r.normalized == []
 
 
 def test_explicit_error_still_wins():
-    r = normalize_tool_result("quote_tencent_quote_get", {}, None, error="boom")
+    r = normalize_tool_result("get_market_quotes", {}, None, error="boom")
     assert r.status == "error"
     assert r.error == "boom"
 
@@ -47,7 +47,7 @@ def test_explicit_error_still_wins():
 def test_empty_dict_is_treated_as_no_data():
     """T1：{} 与 None 一样代表"查不到数据"，必须判 error 且产出 0 条数据点，
     否则空载荷会被当成成功证据通过 Evidence Gate。"""
-    r = normalize_tool_result("quote_tencent_quote_get", {}, {})
+    r = normalize_tool_result("get_market_quotes", {}, {})
     assert r.status == "error"
     assert r.normalized == []
     assert r.error
@@ -73,7 +73,7 @@ def _closes(result):
 def test_time_series_truncation_keeps_the_newest():
     """回归：90 天日线只保留前 50 根 → "最新收盘"比真实值低 21%。"""
     r = normalize_tool_result(
-        "klines_market_klines_post",
+        "get_market_klines",
         {"symbol": "BTC/USDT", "interval": "1d"},
         {"candles": _candles(90), "count": 90, "partial": False},
     )
@@ -85,7 +85,7 @@ def test_time_series_truncation_keeps_the_newest():
 
 def test_time_series_truncation_is_reported():
     r = normalize_tool_result(
-        "klines_market_klines_post",
+        "get_market_klines",
         {},
         {"candles": _candles(90), "count": 90},
     )
@@ -99,7 +99,7 @@ def test_ranked_list_truncation_keeps_the_head():
     """排行榜/名单类不是时间序列，头部才是重点。"""
     rows = [{"rank": i, "name": f"stock{i}", "value": i} for i in range(90)]
     r = normalize_tool_result(
-        "public_limit_up_pool_ashare_master_limit_up_pool_get",
+        "list_limit_up_stocks",
         {},
         {"data": rows},
     )
@@ -109,7 +109,7 @@ def test_ranked_list_truncation_keeps_the_head():
 
 
 def test_no_truncation_no_partial_no_note():
-    r = normalize_tool_result("klines_market_klines_post", {}, {"candles": _candles(10)})
+    r = normalize_tool_result("get_market_klines", {}, {"candles": _candles(10)})
     assert r.status == "success"
     assert r.partial is False
     assert r.note is None
@@ -118,7 +118,7 @@ def test_no_truncation_no_partial_no_note():
 def test_upstream_note_is_preserved():
     """gateway 契约：partial=true 时另有 note 说明原因。以前被 _METADATA_KEYS 丢掉。"""
     r = normalize_tool_result(
-        "klines_market_klines_post",
+        "get_market_klines",
         {},
         {"candles": _candles(3), "partial": True, "note": "hyperliquid 超出保留期"},
     )
@@ -154,7 +154,7 @@ async def test_mcp_is_error_becomes_error_result():
             )
 
     client.session = FakeSession()
-    r = await client.call("hyperliquid_liqmap_coinglass_hyperliquid_liqmap_get", {"symbol": "KPEPE"})
+    r = await client.call("get_hyperliquid_liquidation_map", {"symbol": "KPEPE"})
     assert r.status == "error"
     assert "KPEPE" in (r.error or "")
     assert r.normalized == []
@@ -176,7 +176,7 @@ async def test_mcp_success_path_unchanged():
             )
 
     client.session = FakeSession()
-    r = await client.call("quote_tencent_quote_get", {"symbol": "sh600519"})
+    r = await client.call("get_market_quotes", {"symbol": "sh600519"})
     assert r.status == "success"
 
 
@@ -218,7 +218,7 @@ async def test_http_401_is_an_error_not_a_none_success():
             return FakeResponse()
 
     client.client = FakeHttp()
-    r = await client.call("quote_tencent_quote_get", {"symbol": "sh600519"})
+    r = await client.call("get_market_quotes", {"symbol": "sh600519"})
     assert r.status == "error"
     assert "401" in (r.error or "")
     assert r.normalized == []

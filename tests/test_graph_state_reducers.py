@@ -17,19 +17,19 @@ from app.models.market import NormalizedDatum, ToolResult
 
 def _payload(value: float, analyst: str = "technical", symbol: str = "600519") -> dict:
     tr = ToolResult(
-        tool="quote_tencent_quote_get",
+        tool="get_market_quotes",
         arguments={"symbol": symbol},
         status="success",
         normalized=[NormalizedDatum(metric="price", value=value, tool="quote")],
     )
     return {
         "results": [tr],
-        "evidence": [Evidence(id=f"{analyst}-001", source_tool="quote_tencent_quote_get", metric="price", value=value)],
+        "evidence": [Evidence(id=f"{analyst}-001", source_tool="get_market_quotes", metric="price", value=value)],
         "findings": [
             {
                 "analyst": analyst,
                 "digest": f"执行了 1 个工具 (value={value})",
-                "tools_used": ["quote_tencent_quote_get"],
+                "tools_used": ["get_market_quotes"],
                 "failed": False,
             }
         ],

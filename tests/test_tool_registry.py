@@ -7,7 +7,7 @@ from app.gateway.tool_registry import by_category, registry_text, resolve_tool
 
 def test_registry_resolves_core_tool():
     meta = resolve_tool("sentiment")
-    assert meta.tool_name == "public_sentiment_ashare_master_sentiment_get"
+    assert meta.tool_name == "get_ashare_sentiment"
 
 
 def test_registry_text_contains_core_tools():

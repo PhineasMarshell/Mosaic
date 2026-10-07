@@ -182,7 +182,7 @@ async def test_budget_limits_real_executions():
     route = [{"analyst": "nonexistent", "budget": 1, "tool_calls": _ROUTE_TOOLS}]
     results = await node._execute_tools({"route": route}, set())
     assert len(results) == 1
-    assert executed == ["public_sentiment_ashare_master_sentiment_get"]
+    assert executed == ["get_ashare_sentiment"]
 
 
 @pytest.mark.asyncio
@@ -238,8 +238,8 @@ async def test_skipped_calls_do_not_consume_budget():
     ]
     results = await node._execute_tools({"route": route}, set())
     assert [r.tool for r in results] == [
-        "public_sentiment_ashare_master_sentiment_get",
-        "public_limit_up_count_ashare_master_limit_up_count_get",
+        "get_ashare_sentiment",
+        "get_limit_up_count",
     ]
     assert len(executed) == 2
 
@@ -331,7 +331,7 @@ def test_build_arguments_injects_symbol_when_stocks_provided():
 
     settings = Settings()
     node = _TestAnalyst(settings)
-    meta = types.SimpleNamespace(tool_name="detail_eastmoney_detail_get", key="detail")
+    meta = types.SimpleNamespace(tool_name="get_company_detail", key="detail")
     args = node._build_arguments(meta, "a_share", ["600519"])
     assert args == {"symbol": "600519"}
 
@@ -342,7 +342,7 @@ def test_build_arguments_empty_without_stocks():
 
     settings = Settings()
     node = _TestAnalyst(settings)
-    meta = types.SimpleNamespace(tool_name="detail_eastmoney_detail_get", key="detail")
+    meta = types.SimpleNamespace(tool_name="get_company_detail", key="detail")
     args = node._build_arguments(meta, "a_share", None)
     assert args == {}
 
@@ -353,7 +353,7 @@ def test_build_arguments_no_symbol_for_whitelist_tools():
 
     settings = Settings()
     node = _TestAnalyst(settings)
-    meta = types.SimpleNamespace(tool_name="public_limit_up_pool_ashare_master_limit_up_pool_get", key="limit_up_pool")
+    meta = types.SimpleNamespace(tool_name="list_limit_up_stocks", key="limit_up_pool")
     args = node._build_arguments(meta, "a_share", ["600519"])
     assert args == {}
 
@@ -422,12 +422,12 @@ def test_whitelist_is_frozenset():
     """WHITELIST_NO_SYMBOL 应为 frozenset（不可变，查找 O(1)）。"""
     assert isinstance(MarketAnalystNode.WHITELIST_NO_SYMBOL, frozenset)
     # sentiment / limit_up_pool (aggregate) 应该在白名单里
-    assert "public_sentiment_ashare_master_sentiment_get" in MarketAnalystNode.WHITELIST_NO_SYMBOL
-    assert "public_limit_up_pool_ashare_master_limit_up_pool_get" in MarketAnalystNode.WHITELIST_NO_SYMBOL
+    assert "get_ashare_sentiment" in MarketAnalystNode.WHITELIST_NO_SYMBOL
+    assert "list_limit_up_stocks" in MarketAnalystNode.WHITELIST_NO_SYMBOL
     # detail (company-specific) 不应该在白名单里
-    assert "detail_eastmoney_detail_get" not in MarketAnalystNode.WHITELIST_NO_SYMBOL
+    assert "get_company_detail" not in MarketAnalystNode.WHITELIST_NO_SYMBOL
     # overview (全市场数据 ~749KB) 也不应在白名单 —— 会触发网关限流
-    assert "overview_eastmoney_overview_get" not in MarketAnalystNode.WHITELIST_NO_SYMBOL
+    assert "get_company_overview" not in MarketAnalystNode.WHITELIST_NO_SYMBOL
 
 
 # ------------------------------------------------------------------ #
@@ -694,7 +694,7 @@ async def test_analyst_evidence_is_evidence_instances(monkeypatch):
     assert len(evidence) > 0, "evidence 不应为空"
     for e in evidence:
         assert isinstance(e, Evidence), f"evidence 元素应为 Evidence 实例，实际 {type(e)}"
-        assert e.source_tool == "public_sentiment_ashare_master_sentiment_get"
+        assert e.source_tool == "get_ashare_sentiment"
 
 
 # ------------------------------------------------------------------ #
@@ -770,7 +770,7 @@ async def test_reasoning_node_accepts_dict_evidence(monkeypatch):
     dict_evidence = [
         {
             "id": "e1",
-            "source_tool": "quote_tencent_quote_get",
+            "source_tool": "get_market_quotes",
             "domain": "a_share",
             "metric": "price",
             "value": 3800,
@@ -778,7 +778,7 @@ async def test_reasoning_node_accepts_dict_evidence(monkeypatch):
         },
         {
             "id": "e2",
-            "source_tool": "public_sentiment_ashare_master_sentiment_get",
+            "source_tool": "get_ashare_sentiment",
             "domain": "a_share",
             "metric": "risk_on",
             "value": 0.3,

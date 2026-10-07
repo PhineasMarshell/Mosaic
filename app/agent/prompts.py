@@ -88,7 +88,7 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
    - partial: 是否 partial 数据（true/false）
    - note: 备注说明（可选）
 
-例如：[{{"id":"technical-001","source_tool":"public_sentiment_ashare_master_sentiment_get","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
+例如：[{{"id":"technical-001","source_tool":"get_ashare_sentiment","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
 
 "strong_areas": 强势方向列表（What's Moving）
 

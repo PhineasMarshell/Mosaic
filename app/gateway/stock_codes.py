@@ -1,6 +1,6 @@
 """常见股票/指数代码映射表。
 
-用于 Market Gateway 的 quote_tencent_quote_get 和 klines_market_klines_post 工具。
+用于 Market Gateway 的 get_market_quotes 和 get_market_klines 工具。
 腾讯行情 API 的代码格式：
 - A 股：SH + 代码（如 SH600519）、SZ + 代码（如 SZ000001）
 - 指数：纯数字（如 000300 代表沪深 300）

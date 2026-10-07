@@ -46,18 +46,18 @@ class TestTTLResolution:
     """验证按工具名解析 TTL。"""
 
     def test_resolve_ashare_tools(self):
-        assert _resolve_ttl("quote_tencent_quote_get") == QUOTE_TTL
-        assert _resolve_ttl("public_sentiment_ashare_master_sentiment_get") == SENTIMENT_TTL
-        assert _resolve_ttl("public_limit_up_count_ashare_master_limit_up_count_get") > 0
+        assert _resolve_ttl("get_market_quotes") == QUOTE_TTL
+        assert _resolve_ttl("get_ashare_sentiment") == SENTIMENT_TTL
+        assert _resolve_ttl("get_limit_up_count") > 0
 
     def test_resolve_crypto_tools(self):
-        assert _resolve_ttl("snapshot_market_snapshot_post") == SNAPSHOT_TTL
-        assert _resolve_ttl("klines_market_klines_post") == KLINE_TTL
-        assert _resolve_ttl("derivatives_history_market_derivatives_history_post") == DERIVATIVES_TTL
-        assert _resolve_ttl("funding_rate_coinglass_funding_rate_get") == FUNDING_RATE_TTL
-        assert _resolve_ttl("liquidation_today_coinglass_liquidation_today_get") == LIQUIDATION_TTL
-        assert _resolve_ttl("hyperliquid_liqmap_coinglass_hyperliquid_liqmap_get") == LIQMAP_TTL
-        assert _resolve_ttl("exchanges_market_exchanges_get") == EXCHANGES_TTL
+        assert _resolve_ttl("get_market_snapshot") == SNAPSHOT_TTL
+        assert _resolve_ttl("get_market_klines") == KLINE_TTL
+        assert _resolve_ttl("get_derivatives_history") == DERIVATIVES_TTL
+        assert _resolve_ttl("list_crypto_funding_rates") == FUNDING_RATE_TTL
+        assert _resolve_ttl("get_crypto_liquidation_today") == LIQUIDATION_TTL
+        assert _resolve_ttl("get_hyperliquid_liquidation_map") == LIQMAP_TTL
+        assert _resolve_ttl("list_exchanges") == EXCHANGES_TTL
 
     def test_unknown_tool_gets_default(self):
         default_ttl = _resolve_ttl("nonexistent_tool_xyz")

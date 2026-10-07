@@ -119,8 +119,8 @@ class TestResolveUsStockTool:
     @pytest.mark.parametrize(
         ("key", "tool_name", "http_path", "category", "priority"),
         [
-            ("us_klines", "klines_market_klines_post", "/market/klines", "technical", "high"),
-            ("us_window", "window_market_window_post", "/market/window", "technical", "medium"),
+            ("us_klines", "get_market_klines", "/market/klines", "technical", "high"),
+            ("us_window", "get_market_window", "/market/window", "technical", "medium"),
         ],
     )
     def test_resolve_fields(self, key, tool_name, http_path, category, priority):

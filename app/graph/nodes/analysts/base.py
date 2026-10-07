@@ -47,21 +47,21 @@ class MarketAnalystNode:
     WHITELIST_NO_SYMBOL: set[str] = frozenset(
         [
             # —— technical (情绪/涨跌池/板块) ——
-            "public_sentiment_ashare_master_sentiment_get",
-            "public_limit_up_count_ashare_master_limit_up_count_get",
-            "public_limit_up_sectors_ashare_master_limit_up_sectors_get",
-            "public_limit_up_pool_ashare_master_limit_up_pool_get",
+            "get_ashare_sentiment",
+            "get_limit_up_count",
+            "list_limit_up_sectors",
+            "list_limit_up_stocks",
             # —— crypto 无币种要求 ——
-            "hyperliquid_symbols_coinglass_hyperliquid_symbols_get",
-            "hyperliquid_user_count_coinglass_hyperliquid_user_count_get",
-            "hyperliquid_vaults_coinglass_hyperliquid_vaults_get",
-            "exchanges_market_exchanges_get",
-            "health_health_get",
-            "health_market_health_get",
+            "list_hyperliquid_symbols",
+            "get_hyperliquid_user_count",
+            "list_hyperliquid_vaults",
+            "list_exchanges",
+            "get_service_health",
+            "get_market_health",
             # —— T8：搜索 / 新闻 / 龙虎榜 / 港股内部聚合，本就不依赖 A 股 symbol ——
             "news_search",
-            "search_xueqiu_search_get",
-            "longhu_xueqiu_longhu_get",
+            "search_stocks",
+            "get_stock_longhu",
             "internal_hk_northbound",
             "internal_hk_index",
         ]
@@ -282,10 +282,10 @@ class MarketAnalystNode:
             arguments["symbol"] = ";".join(stocks)
 
         # 特定工具的额外参数：
-        if tool_name == "longhu_xueqiu_longhu_get":
+        if tool_name == "get_stock_longhu":
             # 龙虎榜可以传 page，但 symbol 可选（全市场榜单）；有股票时只查该股
             pass  # symbol 已在上面设置
-        elif tool_name == "finance_eastmoney_f10_finance_get":
+        elif tool_name == "get_company_finance":
             arguments["periods"] = getattr(meta, "periods_hint", 8)
 
         return arguments

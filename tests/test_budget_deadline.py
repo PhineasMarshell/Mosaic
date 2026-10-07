@@ -27,7 +27,7 @@ class _RecordingGateway:
 
     async def __aenter__(self):
         class _T:
-            name = "quote_tencent_quote_get"
+            name = "get_market_quotes"
 
         self.tools = [_T()]
         return self

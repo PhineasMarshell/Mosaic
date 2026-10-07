@@ -36,7 +36,7 @@ async def test_retry_stops_when_deadline_exhausted():
     gw = _make_client(handler)
     try:
         deadline = time.monotonic() + 0.05
-        result = await gw.call("quote_tencent_quote_get", {"symbol": "600519"}, deadline=deadline)
+        result = await gw.call("get_market_quotes", {"symbol": "600519"}, deadline=deadline)
     finally:
         await _close(gw)
 
@@ -56,7 +56,7 @@ async def test_already_expired_deadline_makes_no_request():
 
     gw = _make_client(handler)
     try:
-        result = await gw.call("quote_tencent_quote_get", {"symbol": "600519"}, deadline=time.monotonic() - 1)
+        result = await gw.call("get_market_quotes", {"symbol": "600519"}, deadline=time.monotonic() - 1)
     finally:
         await _close(gw)
 
@@ -78,7 +78,7 @@ async def test_generous_budget_keeps_retry_behaviour():
     gw = _make_client(handler)
     try:
         result = await gw.call(
-            "quote_tencent_quote_get",
+            "get_market_quotes",
             {"symbol": "600519"},
             deadline=time.monotonic() + 60,
         )
@@ -100,7 +100,7 @@ async def test_backoff_capped_by_remaining_budget():
     gw = _make_client(handler)
     try:
         started = time.monotonic()
-        result = await gw.call("quote_tencent_quote_get", {"symbol": "600519"}, deadline=time.monotonic() + 0.3)
+        result = await gw.call("get_market_quotes", {"symbol": "600519"}, deadline=time.monotonic() + 0.3)
         elapsed = time.monotonic() - started
     finally:
         await _close(gw)

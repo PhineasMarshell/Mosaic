@@ -42,7 +42,7 @@ def test_prompt_evidence_id_example_matches_real_generated_format():
     evidence = build_evidence(
         [
             ToolResult(
-                tool="public_sentiment_ashare_master_sentiment_get",
+                tool="get_ashare_sentiment",
                 arguments={},
                 status="error",
                 error="upstream unavailable",

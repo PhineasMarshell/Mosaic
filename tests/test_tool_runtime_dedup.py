@@ -24,7 +24,7 @@ class CountingGateway:
 
     async def __aenter__(self):
         class _T:
-            name = "quote_tencent_quote_get"
+            name = "get_market_quotes"
 
         self.tools = [_T()]
         return self
@@ -60,7 +60,7 @@ async def test_same_signature_called_three_times_hits_gateway_once():
     results = []
     async with rt.gateway_session():
         for _ in range(3):
-            results.append(await rt.execute("quote_tencent_quote_get", {"symbol": "600519"}, sigs))
+            results.append(await rt.execute("get_market_quotes", {"symbol": "600519"}, sigs))
 
     # 旧实现这里是 2（第 3 次绕过缓存再打一次真实网关）
     assert CountingGateway.calls == 1
@@ -86,11 +86,11 @@ async def test_failed_call_signature_not_registered_allows_retry():
     CountingGateway.call = failing_call
     try:
         sigs: set[str] = set()
-        r1 = await rt.execute("quote_tencent_quote_get", {"symbol": "600519"}, sigs)
+        r1 = await rt.execute("get_market_quotes", {"symbol": "600519"}, sigs)
         assert r1.status == "error"
         assert sigs == set(), "失败的调用不应登记签名"
         CountingGateway.call = failing_call_original  # 第二次恢复成功
-        r2 = await rt.execute("quote_tencent_quote_get", {"symbol": "600519"}, sigs)
+        r2 = await rt.execute("get_market_quotes", {"symbol": "600519"}, sigs)
         assert r2.status == "success"
         assert len(sigs) == 1
     finally:

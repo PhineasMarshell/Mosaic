@@ -254,8 +254,8 @@ class TestRuleCount:
 # 关键纪律：用例必须经过 normalize_tool_result —— 手工造 NormalizedDatum 看不到
 # 真实 metric 名，正是这批假阳性让 T22b 漏网的原因。
 
-_CRYPTO_OI_TOOL = "derivatives_history_market_derivatives_history_post"
-_ASHARE_LIMIT_UP_TOOL = "public_limit_up_count_ashare_master_limit_up_count_get"
+_CRYPTO_OI_TOOL = "get_derivatives_history"
+_ASHARE_LIMIT_UP_TOOL = "get_limit_up_count"
 
 
 def _oi_payload(shape: str, value: float) -> dict:

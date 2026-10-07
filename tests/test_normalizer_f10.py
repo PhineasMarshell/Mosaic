@@ -14,45 +14,45 @@ class TestDomainFix:
     """验证 tool_registry.py 修复后域名正确性。"""
 
     def test_quote_tool_domain_is_ashare(self):
-        """修复后 quote_tencent_quote_get 的 domain 应为 a_share。"""
-        meta = resolve_tool_by_name("quote_tencent_quote_get")
+        """修复后 get_market_quotes 的 domain 应为 a_share。"""
+        meta = resolve_tool_by_name("get_market_quotes")
         assert meta.domain == "a_share"
 
     def test_search_tool_domain_is_ashare(self):
-        """修复后 search_xueqiu_search_get 的 domain 应为 a_share。"""
-        meta = resolve_tool_by_name("search_xueqiu_search_get")
+        """修复后 search_stocks 的 domain 应为 a_share。"""
+        meta = resolve_tool_by_name("search_stocks")
         assert meta.domain == "a_share"
 
     def test_infer_domain_quote_is_ashare(self):
         """infer_domain_from_tool 对 quote 工具应返回 a_share。"""
-        assert infer_domain_from_tool("quote_tencent_quote_get") == "a_share"
+        assert infer_domain_from_tool("get_market_quotes") == "a_share"
 
     def test_infer_domain_search_is_ashare(self):
         """infer_domain_from_tool 对 search 工具应返回 a_share。"""
-        assert infer_domain_from_tool("search_xueqiu_search_get") == "a_share"
+        assert infer_domain_from_tool("search_stocks") == "a_share"
 
     def test_infer_domain_f10_finance_is_ashare(self):
         """infer_domain_from_tool 对 F10 finance 工具应返回 a_share。"""
-        assert infer_domain_from_tool("finance_eastmoney_f10_finance_get") == "a_share"
+        assert infer_domain_from_tool("get_company_finance") == "a_share"
 
     def test_infer_domain_f10_business_is_ashare(self):
         """infer_domain_from_tool 对 F10 business 工具应返回 a_share。"""
-        assert infer_domain_from_tool("business_eastmoney_f10_business_get") == "a_share"
+        assert infer_domain_from_tool("get_company_business") == "a_share"
 
     def test_infer_domain_f10_shareholders_is_ashare(self):
         """infer_domain_from_tool 对 F10 shareholders 工具应返回 a_share。"""
-        assert infer_domain_from_tool("shareholders_eastmoney_f10_shareholders_get") == "a_share"
+        assert infer_domain_from_tool("get_company_shareholders") == "a_share"
 
     def test_infer_domain_detail_is_ashare(self):
         """infer_domain_from_tool 对 detail 工具应返回 a_share。"""
-        assert infer_domain_from_tool("detail_eastmoney_detail_get") == "a_share"
+        assert infer_domain_from_tool("get_company_detail") == "a_share"
 
     def test_hk_quote_key_still_resolves(self):
-        """hk_quote key 仍能正确解析到 quote_tencent_quote_get。"""
+        """hk_quote key 仍能正确解析到 get_market_quotes。"""
         from app.gateway.tool_registry import BY_KEY
 
         meta = BY_KEY["hk_quote"]
-        assert meta.tool_name == "quote_tencent_quote_get"
+        assert meta.tool_name == "get_market_quotes"
 
 
 class TestDeepFlattenValue:
@@ -125,7 +125,7 @@ class TestExtractF10ListItems:
             obj,
             "data",
             result,
-            _tool="finance_eastmoney_f10_finance_get",
+            _tool="get_company_finance",
             _domain="a_share",
             _status="success",
             _partial=False,
@@ -152,7 +152,7 @@ class TestExtractF10ListItems:
             obj,
             "data",
             result,
-            _tool="shareholders_eastmoney_f10_shareholders_get",
+            _tool="get_company_shareholders",
             _domain="a_share",
             _status="success",
             _partial=False,
@@ -213,31 +213,31 @@ class TestIsEastmoneyF10Tool:
     """测试 _is_eastmoney_f10_tool 函数。"""
 
     def test_finance_tool(self):
-        assert _is_eastmoney_f10_tool("finance_eastmoney_f10_finance_get") is True
+        assert _is_eastmoney_f10_tool("get_company_finance") is True
 
     def test_business_tool(self):
-        assert _is_eastmoney_f10_tool("business_eastmoney_f10_business_get") is True
+        assert _is_eastmoney_f10_tool("get_company_business") is True
 
     def test_shareholders_tool(self):
-        assert _is_eastmoney_f10_tool("shareholders_eastmoney_f10_shareholders_get") is True
+        assert _is_eastmoney_f10_tool("get_company_shareholders") is True
 
     def test_concept_tool(self):
-        assert _is_eastmoney_f10_tool("concept_eastmoney_f10_concept_get") is True
+        assert _is_eastmoney_f10_tool("get_company_concepts") is True
 
     def test_survey_tool(self):
-        assert _is_eastmoney_f10_tool("survey_eastmoney_f10_survey_get") is True
+        assert _is_eastmoney_f10_tool("get_company_survey") is True
 
     def test_detail_tool(self):
-        assert _is_eastmoney_f10_tool("detail_eastmoney_detail_get") is True
+        assert _is_eastmoney_f10_tool("get_company_detail") is True
 
     def test_overview_tool(self):
-        assert _is_eastmoney_f10_tool("overview_eastmoney_overview_get") is True
+        assert _is_eastmoney_f10_tool("get_company_overview") is True
 
     def test_non_f10_tool(self):
-        assert _is_eastmoney_f10_tool("quote_tencent_quote_get") is False
+        assert _is_eastmoney_f10_tool("get_market_quotes") is False
 
     def test_non_f10_market_tool(self):
-        assert _is_eastmoney_f10_tool("klines_market_klines_post") is False
+        assert _is_eastmoney_f10_tool("get_market_klines") is False
 
 
 class TestF10NormalizeResult:
@@ -257,7 +257,7 @@ class TestF10NormalizeResult:
                 }
             },
         }
-        result = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
+        result = normalize_tool_result("get_company_finance", {"symbol": "601398"}, raw)
         assert result.status == "success"
         by_metric = {d.metric: d for d in result.normalized}
         # T2：以前整块 flatten 只保留第一个指标，PE/PB 永久丢失。
@@ -273,7 +273,7 @@ class TestF10NormalizeResult:
     def test_single_indicator_still_works(self):
         """单指标形状 {"data":{"indicators":{"PB":{"value":2.5}}}} 仍能提取且保留指标名。"""
         raw = {"data": {"indicators": {"PB": {"value": 2.5}}}}
-        result = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
+        result = normalize_tool_result("get_company_finance", {"symbol": "601398"}, raw)
         assert result.status == "success"
         by_metric = {d.metric: d.value for d in result.normalized}
         assert by_metric["data.indicators.PB.value"] == 2.5
@@ -290,7 +290,7 @@ class TestF10NormalizeResult:
                 {"name": "revenue", "value": 523456.78},
             ],
         }
-        result = normalize_tool_result("business_eastmoney_f10_business_get", {"symbol": "601398"}, raw)
+        result = normalize_tool_result("get_company_business", {"symbol": "601398"}, raw)
         assert result.status == "success"
         metrics = {d.metric: d.value for d in result.normalized}
         # _extract_f10_list_items 提取 key name 为 metric 名
@@ -306,5 +306,5 @@ class TestF10NormalizeResult:
     def test_domain_is_ashare_for_f10(self):
         """F10 工具的 domain 应为 a_share。"""
         raw = {"data": {"test": 1}}
-        result = normalize_tool_result("finance_eastmoney_f10_finance_get", {"symbol": "601398"}, raw)
+        result = normalize_tool_result("get_company_finance", {"symbol": "601398"}, raw)
         assert result.normalized[0].domain == "a_share"

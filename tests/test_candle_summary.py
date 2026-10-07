@@ -6,7 +6,7 @@ from app.research.evidence import build_evidence
 
 def _result(pairs) -> ToolResult:
     return ToolResult(
-        tool="klines_market_klines_post",
+        tool="get_market_klines",
         arguments={},
         status="success",
         normalized=[NormalizedDatum(metric=m, value=v, tool="k") for m, v in pairs],

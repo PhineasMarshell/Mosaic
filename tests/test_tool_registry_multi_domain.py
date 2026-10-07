@@ -60,16 +60,16 @@ class TestAllToolsCompleteness:
     def test_shared_by_name_canonical_resolution(self):
         """规范条目选取：cross 优先，否则先注册者（A 股原生工具）。"""
         # hk 占位复用 A 股 quote/search 的 operationId —— 规范条目是 A 股原生工具
-        assert BY_NAME["quote_tencent_quote_get"].key == "quote"
-        assert BY_NAME["quote_tencent_quote_get"].domain == "a_share"
-        assert BY_NAME["search_xueqiu_search_get"].key == "search"
+        assert BY_NAME["get_market_quotes"].key == "quote"
+        assert BY_NAME["get_market_quotes"].domain == "a_share"
+        assert BY_NAME["search_stocks"].key == "search"
         # commodities 占位复用 cross 的 klines/snapshot —— 规范条目是 cross 通用工具
-        assert BY_NAME["klines_market_klines_post"].key == "klines"
-        assert BY_NAME["klines_market_klines_post"].domain == "cross"
-        assert BY_NAME["snapshot_market_snapshot_post"].domain == "cross"
+        assert BY_NAME["get_market_klines"].key == "klines"
+        assert BY_NAME["get_market_klines"].domain == "cross"
+        assert BY_NAME["get_market_snapshot"].domain == "cross"
         # 占位条目在 SHARED_BY_NAME 里可查
-        assert {m.key for m in SHARED_BY_NAME["quote_tencent_quote_get"]} == {"hk_quote"}
-        assert {m.key for m in SHARED_BY_NAME["snapshot_market_snapshot_post"]} == {
+        assert {m.key for m in SHARED_BY_NAME["get_market_quotes"]} == {"hk_quote"}
+        assert {m.key for m in SHARED_BY_NAME["get_market_snapshot"]} == {
             "commodity_silver",
             "commodity_platinum",
         }
@@ -118,7 +118,7 @@ class TestResolveAPIs:
         assert meta.domain == "crypto"
 
     def test_resolve_by_name(self):
-        meta = resolve_tool_by_name("snapshot_market_snapshot_post")
+        meta = resolve_tool_by_name("get_market_snapshot")
         assert meta.key == "snapshot"
         assert meta.domain == "cross"  # 现在是跨域通用
 

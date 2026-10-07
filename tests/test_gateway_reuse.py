@@ -34,9 +34,9 @@ class FakeGateway:
     async def __aenter__(self):
         FakeGateway.entered += 1
         self.tools = [
-            FakeTool("quote_tencent_quote_get"),
-            FakeTool("overview_eastmoney_overview_get"),
-            FakeTool("public_sentiment_ashare_master_sentiment_get"),
+            FakeTool("get_market_quotes"),
+            FakeTool("get_company_overview"),
+            FakeTool("get_ashare_sentiment"),
         ]
         return self
 
@@ -243,7 +243,7 @@ class _SlowGateway:
         _SlowGateway.entered += 1
 
         class _T:
-            name = "quote_tencent_quote_get"
+            name = "get_market_quotes"
 
         self.tools = [_T()]
         return self
@@ -341,9 +341,9 @@ async def test_two_serial_sessions_in_same_task_each_connect_and_close():
     rt._gateway_class = lambda: _SlowGateway
 
     async with rt.gateway_session():
-        await rt.execute("quote_tencent_quote_get", {"symbol": "600519"}, set())
+        await rt.execute("get_market_quotes", {"symbol": "600519"}, set())
     async with rt.gateway_session():
-        await rt.execute("quote_tencent_quote_get", {"symbol": "000001"}, set())
+        await rt.execute("get_market_quotes", {"symbol": "000001"}, set())
 
     assert len(_SlowGateway.instances) == 2
     assert _SlowGateway.entered == 2

@@ -23,7 +23,7 @@ def sample_evidence():
     return [
         Evidence(
             id="e-001",
-            source_tool="quote_tencent_quote_get",
+            source_tool="get_market_quotes",
             domain="a_share",
             metric="price",
             value=3800.5,
@@ -31,7 +31,7 @@ def sample_evidence():
         ),
         Evidence(
             id="e-002",
-            source_tool="public_sentiment_ashare_master_sentiment_get",
+            source_tool="get_ashare_sentiment",
             domain="a_share",
             metric="risk_on",
             value=0.35,
@@ -39,7 +39,7 @@ def sample_evidence():
         ),
         Evidence(
             id="e-003",
-            source_tool="klines_market_klines_post",
+            source_tool="get_market_klines",
             domain="crypto",
             metric="openInterest",
             value=8.5,
