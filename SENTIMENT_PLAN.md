@@ -1,6 +1,6 @@
 # A 股情绪面（舆情）接入执行计划 —— 交给子 Agent 直接落地
 
-> 本文由主 Agent 基于**实测真值**编写（2026-10-06；基线为 `main` @ `810489b`，工作树干净）。
+> 本文由主 Agent 基于**实测真值**编写（2026-10-06；真值取证基线为 `main` @ `810489b`；此后主 Agent 另落地了 `c381f8e`（`NO_PROXY` 归一化，见 `app/net_env.py`））。
 > 所有 Gateway 事实均来自本机实跑（HTTP 直连 + MCP `list_tools`），不是文档推断；每处实测结论都标了取证方式。
 > **执行时不必重新调研**；如实际代码与本文引用不符，以代码为准并在交付报告中说明差异。
 > **执行纪律（必须遵守，有既往踩坑）**：
@@ -14,7 +14,11 @@
 > 3. 测试**不得依赖真实网络/真实 LLM**：解析函数直测 + monkeypatch 假响应（参考 `tests/test_hk_northbound.py` 只测 `_build_params`/`_parse_*` 纯函数的模式）。
 > 4. 注意已知测试坑：`market_cache` 全局污染、monkeypatch 打在模块全局上、污染类测试在单用例内顺序执行；新测试文件的 fixture 隔离要自洽。
 > 5. **三步验证全绿才能 commit**；commit message 用中文 + `feat:`/`test:`/`docs:` 前缀（对齐 `git log` 现有风格）；**不要 push**。
-> **执行顺序（已定）：本计划先做，`MARKET_GATEWAY_321_MIGRATION.md` 后做。** 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，严禁并行。
+> **执行顺序（已定；2026-10-06 用户裁定对调）：先做 `MARKET_GATEWAY_321_MIGRATION.md`，本计划后做。**
+> 理由：雪球系上游（`/market/discussions`、`/market/post-comments`）当时正 504/502 不可用，本计划的 A0 探针闸门**无法取证**；
+> 而迁移计划不依赖雪球，且落地后能立刻恢复 A 股实时行情（MCP 的 `get_market_quotes` 实测 993ms 可通）。
+> 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**严禁并行**；本计划开工前必须确认迁移计划已 commit ——
+> 届时 §2-A1 的「改名」部分**已经由迁移计划完成**，本计划只剩「启用 + 归类 + 新增」三件事（见 A1 的前置说明）。
 
 ---
 
@@ -23,7 +27,7 @@
 **目标**：`sentiment`（舆情/情绪）分析面从「契约里有、节点未实现」变为**可用** —— 用户问「茅台现在市场情绪怎么样 / 大家怎么看」时，Agent 能规划情绪工具、拿到真实雪球讨论流与 A 股情绪指标、产出经 Evidence Gate → Reasoning → Critic 审计的结论。
 
 **本计划做**：
-- Phase A：A0 探针闸门 → 注册表改名（**仅情绪面相关条目**）→ 2 个新 INTERNAL 工具 + 2 个聚合 INTERNAL 工具 → `SentimentAnalystNode` → 配置 → 测试 → 文档
+- Phase A：A0 探针闸门 → 注册表**启用与归类**（情绪面 6 条的**改名已由迁移计划完成**）→ 2 个新 INTERNAL 工具 + 2 个聚合 INTERNAL 工具 → `SentimentAnalystNode` → 配置 → 测试 → 文档
 
 **本计划不做**（明确排除，勿顺手实现）：
 - **其余 ~30 个工具从旧 operationId 改成 3.2.1 新名**（那是 `MARKET_GATEWAY_321_MIGRATION.md` 的范围，两件事分开做）
@@ -180,7 +184,7 @@ MCP `input_schema`（`list_tools()` 实测）：
 - 每个用例**最多重试 3 次、每次超时 30s**（`/market/discussions` 与 `/market/post-comments` 实测会返 504 或 40s＋ 不返回）。
 - **闸门加一条前置判定**：若 `/market/discussions` 在 3 次重试后**全部**失败，而 `/market/quotes`（同 domain 但走 tencent 源）**200**，则判定为**「上游 xueqiu 源不可用」而不是「本机网络/代理问题」** —— 二者处置完全不同：
   - 上游源不可用 → **停止 Phase A**，报告交回主 Agent（今天就是这样：同日早先 200、稍后 504，且走不走代理都一样）。
-  - 本机网络问题 → 检查 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`（见 `MARKET_GATEWAY_321_MIGRATION.md` §1.1.1：MCP 子进程会丢代理变量）。
+  - 本机网络问题 → 检查 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`（见 `MARKET_GATEWAY_321_MIGRATION.md` §1.1.1：MCP 子进程会丢代理变量）。**另一个隐蔽坑**：`NO_PROXY` 里的 `[::1]` 会让 httpx **构造 client 就崩**（`InvalidURL: Invalid port: ':1]'`）——Mosaic 已在 `app/config.py` 导入处归一化并记 ERROR 日志（`app/net_env.py`，commit `c381f8e`），但**探针脚本若自己 new `httpx.Client()` 就享受不到**，脚本里先 `import app.config` 或自己做同样的归一化。
 - **不要把「某次 200 的响应结构」当成长期契约**：A2 的聚合工具必须按「上游可能整体失败」设计（status=partial/error + 可解释文案），不许返回空的「情绪中性」假结论。
 
 **闸门判定**：
@@ -188,14 +192,30 @@ MCP `input_schema`（`list_tools()` 实测）：
 - **部分通过**（如 `post-comments` 不可用 / `feed=discussion` 无数据但 `all` 有）→ 按实测收缩能力，purpose 如实描述，交付报告注明。
 - **失败**（讨论流 3 次重试后仍不可达或返回非讨论数据）→ **停止 Phase A**，不提交实现代码，探针脚本可选留档，报告交回主 Agent。
 
-### A1. 注册表改名 + 情绪面条目（`app/gateway/tool_registry.py`）
+### A1. 情绪面条目启用 + 归类（`app/gateway/tool_registry.py`）
 
-**只动情绪面相关条目，其余 ~30 条留给迁移计划。**
+> **前置（顺序已对调）：`MARKET_GATEWAY_321_MIGRATION.md` 已完成并 commit。**
+> 也就是说，下面这些 `tool_name` **已经由迁移计划改成 3.2.1 新名了**：
+> `_ASHARE_MASTERTOOLS` 的 4 条（`get_limit_up_count` / `list_limit_up_sectors` / `list_limit_up_stocks` / `get_ashare_sentiment`）、
+> `_ASHARE_MICRO` 的 `key=timeline`（已是 `tool_name=list_stock_discussions`、`http_path=/market/discussions`）。
+> **本步不要重复改名**（那是抄一遍已有状态）；开工第一件事是用下面这条命令**核对实际状态**，再只做「移出 / 改 key / 改 category / 启用 / 新增」这几件事：
+>
+> ```bash
+> .venv/Scripts/python.exe -c "
+> from app.gateway.tool_registry import ALL_TOOLS
+> for t in ALL_TOOLS:
+>     if t.key in ('sentiment','timeline','limit_up_count','limit_up_sectors','limit_up_pool'):
+>         print(t.key, t.tool_name, t.domain, t.category, t.http_method, t.http_path)
+> "
+> ```
+>
+> 迁移计划**只改 `tool_name`/`http_path`，刻意不改 `category`、不改 `key`、不动 `_SENTIMENT_TOOLS` 那块注释** —— 那些正是本步的活。
+> 若核对发现迁移计划漏改了某条（例如仍是旧 operationId），**先停下报告**，不要在本步顺带补（会在两份计划间造成范围混淆）。
 
-1. **`_ASHARE_MASTERTOOLS`（76-117 行）4 条全部改名**，并**把 sentiment 那条移出**：
+1. **`_ASHARE_MASTERTOOLS` 的 `key=sentiment` 那条移出**（迁到 `_SENTIMENT_TOOLS`，见第 3 步的重定义），4 条 `limit_up_*` 与它**只改 `category`/归属，不改 `tool_name`**（已由迁移计划改好）：
 
 ```python
-# 迁移到 3.2.1 operationId；sentiment 条目移到 _SENTIMENT_TOOLS
+# tool_name 由迁移计划改成 3.2.1 新名；本轮只改归属（sentiment 条目移到 _SENTIMENT_TOOLS）
 ToolMeta("limit_up_count", "get_limit_up_count", "A股当日涨停家数（活跃指标）",
          domain="a_share", priority="high", http_method="GET",
          http_path="/ashare-master/limit-up/count", category="technical"),
@@ -207,9 +227,10 @@ ToolMeta("limit_up_pool", "list_limit_up_stocks", "A股当日涨停股票明细�
          http_path="/ashare-master/limit-up/pool", category="technical"),
 ```
 
-> ⚠️ **`key` 保持不变**（`limit_up_count` / `limit_up_sectors` / `limit_up_pool`）—— Supervisor 的 `plan.steps` 按 `key` 引用，改 key 会波及提示词与既有测试；**只改 `tool_name`**。
+> ⚠️ **`key` 保持不变**（`limit_up_count` / `limit_up_sectors` / `limit_up_pool`）—— Supervisor 的 `plan.steps` 按 `key` 引用，改 key 会波及提示词与既有测试。**本步连 `tool_name` 都不要动**（迁移计划已处理）。
+> ⚠️ 3 条 `limit_up_*` 的 `category` **保持 `technical` 不变** —— 涨停池/板块是技术面与情绪面共用的「活跃度」指标，改判会让既有 technical 路由行为与测试一起漂移；本计划只把**讨论流**与**情绪条目**归到 `sentiment`。
 
-2. **`key=timeline` 条目改名 + 改路径 + 改 category 为 `sentiment`**（原 200-271 行的 `_ASHARE_MICRO` 内）：
+2. **`key=timeline` 那条：改 `category` 为 `sentiment`（`tool_name`/`http_path` 迁移计划已改好），随后整体移入 `_SENTIMENT_TOOLS`**（原在 200-271 行的 `_ASHARE_MICRO` 内）：
 
 ```python
 ToolMeta(
@@ -277,7 +298,7 @@ _SENTIMENT_TOOLS = [
 
 4. **`ALL_TOOLS` 拼装**：把 `# + _SENTIMENT_TOOLS  # P4-5：评论 MCP 就绪后取消注释`（631-644 行）改为真正 `+ _SENTIMENT_TOOLS`。
 5. **更新注册表 docstring 第 9 行的工具总数**（契约测试守护 `tests/test_docs_contract.py`）。
-6. **`BY_NAME` 冲突检查**：`search_stocks` 等旧名条目仍在（迁移计划的范围），本次新增 `list_stock_discussions` / `list_stock_post_comments` / `get_ashare_sentiment` + 3 个 INTERNAL 名，**与既有名零冲突**；但 `discussions` 这个 key 若同时留在 `_ASHARE_MICRO` 就会 `BY_KEY` 冲突 —— **务必只注册一次**。
+6. **`BY_NAME` / `BY_KEY` 冲突检查**：迁移计划已完成，注册表里**已无任何旧 operationId**（迁移计划的 B4 回归测试把这一点钉死了）；本步新增 `list_stock_discussions` / `list_stock_post_comments` / `get_ashare_sentiment` + 3 个 INTERNAL 名，**与既有名零冲突**。唯一的坑是 **`discussions` 这个 key**：迁移后那条仍躺在 `_ASHARE_MICRO` 里（`key=timeline`、`tool_name=list_stock_discussions`），必须**移动**（不是复制）到 `_SENTIMENT_TOOLS` 并同时改 key —— **同名条目只能注册一次**，否则 `BY_KEY`/`BY_NAME` 会撞。
 
 ### A2. 讨论流/评论聚合内部工具（`app/graph/tool_runtime.py`）
 
@@ -375,17 +396,14 @@ class SentimentAnalystNode(MarketAnalystNode):
 
 ### A4. `WHITELIST_NO_SYMBOL`（`app/graph/nodes/analysts/base.py:47-68`）
 
-去掉已废弃的 `public_sentiment_ashare_master_sentiment_get` / 旧 limit_up 三条（改名后旧名永不匹配），加入：
+> **前置：迁移计划已把这张表里的旧名换成新名。** 所以本步**不是「改名」而是「增补 + 复核」** —— 先核对当前表内容（迁移后应已含 `get_ashare_sentiment` / `get_limit_up_count` / `list_limit_up_sectors` / `list_limit_up_stocks` 的新名），然后**只补**下面这一条（本计划新增的内部工具）：
 
 ```
-"get_ashare_sentiment",
-"get_limit_up_count",
-"list_limit_up_sectors",
-"list_limit_up_stocks",
 "internal_sentiment_index",
 ```
 
 **不加** `list_stock_discussions` / `list_stock_post_comments` —— 它们**必须**有 symbol / post_url，走 symbol 守卫（`base.py:241-247`）才对。`internal_stock_discussions` **也不加**（comment 里写它 symbol 必填），但注意：`base.py:241` 的守卫是**按 `tool_name` 查表**，`internal_stock_discussions` 不在表里 → planner 不给 symbol 时会用问题里的 6 位代码补齐（这正是想要的）。
+若迁移计划漏了某条（旧名还留在表里），**在这一步一并修正并在交付报告里写明**（旧名永不匹配 = 该工具会被 symbol 守卫拦住，是真实功能缺陷，不算越界）。
 
 ### A5. 配置（`app/config.py` + `.env.example`）
 
@@ -498,7 +516,8 @@ sentiment_cache_ttl_seconds: int = 900
 | 互动数据稀疏 | 60% 有赞、17% 有回复、3.3% 有转发 → 热度排序信号弱，必须写明排序规则 |
 | 情绪面仅 A 股 | 港股/美股无可用情绪源 |
 | `get_ashare_sentiment` 原始序列极长 | 26,447 条 datum，必须用 `internal_sentiment_index` 聚合后再用 |
-| 改名迁移未完成 | 注册表里约 30 个工具仍是旧 operationId，**线上调用会失败**（见 `MARKET_GATEWAY_321_MIGRATION.md`） |
+| 雪球上游可能不可用 | `/market/discussions`、`/market/post-comments`、`/market/longhu`、`/market/search` 实测 504/502（Cloudflare 侧故障，2026-10-06）→ **A0 探针闸门的第一步就是确认它已恢复**，没恢复就不要开工（这正是两份计划执行顺序被对调的原因） |
+| 开工前置 | 迁移计划（`MARKET_GATEWAY_321_MIGRATION.md`）**必须先完成并 commit**：注册表里约 30 个旧 operationId 在那份里一次性改完，本计划只做「启用 + 归类 + 新增」 |
 | 上游筹码数据域为空 | `/ashare/chips/*`（8 条，含股东/减持/解禁/股本）已在 3.2.1 暴露且参数结构正确，但实测 5 个标的 `coverage_status=not_collected`、`record=null`，采集侧未入库 → 本轮不注册。**情绪面可用源仅：讨论流 + 情绪指数 + 涨停池/板块 + `news_search`** |
 
 ---
@@ -508,6 +527,8 @@ sentiment_cache_ttl_seconds: int = 900
 1. `sentiment_max_comments` 删除还是改语义（§2-A5 推荐删除）。
 2. `internal_*` 三个工具的 TTL 取值（本计划拟 `sentiment_index` 3600、讨论/评论 900）。
 3. 是否需要在 supervisor prompt 里显式列「情绪面问题示例」（如「大家怎么看」「市场情绪怎么样」）以提升路由命中率。
+4. ~~两计划的执行顺序~~ → **已定（2026-10-06 用户裁定对调）：先做 `MARKET_GATEWAY_321_MIGRATION.md`，本计划后做**（雪球上游故障期间 A0 无法取证；迁移计划不依赖雪球，且能立刻恢复 A 股实时行情）。见头部。
+5. 雪球上游恢复后 A0 若**部分通过**（例如 `post-comments` 仍 504 但 `discussions` 已通）该不该开工 → 建议**按 A0 的「部分通过」条款收缩能力后开工**（讨论流 + 情绪指数 + 涨停池仍能构成最小可用情绪面），但这是范围决策，**先报告主 Agent/用户**。
 
 ---
 

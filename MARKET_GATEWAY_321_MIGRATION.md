@@ -1,8 +1,12 @@
 # Market Gateway 3.2.1 改名迁移 + MCP 通道自检执行计划
 
-> 本文由主 Agent 基于**实测真值**编写（2026-10-06）。
+> 本文由主 Agent 基于**实测真值**编写（2026-10-06；此后主 Agent 另落地了 `c381f8e`（`NO_PROXY` 归一化，见 B3 第 6 条与 `app/net_env.py`）——**本文开工时的基线以该 commit 或更后的 HEAD 为准**）。
 > **`SENTIMENT_PLAN.md` 与本文是两件独立的事**：情绪面接入只改情绪相关条目（6 条），本文负责**其余全部工具的 operationId 迁移**与**通道健壮性**。
-> **执行顺序（已定）：先做 `SENTIMENT_PLAN.md`，再做本文。** 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**严禁并行**；本文开工前必须确认情绪面那份已 commit，且本文的 40 条改名要**跳过情绪面已改的 6 条**（否则会二次改写）。
+> **执行顺序（已定；2026-10-06 用户裁定对调）：先做本文，再做 `SENTIMENT_PLAN.md`。**
+> 理由：雪球系上游（`/market/discussions`、`/market/post-comments`）当时正 504/502 不可用，情绪面计划的 A0 探针闸门无法取证；本文不依赖雪球，且落地后能立刻恢复 A 股实时行情（MCP 的 `get_market_quotes` 实测 993ms 可通）。
+> 由此带来的**唯一变化**：本文的 40 条改名**不再跳过**情绪面那 6 条（`get_ashare_sentiment`、4 条 `limit_up_*`、`timeline` → `list_stock_discussions`），一次性全改完；
+> 情绪面计划随后只剩「启用 `_SENTIMENT_TOOLS` + 归类 + 新增聚合工具」。
+> 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**严禁并行**；情绪面计划开工前必须确认本文已 commit。
 > **执行纪律（必须遵守，有既往踩坑）**：
 > 1. **必须用 `.venv/Scripts/python.exe`**（Windows 环境，不要用系统 python）。
 > 2. 开工前先跑全量基线并记录数字（**双模式各跑一次**：`MARKET_GATEWAY_MODE=mcp` 与 `=http`；基线应为全绿 + 0 skipped；若基线本身有红，**停下报告，不要在红基线上开工**）：
@@ -123,7 +127,7 @@ setx NO_PROXY    "localhost,127.0.0.1"
 
 | # | 现注册表 `tool_name`（旧） | 3.2.1 新 `tool_name` | 路径 | 处置 |
 |---|---|---|---|---|
-| 1 | `public_sentiment_ashare_master_sentiment_get` | `get_ashare_sentiment` | 未变 | 改名（**情绪面计划已处理**） |
+| 1 | `public_sentiment_ashare_master_sentiment_get` | `get_ashare_sentiment` | 未变 | 改名（本节统一处理） |
 | 2 | `public_limit_up_count_ashare_master_limit_up_count_get` | `get_limit_up_count` | 未变 | 改名（同上） |
 | 3 | `public_limit_up_sectors_ashare_master_limit_up_sectors_get` | `list_limit_up_sectors` | 未变 | 改名（同上） |
 | 4 | `public_limit_up_pool_ashare_master_limit_up_pool_get` | `list_limit_up_stocks` | 未变 | 改名（同上） |
@@ -139,7 +143,7 @@ setx NO_PROXY    "localhost,127.0.0.1"
 | 14 | `abnormal_reasons_xueqiu_abnormal_reasons_get` | `get_stock_abnormal_reasons` | `/xueqiu/abnormal-reasons` → **`/market/abnormal-reasons`** | 改名 + 改路径 |
 | 15 | `orderbook_xueqiu_orderbook_get` | `get_market_orderbook` | `/xueqiu/orderbook` → **`/market/orderbook`** | 改名 + 改路径 |
 | 16 | `trades_xueqiu_trades_get` | `list_market_trades` | `/xueqiu/trades` → **`/market/trades`** | 改名 + 改路径 |
-| 17 | `timeline_xueqiu_timeline_get` | `list_stock_discussions` | `/xueqiu/timeline` → **`/market/discussions`** | 改名 + 改路径（**情绪面计划已处理**） |
+| 17 | `timeline_xueqiu_timeline_get` | `list_stock_discussions` | `/xueqiu/timeline` → **`/market/discussions`** | 改名 + 改路径（本节统一处理） |
 | 18 | `search_xueqiu_search_get`（A 股 `search`） | `search_stocks` | `/xueqiu/search` → **`/market/search`** | 改名 + 改路径 |
 | 19 | `quote_tencent_quote_get`（港股 `hk_quote`） | `get_market_quotes` | 同 #12 | 改名 + 改路径 |
 | 20 | `search_xueqiu_search_get`（港股 `hk_search`） | `search_stocks` | 同 #18 | 改名 + 改路径 |
@@ -169,7 +173,7 @@ setx NO_PROXY    "localhost,127.0.0.1"
 ### 1.3 新增工具（3.2.1 有、Mosaic 没有）
 
 **先回答一个容易误解的点**：这 8 条**既不是「Mosaic 已废弃的旧工具」，也不是「上游凭空多出的新工具」**，而是上游 3.2.1 新增的 **A 股筹码/股东数据域**（`/ashare/chips/*`）—— Mosaic 从来没有过，属于**新增能力**，不是改名。
-上游 3.2.1 的 MCP 暴露 40 个工具 = 31 个改名后的旧工具 + 8 条筹码 + `list_stock_post_comments`（情绪面计划已注册）+ `verify_upstream`（诊断端点）。
+上游 3.2.1 的 MCP 暴露 40 个工具 = 31 个改名后的旧工具 + 8 条筹码 + `list_stock_post_comments`（**本文不注册**，留给后做的情绪面计划）+ `verify_upstream`（诊断端点）。
 
 **A 股筹码/股东（8 条，domain 全为 `a_share`）**：
 
@@ -210,7 +214,7 @@ setx NO_PROXY    "localhost,127.0.0.1"
 若将来要接：`latest_*` 四条直接给了当前明细，但**注入时间语义必须靠 `snapshot_at`/`queried_at`**；`as_of` 四条是 PIT 查询（`as_of` 必填 RFC 3339），适合「当时能看到什么」的审计式提问。
 
 **其它新增**：
-- `list_stock_post_comments`（`/market/post-comments`）—— **情绪面计划已注册**，本文不重复。
+- `list_stock_post_comments`（`/market/post-comments`）—— **本文不注册**（留给后做的情绪面计划，连同 `discussions` 的 `category="sentiment"` 归类一起处理）。
 - `verify_upstream`（`/verify_upstream`）—— **建议不注册**（诊断端点，不是市场数据；注册只会浪费 planner 预算）。
 
 **⚠️ 若仍要注册**（例如上游随时可能开始采集）：8 条全部要 `symbol`（走 symbol 守卫），4 条 `as_of` 版还多一个必填时间参数 —— **planner 不会自发产生 `as_of`**，需要 supervisor prompt 明确指示（如「用当前 UTC 时间作为 as_of」），否则注册了也只会 422。这是不建议注册的第二个理由。
@@ -246,9 +250,13 @@ setx NO_PROXY    "localhost,127.0.0.1"
 
 ### B1. 注册表批量改名（`app/gateway/tool_registry.py`）
 
-**方式：全量替换，不留别名、不留旧名。** 用「旧 → 新」一一映射直接改写注册表（不是新增别名、不是双注册）。`key` 一律不动（Supervisor 的 `plan.steps` 与提示词按 `key` 引用；唯一例外是情绪面计划里的 `timeline` → `discussions`）。
+**方式：全量替换，不留别名、不留旧名。** 用「旧 → 新」一一映射直接改写注册表（不是新增别名、不是双注册）。`key` 一律不动（Supervisor 的 `plan.steps` 与提示词按 `key` 引用；唯一例外是后做的情绪面计划里的 `timeline` → `discussions`，**那一步不在本文范围内**）。
 
 理由：旧 operationId 在 3.2.1 上**已经不存在**，留着只会是「必然 403/404 的死条目」，且 MCP 的 `ToolRuntime` 对未注册名直接抛 `KeyError: Tool is not allowed by registry`。做别名等于把死代码留在仓库里。
+
+> ⚠️ **本文只改 `tool_name` / `http_path`，不改 `category`、不改 `key`、不动 `_SENTIMENT_TOOLS` 那块注释。**
+> 情绪面那两条（`key=sentiment` 的 `get_ashare_sentiment`、`key=timeline` 的 `list_stock_discussions`）在本文里**只改名**，
+> 它们的 `category`（现在是 `technical`）、`key` 改名（`timeline` → `discussions`）与 `_SENTIMENT_TOOLS` 的启用，全部留给后做的 `SENTIMENT_PLAN.md`。
 
 **实施步骤**：
 
@@ -320,6 +328,7 @@ setx NO_PROXY    "localhost,127.0.0.1"
    - 检测到 `handshake timed out` → 「检查 `RESEARCH_TIMEOUT_SECONDS` 与网络」
 4. `app/gateway/mcp_client.py`：`connect()` 的 `MCPConnectionError` 消息里**带上 `mcp_command` + `mcp_args` 的实际值**（现在只说 "MCP server startup failed"，运维看不出配的是什么），并把 CLI 的就绪自检命令写进提示。
 5. `/health` 增加 `gateway_mode` 与 `gateway_channel` 字段（若已有同类字段则复用）。
+6. **`NO_PROXY` 归一化（已在 `c381f8e` 完成，勿重做）** —— 这是与 MCP 自检**并列的第二个「静默失败」源头**：本机 `NO_PROXY='localhost,127.0.0.1,::1,[::1]'`（Windows 上为 Node/undici 写的常见取值）里的 `[::1]` 会让 httpx **在构造 `Client` 时就抛** `httpx.InvalidURL: Invalid port: ':1]'`（`httpx._client` 把 `NO_PROXY` 每项当 URL pattern 解析），后果是 HTTP 模式**全部**网关工具 + `internal_us_fundamentals` / `internal_hk_northbound` / `news_search` 全部在 20ms 内失败，错误信息只有一句 `Invalid port: ':1]'`。落地内容：新增 `app/net_env.py`（`PROXY_ENV_KEYS = ("NO_PROXY","no_proxy")`、`sanitize_no_proxy` / `normalize_proxy_environment` / `install_proxy_env_normalization` / `proxy_env_warnings`，**只归一化本进程，不写注册表**），在 `app/config.py` 模块导入处安装（唯一必经点，早于任何 httpx client 构造；MCP 子进程 env 从 `os.environ` 抄，一并受益），`app/main.py:99` 的 `/health` 新增 `proxy_env_warnings` 字段 + 启动时 ERROR 级日志，`tests/test_net_env.py` 15 条（含真实回归：方括号值让 `httpx.Client()` 抛 `InvalidURL`，归一化后可构造）。**子 agent 只需确认它还在，别删。**
 
 **硬要求**：自检**不得**让 `http` 模式或纯内部工具链路变慢/失败；自检超时必须独立于 `research_timeout_seconds`（建议 10s），否则启动会挂 30s。
 
@@ -446,7 +455,7 @@ registry = registry_text()          # ← 没有传 domains=
 
 1. 双模式全量 `pytest` + ruff check/format 全绿。
 2. **真链路**：HTTP 模式真调 ≥5 个不同域的工具（A 股/港股/Crypto/美股/大宗），记录 status + datum 数 + 耗时。
-   **MCP 模式**：验证「spawn + `initialize()` 握手 + `list_tools()` 40 个工具 + 启动自检」全部通过；**真实 tool call 的闭环以 §1.1.1 的 OAuth 阻塞解除为先决条件** —— 若实施时仍未解除，允许阶段性交付，**但执行记录必须如实写明「MCP 真调未验证（OAuth 刷新超时）」**，不许写成「MCP 已闭环」。
+   **MCP 模式**：验证「spawn + `initialize()` 握手 + `list_tools()` 40 个工具 + 启动自检」全部通过；**并用一个不受雪球影响的新名工具做一次真实 tool call 闭环** —— `get_market_quotes`（993ms，返回 tencent 真数据）或 `get_ashare_sentiment`（11662ms，返回真 `series`）—— §1.1.1 的 OAuth 阻塞已随 `9c8cde4` 解除，**不要再把它写成「未验证」**。雪球系四个工具（`list_stock_discussions` / `get_stock_longhu` / `search_stocks` / `get_stock_abnormal_reasons`）若仍 504/502，如实记为「上游源站故障」而**不是**「MCP 不通」。
 3. 启动自检实测：故意把 `MCP_ARGS` 改回 `mcp serve market-gateway` 跑一次 `python -m app.main`，确认**启动时就看到明确报错**而不是 575 绿 + 线上全 403（这一步不需要 OAuth，已验证会得到 `iiix 已停用…`）。
 4. **B6/B7 的回归验证（必须做，不许只跑单测）**：HTTP 模式下用 `domain="us_stock"` 真跑一次「苹果（AAPL）最近的技术面走势和最新基本面怎么样？」，然后把 `report.used_tools` 与 `report.evidence` 打出来，确认两件事：
    - `used_tools` 里**不再出现** `snapshot_market_snapshot_post`（B6）；
@@ -471,9 +480,9 @@ registry = registry_text()          # ← 没有传 domains=
 1. ~~B3 自检的默认行为~~ → **已定：`warn`**（用户裁定，见 B3）。
 2. ~~8 条筹码工具是否本轮做~~ → **已定：本轮不注册**（实测全部 `not_collected`，见 §1.3 / B2）。
 3. ~~是否把 `verify_upstream` 注册为工具~~ → **已定：不注册**（诊断端点）。
-4. **两计划的执行顺序**：`SENTIMENT_PLAN.md`（情绪面）与本文都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**不可并行**。建议**先情绪面、再本文**（情绪面的 6 条也包含在本文的 40 条改名范围内，先做情绪面等于本文的 6/40 提前落地，两边不会互相踩）。若实施者认为先做本文更顺（一次性改完 40 条，情绪面只剩新增聚合工具），也可 —— **但必须串行，且第二份开工前先 rebase/确认第一份已 commit**。
+4. ~~两计划的执行顺序~~ → **已定（2026-10-06 用户裁定对调）：先做本文，再做 `SENTIMENT_PLAN.md`。** 理由：雪球系上游（`/market/discussions`、`/market/post-comments`）当时正 504/502 不可用，情绪面计划的 A0 探针闸门无法取证；本文不依赖雪球，落地后能立刻恢复 A 股实时行情（MCP 的 `get_market_quotes` 实测 993ms 可通）。两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**必须串行**；情绪面计划开工前先确认本文已 commit。见头部「唯一变化」：本文的 40 条改名**不再跳过**情绪面那 6 条。
 5. 工具总数会变：**44 → 44**（本轮只改名、不增删，8 条筹码不注册）。情绪面计划完成后是 **44 + 5 = 49**（6 条情绪面条目中 `discussions` 是从 `timeline` 改名而来，净增 5 条：`post_comments`、`sentiment_index`、`internal_sentiment_index`、`internal_stock_discussions`、`internal_post_comments`）。**README/docs 的数字必须按最终状态写，不要写中间态。**
-6. **MCP 真调阻塞（§1.1.1）**：MCP 能握手/`list_tools`，但真实工具调用被 iiix CLI 侧 OAuth 刷新超时挡住。**HTTP 模式可正常执行**。需要实施者/用户确认：是等该环境问题解除后再闭环 MCP，还是本轮按「HTTP e2e + MCP 握手自检」阶段性交付。
+6. **MCP 真调阻塞（§1.1.1）** → **已解除**：补齐 `HTTP_PROXY`+`HTTPS_PROXY`+`NO_PROXY` 后（`9c8cde4` 修了子进程丢代理变量），MCP 实测 `get_market_quotes` 993ms 返回真数据、`get_ashare_sentiment` 11662ms 返回真 `series`。**当前的 MCP 阻塞只剩雪球系上游故障**（`list_stock_discussions` TLS handshake timeout、`get_stock_longhu` Cloudflare `invalid or incomplete response`）——那是上游的锅，与本机代理/登录无关；实施者仍应**HTTP 模式跑 e2e、MCP 模式跑握手自检**，不要因为雪球不可用就判定通道坏。
 7. **B6 步 3（域守卫）的范围**：守卫只拦「`key` 不在本次渲染文本里」（防幻觉/串域），**不拦「在文本里但不适用于该 symbol」**（如 `snapshot` 对 AAPL）—— 后者靠 B6 步 2 的 purpose 边界声明 + critic 纠偏。若要求更强的机械保证（如按 symbol 前缀校验工具），属方案级变更，**先问用户**。
 8. **B7 步 2（共享 operationId 的域归属）是否本轮做**：需要把 `resolve_tool_by_name` 得到的 `ToolMeta` 透传到 `ToolResult`，会动 `ToolResult` 结构（有既有测试依赖），**属方案级变更，先问用户**；B7 步 1（硬编码 `crypto` 改按工具推断）是本轮必做。
 9. **B6 是否需要拆 `cross` 共享条目**（如新增 `crypto_klines`/`crypto_snapshot`）→ **本轮不做**，已在 B6 末尾注明理由（影响 `BY_NAME`/`SHARED_BY_NAME`/缓存键）。
