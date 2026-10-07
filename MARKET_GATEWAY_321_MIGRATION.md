@@ -376,6 +376,18 @@ registry = registry_text()          # ← 没有传 domains=
 
 1. **接入域过滤**：`supervisor.py` 的 `_plan` 在 `state["domain"]` 显式存在时用 `registry_text(domains=[explicit_domain, "cross"])`；不存在时保持 `registry_text()` 不变（planner 要自己判域，此时不能预先过滤）。
    ⚠️ **`"cross"` 是必须带的**：`snapshot` / `klines` / `window` 三条共享 operationId 的注册域就是 `cross`，而 **crypto 侧的实时 ticker 与 K 线只有这几个 key 提供**（crypto 域自己的 9 条是 coinglass/hyperliquid 衍生品数据）。所以**不能只传 `[domain]`**，否则 crypto 域会失去行情能力。
+   **实测（`registry_text` 是严格等值匹配，不会自动带上 `cross`）**：
+
+   | `domains=` | 条目数 | 实际 keys |
+   |---|---|---|
+   | `["crypto"]` | 11 | 9 条 crypto + `health` + `market_health` —— **没有** `klines`/`snapshot`/`window` |
+   | `["crypto","cross"]` | 15 | **多了 `klines`/`snapshot`/`window`** + `news_search`（`news_search` 的域也是 `cross`） |
+   | `["us_stock"]` | 6 | `us_klines`/`us_window`/`us_fundamentals`/`us_filings_recent` + 2 条 health |
+   | `["us_stock","cross"]` | 10 | **多了 `klines`/`snapshot`/`window`/`news_search`** |
+   | `["a_share"]` | 20 | 18 条 a_share + 2 条 health |
+
+   → **带 `cross` 会重新把 `snapshot` 暴露给 A股/美股查询**（`["us_stock","cross"]` 含 `snapshot`）。这是本节的**已知残余风险**，靠第 2 步的 purpose 文本兜住；若要求机械保证，见 §5 开放问题 7。
+   → 选择「始终带 `cross`」而不是「按域特判」的理由：`news_search` 也在 `cross` 域，按域特判会让 A股/美股查询**失去资讯检索能力**；而按域白名单写死会随注册表演化腐烂。
 2. **给 `cross` 工具的 `purpose` 文本加上边界声明**（**这条才是真正防错的**）—— 光有域过滤挡不住 `snapshot`，因为它确实是 `cross` 域、确实在渲染文本里。必须让 planner 从文本就知道它不适用：
    - `snapshot`（`key=snapshot`）purpose 末尾加：「**仅支持 crypto 交易所**（binance/okx/bybit/aster/hyperliquid）；**不支持 A股 / 港股 / 美股个股**（实测 `exchange=xueqiu` → 422）。美股行情用 `us_klines`/`us_window`。」
    - `klines`（`key=klines`）与 `window`（`key=window`）purpose 补：「**多源**：crypto（`exchange=binance` 等）与大宗商品；**美股请用 `us_klines`/`us_window`**（`exchange=xueqiu` + 裸代码）。」
@@ -383,9 +395,10 @@ registry = registry_text()          # ← 没有传 domains=
 3. **加一道零成本守卫**：`_plan` 产出后校验每个 step 的 `key` 是否出现在**本次渲染出来的**注册表文本里；不在则**不执行**该 step 并把 `tool_call_filtered: <key>` 记进 `errors`（防 LLM 幻觉出旧名或串域）。**不新增 LLM 调用**。
 
 **测试（B4 内新增）**：
-- `registry_text(domains=["us_stock"])` 含 4 条 `us_*`、**不含** `snapshot`/`discussions`/`longhu`（已有覆盖，补 `snapshot` 这条断言）。
-- `registry_text(domains=["a_share"])` 不含 `us_*`。
-- `registry_text(domains=["crypto"])` **含** `snapshot`/`klines`（守住「必须带 cross」这条约束，防止后来者「优化」掉它）。
+- `registry_text(domains=["us_stock"])` 恰好 6 条：含 4 条 `us_*` + `health`/`market_health`，**不含** `snapshot`/`discussions`/`longhu`/`sentiment`。
+- `registry_text(domains=["a_share"])` 不含 `us_*`、不含 `snapshot`。
+- `registry_text(domains=["crypto"])` **不含** `snapshot`/`klines`；`registry_text(domains=["crypto","cross"])` **含** `snapshot`/`klines`/`window` —— 这组断言守住「严格等值匹配 + crypto 必须显式带 cross」两条约束，防止后来者「优化」掉 `cross`。
+- `registry_text(domains=["us_stock","cross"])` 含 `snapshot`：把上面那条**已知残余风险**固化成测试，将来若有人给 `snapshot` 加了机械边界（见 §5 开放问题 7），这条测试要同步改。
 - `snapshot` 的 purpose 含「不支持」与「A股」字样（文本契约，防被改回去）。
 - 守卫单测：伪造一个不在渲染文本里的 `key` → 被过滤 + `errors` 出现 `tool_call_filtered`。
 
