@@ -184,6 +184,12 @@ Researching...
 | 健康检查 | 2 | 网关进程、行情模块状态 |
 
 > 注：`klines`、`snapshot`、`window` 为跨域通用工具，被多个市场域复用。
+>
+> 已知边界（2026-10-06 实测）：A 股筹码/股东数据域（`/ashare/chips/*`，8 个端点）在
+> Gateway 3.2.1 已暴露且参数/结构正确，但实测所有标的 `coverage_status=not_collected`
+> （采集侧未入库），Mosaic 暂不注册，待上游数据可用后再接入。
+> 另：`POST /market/snapshot` 对 `exchange=xueqiu` 不支持实时快照（422），
+> 美股/港股行情用 `us_klines`/`us_window`。
 
 ## 快速开始
 
@@ -243,6 +249,16 @@ iiix plugin serve market-gateway
 ```env
 MCP_COMMAND=iiix
 MCP_ARGS=plugin serve market-gateway
+```
+
+**启动自检（默认开启）**：mcp 模式下启动时会做一次 spawn + 握手 + `list_tools()` 自检
+（超时独立 10s）。失败不阻塞启动（`GATEWAY_SELFCHECK_ON_FAILURE=warn` 默认），
+但记 ERROR 日志并在 `/health` 的 `gateway_channel` 标记 `mcp_unavailable`；
+置 `fail` 则启动即终止。详见 `docs/gateway_troubleshooting.md`。
+
+```env
+GATEWAY_STARTUP_SELFCHECK=true
+GATEWAY_SELFCHECK_ON_FAILURE=warn
 ```
 
 MCP 走 OAuth（`iiix login`），登录态失效时工具调用会返回
