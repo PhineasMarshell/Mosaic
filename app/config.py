@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     #: 旧语法 `mcp serve market-gateway` 在 0.8.0 已被删除（`iiix mcp` 不再存在）。
     mcp_args: str = "plugin serve market-gateway"
 
+    #: 启动时是否对 Gateway 通道做一次自检（mcp 模式：spawn + 握手 + list_tools）。
+    #: 背景：2026-10-06 事故——mcp 模式全部 Gateway 工具失败但启动无任何报错。
+    gateway_startup_selfcheck: bool = True
+    #: 自检失败时的行为：warn（默认，只记 ERROR 日志 + /health 的 gateway_channel 标记）
+    #: / fail（启动即终止）。本地开发不该因网关/登录挂了起不来，但静默失败不可接受。
+    gateway_selfcheck_on_failure: str = "warn"
+
     # HTTP 模式使用 X-API-Key；不要把真实 key 写入代码或提交到 Git。
     market_gateway_http_url: str = "https://api.x.iiix.dev/v1/d/market-gateway"
     market_gateway_api_key: str = ""

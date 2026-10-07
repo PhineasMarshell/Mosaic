@@ -42,6 +42,11 @@ async def lifespan(_app: FastAPI):  # noqa: F841 — FastAPI passes app instance
     # 懒初始化 orchestrator
     _orchestrator = Orchestrator(_settings)
 
+    # B3：mcp 模式启动自检（默认 warn——失败不阻塞启动，但 ERROR 日志 + /health 标记）
+    from app.gateway.selfcheck import startup_gateway_selfcheck
+
+    await startup_gateway_selfcheck(_settings)
+
     # Start brief scheduler
     from app.scheduler.briefs import start_brief_scheduler
 
@@ -102,10 +107,14 @@ async def health():
     from app.scheduler.briefs import is_running as scheduler_running
 
     _s = _get_settings()
+    from app.gateway.selfcheck import channel_state
+
     return {
         "status": "ok",
         "service": "mosaic",
         "gateway_mode": _s.market_gateway_mode,
+        #: B3：mcp 模式通道自检结果（ok / mcp_unavailable / not_checked / not_applicable）
+        "gateway_channel": channel_state(),
         "model": _s.openai_model,
         "max_tool_calls": _s.max_tool_calls,
         "research_budget_seconds": _s.research_budget_seconds,
