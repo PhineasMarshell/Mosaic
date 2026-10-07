@@ -491,4 +491,68 @@ registry = registry_text()          # ← 没有传 domains=
 
 ## 6. 执行记录
 
-（待子 Agent 落地后追加）
+（2026-10-07 由执行 Agent 落地，commit 890148f..HEAD）
+
+**基线**：双模式各 593 passed、ruff 双检全绿（HEAD=67362ad）。
+
+### B0 探针（`scripts/verify_gateway_321.py`，闸门通过）
+
+- 注册表 44 条与 §1.2 映射逐条对齐；`raw_xueqiu_raw__path__get` 未注册（#40 无需处理）。
+- 旧名真调：7 条旧路径 403 `path_not_exposed`（/tencent/quote、/xueqiu/* 全灭）——迁移必要性实证；
+  路径未变的旧名在 HTTP 模式仍 200（旧 operationId 只对 MCP/注册表语义失效）。
+- 新名真调：全部可达（200 或参数语义 422）；雪球系 502/504 为上游 Cloudflare 故障。
+- 边界确认：snapshot BTC/USDT=200、AAPL+exchange=xueqiu=422（`exchange='xueqiu' 不支持实时快照`，边界未变）；
+  `/market/quotes` 分隔符=**逗号**（`SH600519,SZ000001` → count=2），空格 422，重复键只留最后一个。
+- 筹码 8 条：7 条 `coverage_status=not_collected`；`get_latest_ashare_capital_flow` 按计划路径
+  返回 403 `path_not_exposed`（计划 §1.3 写的 `/ashare/chips/latest/capital` 与实际不符，本轮不注册不影响）。
+
+### B1（commit 890148f）
+
+- 32 个旧 operationId + 7 条旧路径全量精确替换；`key` 全部不动；`_SENTIMENT_TOOLS` 注释保持原样；
+  情绪面两条只改名（`get_ashare_sentiment`/`list_stock_discussions`），category/key 未动。
+- 计划外的两处隐性依赖：`app/gateway/normalizer.py` 的 `_is_eastmoney_f10_tool` 子串模式
+  （计划只点名 `_DOMAIN_HINTS`，实际还有这里）；`app/agent/prompts.py:91` 示例 JSON 里的旧名。
+- `allowed_openapi.json` 刷新为本机 3.2.1 真实规范（43 条路径），`test_us_stock_domain` 据此回归。
+- B4 黑名单回归（commit 后续）：`tests/test_gateway_tool_names_321.py` 11 条——
+  注册表 0 个旧 operationId、32 新名全部可解析、BY_NAME(37)/共享关系/TTL/白名单守卫。
+
+### B3（commit feat: B3 通道启动自检）
+
+- `app/config.py`：`gateway_startup_selfcheck=True` / `gateway_selfcheck_on_failure="warn"`。
+- `app/gateway/selfcheck.py`：自检超时独立 10s；`actionable_hint` 按 §1.1 原文匹配给可操作提示。
+- `app/main.py` lifespan 接入；`/health` 新增 `gateway_channel`（ok/mcp_unavailable/not_checked/not_applicable）。
+- **实测**：故意用旧命令 `MCP_ARGS="mcp serve market-gateway"` 启动 → 启动即 ERROR 日志
+  （`MCP initialize (handshake) failed: Connection closed … → iiix CLI ≥ 0.8.0 请用 plugin serve`），
+  `/health` 标记 `mcp_unavailable`，启动不阻塞（warn）。这正是今天事故要的可见性。
+- c381f8e 的 NO_PROXY 归一化原样保留，未重做。
+
+### B6（commit feat: B6 域过滤）/ B7（commit fix: B7）
+
+- 三步修法全落地（域过滤 + cross purpose 边界声明 + 零成本域守卫）；B7 仅步 1。
+- **e2e 回归（HTTP 模式，`domain="us_stock"`，真 LLM qwen3.7-flash，321.7s，errors=[]）**：
+  - 修复前基线：`used_tools=['us_fundamentals','klines_market_klines_post','snapshot_market_snapshot_post']`、
+    `technical-001.domain='crypto'`、314.1s；
+  - 修复后：`used_tools=['us_fundamentals','get_market_klines','news_search']`（**无 snapshot**）、
+    `technical-001 domain=cross`（**不再是 crypto**；`cross` 是 B7 步 2 未做的已知边界）、
+    `fundamental-001..003 domain=us_stock`。
+
+### 真链路验证
+
+- HTTP 模式多域真调：a_share（quotes 735ms / sentiment 2691ms / longhu 277ms count=1）、
+  crypto（klines BTC 256ms 17 candles）、commodities（XAU klines 482ms 17 candles）、
+  us_stock（klines AAPL 452ms 12 candles / overview 966ms 5572 rows）。港股域被雪球上游
+  故障挡住（search 502×3、klines 00700 502；`/market/quotes` 对 `HK00700` 422、`00700` 识别但无数据）——
+  如实记为上游源站故障，未改注册表。
+- MCP 模式：spawn+握手 31ms、list_tools **40 个工具**、启动自检 passed（355ms）、
+  真实闭环 `get_market_quotes` 43 datums（2091ms，首试超时重试成功）、
+  `get_ashare_sentiment` 26447 datums（7412ms）——OAuth 阻塞确已解除。
+
+### 与计划真值的偏差
+
+1. §1.2 #40 `raw_xueqiu_raw__path__get`：grep 确认未注册，无需改名。
+2. 计划 B1 步 7 说旧名分布「14 个测试文件」：实际 grep 命中 22 个（已全改）；`test_evidence.py`、
+   `test_normalizer_enhanced.py` 计划点名但实际无旧名。
+3. §1.3 `get_latest_ashare_capital_flow` 路径 `/ashare/chips/latest/capital` 实测 403 path_not_exposed
+   （其余 7 条筹码路径与计划一致）。
+4. `scripts/verify_us_market.py` 注释引用的 `allowed_openapi.json` 为 3.2.0 旧快照——本轮已刷新为 3.2.1。
+5. B8 未执行（AIHOT 留档）；B7 步 2（ToolMeta 透传）与「拆 cross 共享条目」未做——方案级变更，待用户裁定。
