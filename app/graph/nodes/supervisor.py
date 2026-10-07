@@ -56,17 +56,28 @@ class SupervisorNode:
                 s = state.model_dump(exclude_none=False)
             else:
                 s = state
-            plan = await self._plan(s)
-            return {
+            plan, filtered_keys = await self._plan(s)
+            result: dict = {
                 "intent": plan.intent,
                 "route": self._build_route(plan),
             }
+            # B6 步 3：域守卫 —— 被过滤的 step 不执行，错误记账（不新增 LLM 调用）
+            if filtered_keys:
+                result["errors"] = [
+                    f"tool_call_filtered: {key}（不在本次域过滤后的注册表文本中，疑似幻觉/串域，已跳过）"
+                    for key in filtered_keys
+                ]
+            return result
         except Exception as exc:
             # 路由失败写进 errors，kernel 仍可继续尝试（只是没有显式路由）
             return {"errors": [f"Supervisor routing failed: {exc}"]}
 
     async def _plan(self, state):
-        """生成研究计划（包装 Planner.plan 逻辑）。"""
+        """生成研究计划（包装 Planner.plan 逻辑）。
+
+        Returns:
+            (plan, 被域守卫过滤掉的 step key 列表)
+        """
         conv_history = ""
         conv_id = state.get("conversation_id") if isinstance(state, dict) else getattr(state, "conversation_id", None)
         if conv_id:
@@ -75,7 +86,15 @@ class SupervisorNode:
             memory = get_memory()
             conv_history = memory.get_conversation_history(conv_id, self.settings.max_conversation_turns)
 
-        registry = registry_text()
+        # B6 步 1：显式域存在时按域过滤注册表（planner 只看到该域 + cross 的工具）；
+        # 无显式域时保持全量 —— planner 要自己判域，此时不能预先过滤。
+        # ⚠️ "cross" 必须带上：klines/snapshot/window 的注册域是 cross，crypto 侧的
+        # 行情能力全靠它们；registry_text 是严格等值匹配，不会自动带上 cross。
+        explicit_domain = state.get("domain") if isinstance(state, dict) else getattr(state, "domain", None)
+        if explicit_domain:
+            registry = registry_text(domains=[explicit_domain, "cross"])
+        else:
+            registry = registry_text()
         question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
 
         prompt = PLANNER_PROMPT.format(
@@ -109,13 +128,20 @@ class SupervisorNode:
         plan = ResearchPlan.model_validate(data)
 
         # 如果显式指定了域且 planner 自动判断不一致，以显式指定为准
-        explicit_domain = state.get("domain") if isinstance(state, dict) else getattr(state, "domain", None)
         if explicit_domain is not None:
             plan.intent.domain = explicit_domain
 
         # 截断步骤数
         plan.steps = plan.steps[: self.settings.max_research_steps]
-        return plan
+
+        # B6 步 3：零成本域守卫 —— 每个 step 的 key 必须出现在本次渲染出来的
+        # 注册表文本里；不在则不执行该 step（防 LLM 幻觉出旧名或串域工具，
+        # 如给美股问题挑 binance 的 snapshot）。不拦「在文本里但不适用于该
+        # symbol」的工具——那靠 cross 条目的 purpose 边界声明 + critic 纠偏。
+        filtered_keys = [s.tool_key for s in plan.steps if f"- {s.tool_key}:" not in registry]
+        if filtered_keys:
+            plan.steps = [s for s in plan.steps if f"- {s.tool_key}:" in registry]
+        return plan, filtered_keys
 
     def _build_route(self, plan: ResearchPlan) -> list:
         """将 ResearchPlan.steps 按工具 category 分组为 AnalystAssignment 列表。"""

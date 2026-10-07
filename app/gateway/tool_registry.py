@@ -375,7 +375,8 @@ _CRYPTO_MARKET = [
     ToolMeta(
         "klines",
         "get_market_klines",
-        "通用历史 K 线（POST，支持任意 symbol 如 BTC/USDT, XAU/USDT:USDT, SH600519，返回 UTC 毫秒时间戳）",
+        "通用历史 K 线（POST，支持任意 symbol 如 BTC/USDT, XAU/USDT:USDT, SH600519，返回 UTC 毫秒时间戳）。"
+        "多源：crypto（exchange=binance 等）与大宗商品；美股请用 us_klines/us_window（exchange=xueqiu + 裸代码）",
         domain="cross",
         priority="high",
         http_method="POST",
@@ -385,7 +386,9 @@ _CRYPTO_MARKET = [
     ToolMeta(
         "snapshot",
         "get_market_snapshot",
-        "通用行情快照 POST（价格/24h量/涨跌幅，支持任意 symbol 如 XAU/USDT:USDT, BTC/USDT）",
+        "通用行情快照 POST（价格/24h量/涨跌幅，支持任意 symbol 如 XAU/USDT:USDT, BTC/USDT）。"
+        "仅支持 crypto 交易所（binance/okx/bybit/aster/hyperliquid），不支持 A股/港股/美股个股"
+        "（实测 exchange=xueqiu → 422），美股行情用 us_klines/us_window",
         domain="cross",
         priority="high",
         http_method="POST",
@@ -395,7 +398,8 @@ _CRYPTO_MARKET = [
     ToolMeta(
         "window",
         "get_market_window",
-        "复盘时间窗聚合数据（通用，支持任意 symbol）",
+        "复盘时间窗聚合数据（通用，支持任意 symbol）。"
+        "多源：crypto（exchange=binance 等）与大宗商品；美股请用 us_klines/us_window（exchange=xueqiu + 裸代码）",
         domain="cross",
         priority="medium",
         http_method="POST",
