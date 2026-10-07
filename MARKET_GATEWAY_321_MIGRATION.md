@@ -3,7 +3,17 @@
 > 本文由主 Agent 基于**实测真值**编写（2026-10-06）。
 > **`SENTIMENT_PLAN.md` 与本文是两件独立的事**：情绪面接入只改情绪相关条目（6 条），本文负责**其余全部工具的 operationId 迁移**与**通道健壮性**。
 > **执行顺序（已定）：先做 `SENTIMENT_PLAN.md`，再做本文。** 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**严禁并行**；本文开工前必须确认情绪面那份已 commit，且本文的 40 条改名要**跳过情绪面已改的 6 条**（否则会二次改写）。
-> 执行纪律沿用 `US_STOCK_INTEGRATION_PLAN.md` §1.5。
+> **执行纪律（必须遵守，有既往踩坑）**：
+> 1. **必须用 `.venv/Scripts/python.exe`**（Windows 环境，不要用系统 python）。
+> 2. 开工前先跑全量基线并记录数字（**双模式各跑一次**：`MARKET_GATEWAY_MODE=mcp` 与 `=http`；基线应为全绿 + 0 skipped；若基线本身有红，**停下报告，不要在红基线上开工**）：
+>    ```bash
+>    .venv/Scripts/python.exe -m pytest . -q
+>    .venv/Scripts/python.exe -m ruff check . --no-cache
+>    .venv/Scripts/python.exe -m ruff format --check . --no-cache
+>    ```
+> 3. 测试**不得依赖真实网络/真实 LLM**：解析函数直测 + monkeypatch 假响应（参考 `tests/test_hk_northbound.py` 只测 `_build_params`/`_parse_*` 纯函数的模式）。
+> 4. 注意已知测试坑：`market_cache` 全局污染、monkeypatch 打在模块全局上、污染类测试在单用例内顺序执行；新测试文件的 fixture 隔离要自洽。
+> 5. **三步验证全绿才能 commit**；commit message 用中文 + `feat:`/`test:`/`docs:`/`chore:` 前缀（对齐 `git log` 现有风格）；**不要 push**。
 
 ---
 
@@ -27,6 +37,13 @@ $env:MCP_ARGS="plugin serve market-gateway"  +  0.8.4 二进制
 ```
 
 **根因 2 就是本文的主体工作。**
+
+另外，**排查过程中又发现两个真实缺陷（与改名同源、都在这次事故的复盘里暴露）**，一并纳入本文：
+
+| 节 | 缺陷 | 一句话 |
+|---|---|---|
+| **B6** | 域过滤在生产链路上没生效 | `app/graph/nodes/supervisor.py:78` 用 `registry_text()`（不传 `domains=`）→ planner 永远看到全部 44 条工具，实测给 AAPL 挑了 binance 的 `snapshot` → 必然 422 |
+| **B7** | 证据 `domain` 被硬编码成 `crypto` | `app/research/evidence.py:309` 与 `:364` 写死 `domain="crypto"` → **任何域的 K 线/快照证据都被标成 crypto**（A 股、美股全中） |
 
 ---
 
@@ -326,14 +343,104 @@ setx NO_PROXY    "localhost,127.0.0.1"
 
 ---
 
+### B6. 域过滤在生产链路上没生效（P1）——**改名之外发现的真实缺陷**
+
+**症状（实测，2026-10-06）**：让 Orchestrator 以 `domain="us_stock"` 跑「苹果（AAPL）最近的技术面走势和最新基本面怎么样？」
+
+- `report.used_tools = ['us_fundamentals', 'klines_market_klines_post', 'snapshot_market_snapshot_post']`
+- 其中 `snapshot_market_snapshot_post` 的结果是 **error / 0 datums**：
+  `Invalid parameters (422): {"ok":false,"error":"symbol='AAPL' 在 binance 不存在。请用 ccxt 统一写法(现货 BTC/USDT，永续 BTC/USDT:USDT)…"}`
+- 即 **planner 给美股问题挑了 binance 的 crypto 快照工具**，必然失败，还往报告里塞了一条错误 caveat。
+
+**根因（一行）**：`app/graph/nodes/supervisor.py:78` 是
+
+```python
+registry = registry_text()          # ← 没有传 domains=
+```
+
+→ **planner 永远看到全部 44 条工具，与用户指定的 `domain` 完全无关**；显式域只在 `supervisor.py:112-114` 事后覆盖 `plan.intent.domain`（那已经晚了，路由与工具选择已经定完）。
+
+**反证（这套 API 本身是对的）**：`registry_text(domains=["us_stock"])` 实测**只**返回
+
+```
+- us_klines: klines_market_klines_post [us_stock] — 美股历史 K 线（雪球通道，必填: symbol=裸代码如 AAPL, exchange=xueqiu, interval=1d, start/end=ISO 日期范围如 2026-09-20/2026-10-05） [high]
+- us_window: window_market_window_post [us_stock] — 美股复盘时间窗聚合（雪球通道，必填: symbol=裸代码如 AAPL, exchange=xueqiu, interval=1d, anchor=锚定日期如 2026-10-02） [medium]
+- us_fundamentals: internal_us_fundamentals [us_stock] — 美股基本面（SEC EDGAR XBRL，必填: symbol=美股裸代码如 AAPL…） [high]
+- us_filings_recent: internal_us_filings_recent [us_stock] — 美股近期 SEC 申报（…） [medium]
+- health: health_health_get [unknown] …  /  - market_health: health_market_health_get [unknown] …
+```
+
+`tools_by_domain("us_stock")` 同样 4 条 —— **过滤能力是有的，只是没人用**（`tests/test_us_stock_domain.py:92-111` 与 `tests/test_tool_registry_multi_domain.py:164` 都覆盖了它）。
+
+**修法（分三步，第 2 步是承重的）**：
+
+1. **接入域过滤**：`supervisor.py` 的 `_plan` 在 `state["domain"]` 显式存在时用 `registry_text(domains=[explicit_domain, "cross"])`；不存在时保持 `registry_text()` 不变（planner 要自己判域，此时不能预先过滤）。
+   ⚠️ **`"cross"` 是必须带的**：`snapshot` / `klines` / `window` 三条共享 operationId 的注册域就是 `cross`，而 **crypto 侧的实时 ticker 与 K 线只有这几个 key 提供**（crypto 域自己的 9 条是 coinglass/hyperliquid 衍生品数据）。所以**不能只传 `[domain]`**，否则 crypto 域会失去行情能力。
+2. **给 `cross` 工具的 `purpose` 文本加上边界声明**（**这条才是真正防错的**）—— 光有域过滤挡不住 `snapshot`，因为它确实是 `cross` 域、确实在渲染文本里。必须让 planner 从文本就知道它不适用：
+   - `snapshot`（`key=snapshot`）purpose 末尾加：「**仅支持 crypto 交易所**（binance/okx/bybit/aster/hyperliquid）；**不支持 A股 / 港股 / 美股个股**（实测 `exchange=xueqiu` → 422）。美股行情用 `us_klines`/`us_window`。」
+   - `klines`（`key=klines`）与 `window`（`key=window`）purpose 补：「**多源**：crypto（`exchange=binance` 等）与大宗商品；**美股请用 `us_klines`/`us_window`**（`exchange=xueqiu` + 裸代码）。」
+   - 这与美股行情接入时那次「purpose 未写明 start/end 必填 → LLM 漏参 422」是**同一类修法**（已验证有效；当时的计划文档已归档删除，结论在 `README.md` 美股域一节与 `tests/test_us_stock_domain.py`）。
+3. **加一道零成本守卫**：`_plan` 产出后校验每个 step 的 `key` 是否出现在**本次渲染出来的**注册表文本里；不在则**不执行**该 step 并把 `tool_call_filtered: <key>` 记进 `errors`（防 LLM 幻觉出旧名或串域）。**不新增 LLM 调用**。
+
+**测试（B4 内新增）**：
+- `registry_text(domains=["us_stock"])` 含 4 条 `us_*`、**不含** `snapshot`/`discussions`/`longhu`（已有覆盖，补 `snapshot` 这条断言）。
+- `registry_text(domains=["a_share"])` 不含 `us_*`。
+- `registry_text(domains=["crypto"])` **含** `snapshot`/`klines`（守住「必须带 cross」这条约束，防止后来者「优化」掉它）。
+- `snapshot` 的 purpose 含「不支持」与「A股」字样（文本契约，防被改回去）。
+- 守卫单测：伪造一个不在渲染文本里的 `key` → 被过滤 + `errors` 出现 `tool_call_filtered`。
+
+**不在本计划范围**：为 `cross` 共享条目拆成按域独立的 key（如新增 `crypto_klines`）—— 那是注册表结构变更，影响 `BY_NAME`/`SHARED_BY_NAME`/缓存键，**要单独评估**。
+
+---
+
+### B7. 证据 `domain` 被硬编码成 `crypto`（P3）——**影响全部域，不只是美股**
+
+**症状（实测）**：`domain="us_stock"` 那条 e2e 报告里，苹果 K 线的证据是
+
+```json
+{"id": "technical-001", "source_tool": "klines_market_klines_post", "domain": "crypto",
+ "metric": "candle_summary", "value": {"count": 33, "price_min": 213.92, "price_max": 237.49, "price_last": 230.1, ...}}
+```
+
+**根因（两处硬编码，不是 `infer_domain_from_tool` 的错）**：`app/research/evidence.py`
+
+| 行 | 代码 | 影响 |
+|---|---|---|
+| `app/research/evidence.py:309` | K 线摘要分支写死 `domain="crypto"` | **任何域的 K 线证据都被标成 crypto**（A 股、美股全中） |
+| `app/research/evidence.py:364` | 快照摘要兜底分支写死 `domain="crypto"` | 同理 |
+
+对比：非 K 线分支（`app/research/evidence.py:342`）用的是 `result.normalized[0].domain`，而 `infer_domain_from_tool("klines_market_klines_post")` **正确**返回 `"cross"`（`tests/test_normalizer_multi_domain.py:29` 有断言）—— 说明**问题就在这两个写死的字面量**。
+
+**修法**：
+1. `evidence.py:309` / `:364` 的 `domain="crypto"` 改为按工具推断（同 `:342` 的取法；拿不到时用 `"unknown"`）。
+2. **共享 operationId 的域归属是次要问题**：`klines_market_klines_post` 被 `commodity_gold`/`klines`/`us_klines` 三 key 共用，仅凭 tool_name 只能得到 `"cross"`，拿不到 `us_stock`。若要让美股 K 线证据显示 `us_stock`，需要在 `ToolResult` 上带上**已解析的 key / 域**（`ToolRuntime` 里 `resolve_tool_by_name` 的结果本来就拿到 `ToolMeta`，把它透传到 `ToolResult` 即可）。**实现顺序**：先做第 1 步（真 bug、影响全部域、改动小）；第 2 步若牵连 `ToolResult` 结构，**停下问用户**（属方案级变更）。
+
+**测试（B4 内新增）**：
+- 用假的 klines 结果（`candle_summary` 路径）喂 `build_evidence` → 断言 `evidence[0].domain != "crypto"`（对 a_share/us_stock 的 K 线都不该是 crypto）。
+- 快照摘要兜底分支同理。
+- 回归：不得让 `domain` 变成 `None`/空串（`Evidence.domain` 的既有断言要保持通过）。
+
+---
+
+### B8. 附录：留档（**不执行**，别顺手做）
+
+**AIHOT 资讯工具**：AIHOT（aihot.news）提供匿名 REST API（`/api/v1`，OpenAPI 定义在 `https://aihot.news/openapi-v1.json`，Agent 说明在 `/api/v1/agent`）与远程 MCP（`https://aihot.news/api/mcp`，Streamable HTTP，8 个工具，单次 ≤30 条）。**许可仅限个人/公益非商业，商用需书面授权** —— **在用户确认许可适用之前，本项不执行**。届时推荐路径：仿 `news_search` 注册 `internal_ai_news`（`http_method="INTERNAL"`），在 `_execute_internal` 增加分发分支，新增 `app/research/ai_news.py`；**不走 MCP**（现有 `mcp_client` 为单 Gateway 设计，为资讯源扩展多服务器支持不成比例）。
+> 本条原先写在已完成的 `US_STOCK_INTEGRATION_PLAN.md` §5，该文件已按用户要求删除（内容可从 git 历史取回），这里保留唯一还活着的待办。
+
+---
+
 ## 3. Phase C：验证与提交
 
 1. 双模式全量 `pytest` + ruff check/format 全绿。
 2. **真链路**：HTTP 模式真调 ≥5 个不同域的工具（A 股/港股/Crypto/美股/大宗），记录 status + datum 数 + 耗时。
    **MCP 模式**：验证「spawn + `initialize()` 握手 + `list_tools()` 40 个工具 + 启动自检」全部通过；**真实 tool call 的闭环以 §1.1.1 的 OAuth 阻塞解除为先决条件** —— 若实施时仍未解除，允许阶段性交付，**但执行记录必须如实写明「MCP 真调未验证（OAuth 刷新超时）」**，不许写成「MCP 已闭环」。
-3. 启动自检实测：故意把 `MCP_ARGS` 改回 `mcp serve market-gateway` 跑一次 `python -m app.main`，确认**启动时就看到明确报错**而不是 575 绿 + 线上全 403（这一步不需要 OAuth，已验证会得到 `iiix: MCP 已停用…`）。
-4. 分 Phase commit，中文 + 前缀，**不要 push**。
-5. 追加执行记录。
+3. 启动自检实测：故意把 `MCP_ARGS` 改回 `mcp serve market-gateway` 跑一次 `python -m app.main`，确认**启动时就看到明确报错**而不是 575 绿 + 线上全 403（这一步不需要 OAuth，已验证会得到 `iiix 已停用…`）。
+4. **B6/B7 的回归验证（必须做，不许只跑单测）**：HTTP 模式下用 `domain="us_stock"` 真跑一次「苹果（AAPL）最近的技术面走势和最新基本面怎么样？」，然后把 `report.used_tools` 与 `report.evidence` 打出来，确认两件事：
+   - `used_tools` 里**不再出现** `snapshot_market_snapshot_post`（B6）；
+   - K 线那条证据的 `domain` **不再是 `crypto`**（B7）。
+   基线参照（修复前实测）：`used_tools=['us_fundamentals','klines_market_klines_post','snapshot_market_snapshot_post']`、`technical-001.domain='crypto'`、耗时 314.1s、`errors=[]`。
+5. 分 Phase commit，中文 + 前缀，**不要 push**。
+6. 追加执行记录（含 B6/B7 的前后对照）。
 
 ---
 
@@ -354,6 +461,9 @@ setx NO_PROXY    "localhost,127.0.0.1"
 4. **两计划的执行顺序**：`SENTIMENT_PLAN.md`（情绪面）与本文都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，**不可并行**。建议**先情绪面、再本文**（情绪面的 6 条也包含在本文的 40 条改名范围内，先做情绪面等于本文的 6/40 提前落地，两边不会互相踩）。若实施者认为先做本文更顺（一次性改完 40 条，情绪面只剩新增聚合工具），也可 —— **但必须串行，且第二份开工前先 rebase/确认第一份已 commit**。
 5. 工具总数会变：**44 → 44**（本轮只改名、不增删，8 条筹码不注册）。情绪面计划完成后是 **44 + 5 = 49**（6 条情绪面条目中 `discussions` 是从 `timeline` 改名而来，净增 5 条：`post_comments`、`sentiment_index`、`internal_sentiment_index`、`internal_stock_discussions`、`internal_post_comments`）。**README/docs 的数字必须按最终状态写，不要写中间态。**
 6. **MCP 真调阻塞（§1.1.1）**：MCP 能握手/`list_tools`，但真实工具调用被 iiix CLI 侧 OAuth 刷新超时挡住。**HTTP 模式可正常执行**。需要实施者/用户确认：是等该环境问题解除后再闭环 MCP，还是本轮按「HTTP e2e + MCP 握手自检」阶段性交付。
+7. **B6 步 3（域守卫）的范围**：守卫只拦「`key` 不在本次渲染文本里」（防幻觉/串域），**不拦「在文本里但不适用于该 symbol」**（如 `snapshot` 对 AAPL）—— 后者靠 B6 步 2 的 purpose 边界声明 + critic 纠偏。若要求更强的机械保证（如按 symbol 前缀校验工具），属方案级变更，**先问用户**。
+8. **B7 步 2（共享 operationId 的域归属）是否本轮做**：需要把 `resolve_tool_by_name` 得到的 `ToolMeta` 透传到 `ToolResult`，会动 `ToolResult` 结构（有既有测试依赖），**属方案级变更，先问用户**；B7 步 1（硬编码 `crypto` 改按工具推断）是本轮必做。
+9. **B6 是否需要拆 `cross` 共享条目**（如新增 `crypto_klines`/`crypto_snapshot`）→ **本轮不做**，已在 B6 末尾注明理由（影响 `BY_NAME`/`SHARED_BY_NAME`/缓存键）。
 
 ---
 

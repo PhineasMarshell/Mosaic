@@ -3,7 +3,17 @@
 > 本文由主 Agent 基于**实测真值**编写（2026-10-06，main @ a15c209 + 工作区未提交的 MCP 语法修正，工作树有改动）。
 > 所有 Gateway 事实均来自本机实跑（HTTP 直连 + MCP `list_tools`），不是文档推断；每处实测结论都标了取证方式。
 > **执行时不必重新调研**；如实际代码与本文引用不符，以代码为准并在交付报告中说明差异。
-> 执行纪律（环境、基线、commit 规则）沿用 `US_STOCK_INTEGRATION_PLAN.md` §1.5，此处不重复，开工前先读那一节。
+> **执行纪律（必须遵守，有既往踩坑）**：
+> 1. **必须用 `.venv/Scripts/python.exe`**（Windows 环境，不要用系统 python）。
+> 2. 开工前先跑全量基线并记录数字（**双模式各跑一次**：`MARKET_GATEWAY_MODE=mcp` 与 `=http`；基线应为全绿 + 0 skipped；若基线本身有红，**停下报告，不要在红基线上开工**）：
+>    ```bash
+>    .venv/Scripts/python.exe -m pytest . -q
+>    .venv/Scripts/python.exe -m ruff check . --no-cache
+>    .venv/Scripts/python.exe -m ruff format --check . --no-cache
+>    ```
+> 3. 测试**不得依赖真实网络/真实 LLM**：解析函数直测 + monkeypatch 假响应（参考 `tests/test_hk_northbound.py` 只测 `_build_params`/`_parse_*` 纯函数的模式）。
+> 4. 注意已知测试坑：`market_cache` 全局污染、monkeypatch 打在模块全局上、污染类测试在单用例内顺序执行；新测试文件的 fixture 隔离要自洽。
+> 5. **三步验证全绿才能 commit**；commit message 用中文 + `feat:`/`test:`/`docs:` 前缀（对齐 `git log` 现有风格）；**不要 push**。
 > **执行顺序（已定）：本计划先做，`MARKET_GATEWAY_321_MIGRATION.md` 后做。** 两份都改 `app/gateway/tool_registry.py` 与 `WHITELIST_NO_SYMBOL`，严禁并行。
 
 ---
@@ -463,7 +473,7 @@ sentiment_cache_ttl_seconds: int = 900
 2. `ruff check . --no-cache` + `ruff format --check . --no-cache` 全绿。
 3. **真链路 e2e**（不许只看 mock 单测）：HTTP 模式下真调 `internal_sentiment_index` / `internal_stock_discussions` / `internal_post_comments` 各一次，记录 status + datum 数 + 耗时；**datum 数必须在上限内**。
 4. `git commit` 按 Phase 分提交，中文 + `feat:`/`test:`/`docs:` 前缀（对齐 git log 风格）。**不要 push**。
-5. 在本文档追加「执行记录」小节（对齐 `SEC_EDGAR_PLAN.md` §7 格式）：A0 实测表、实施摘要、与计划真值的偏差、测试数字。
+5. 在本文档追加「执行记录」小节，**必须包含这四块**：① A0 实测表（含原始 JSON 片段与耗时）② 实施摘要（改了哪些文件、新增/改写的测试）③ **与本文档真值的偏差**（计划里写错或代码与描述不符的地方，逐条列出）④ 测试数字（改动前/后，双模式）。
 
 ---
 
@@ -503,4 +513,4 @@ sentiment_cache_ttl_seconds: int = 900
 
 ## 7. 执行记录
 
-（待子 Agent 落地后按 `SEC_EDGAR_PLAN.md` §7 格式追加）
+（待子 Agent 落地后追加，格式见 §3 第 5 条：A0 实测表 / 实施摘要 / 与计划真值的偏差 / 测试数字）
