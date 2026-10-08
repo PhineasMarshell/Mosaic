@@ -40,7 +40,7 @@ Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
 关键设计：
 - **证据账本是唯一契约**：各 analyst 只往 `state.evidence` 追加 Evidence 条目，不写结论；结论由 Reasoning 统一产出
 - **证据条数硬上限 80**：`build_evidence` 统一截断，超出时按来源保留最新 80 条，并在最后一条 `note` 注明"截断 N 条"
-- **Critic 闭环**：证据不足时打回 Reasoning 重写（revise）或回 Supervisor 补充研究（research_more），最多 N 轮；审计自身失败时产出内部 `verdict="error"` 安全终止（不当成 pass，也不伪造 research_more）
+- **Critic 闭环**：证据不足时打回 Reasoning 重写（revise）或回 Supervisor 补充研究（research_more），两类回环都受 `critic_max_revisions` 限次（默认 2）；回环轮 Supervisor 会读到 Critic 的 `missing_points` / `missing_tool_keys` 与已执行工具清单，并在代码层补齐缺口工具、丢弃已拿到数据的重复步骤；审计自身失败时产出内部 `verdict="error"` 安全终止（不当成 pass，也不伪造 research_more）
 - **可选节点**：news / sentiment analyst 由配置开关控制，关闭时行为与三 analyst 基线完全一致
 
 ## 支持的市场域

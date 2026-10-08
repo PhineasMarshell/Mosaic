@@ -52,14 +52,14 @@ iiix plugin serve market-gateway
 | **SentimentAnalyst** | 工具执行 + LLM | 评论爬取 + 清洗 + 聚合 + LLM 打分，开关控制，默认关闭（依赖评论 MCP） |
 | **Evidence Gate** | 纯代码 | 检查 ToolResult 状态（success/partial/error），判定证据是否具备基本可用性；`has_evidence=False` 时 Reasoning **降级不短路**：报告照常产出，但强制 confidence=low + data_caveats + errors（T15/D2） |
 | **Reasoning** | LLM | 汇总所有 Evidence + findings，生成结构化 MarketIntelligence 报告 |
-| **Critic** | LLM | 审计报告结论是否有证据支撑，输出 pass/revise/research_more；**另有节点内部产生的 `error`**（T11）：模型审计自身失败（LLM 超时 / 输出无法解析）或返回无法识别的 verdict 时，节点产出 `verdict="error"` + `errors`，路由层据此**安全终止**，既不当成 pass，也不伪造 research_more 再烧一到两轮完整工具 + LLM。`error` 不允许模型自己返回 |
+| **Critic** | LLM | 审计报告结论是否有证据支撑，输出 pass/revise/research_more；**另有节点内部产生的 `error`**（T11）：模型审计自身失败（LLM 超时 / 输出无法解析）或返回无法识别的 verdict 时，节点产出 `verdict="error"` + `errors`，路由层据此**安全终止**，既不当成 pass，也不伪造 research_more 再烧一到两轮完整工具 + LLM。`error` 不允许模型自己返回；research_more 时输出 `missing_points`（自然语言缺口）与 `missing_tool_keys`（只从 prompt 里「可补充的工具」小节挑、落库前再过滤幻觉 key 与已拿到数据的 key），供回环轮补齐 |
 
 ### 关键设计约定
 
 1. **证据账本是唯一契约**：各 analyst 只往 `state.evidence` 追加 Evidence 条目（来源工具、指标、数值、时间戳），不写结论；结论由 Reasoning 统一产出。
 2. **节点函数兼容 Pydantic 与 dict 两种 state**：LangGraph v1.x 可能传入 ResearchState 或 dict，所有节点第一行统一 `model_dump()` 归一化。
 3. **新增字段走返回字典写入**：禁止直接修改 state 对象，所有写入通过节点返回值 `{"field": value}` 完成。
-4. **Critic 闭环**：revise 时回 Reasoning 重写（≤ `critic_max_revisions` 轮）；research_more 时带 missing_points 回 Supervisor 补充研究（最多 1 次）。审计自身失败 → 内部 `verdict="error"` 安全终止（见上表 T11）。
+4. **Critic 闭环**：revise 时回 Reasoning 重写（≤ `critic_max_revisions` 轮）；research_more 时回 Supervisor 补充研究（≤ `critic_max_revisions` 次，默认 2）。回环轮 Supervisor 会读到 Critic 的 `missing_points` / `missing_tool_keys` 与已执行工具清单（渲染进 planner prompt 的「补充研究轮上下文」），并在代码层丢弃「已拿到数据且参数被覆盖」的重复步骤、把缺口工具强制补进 plan 头部（≤ `gap_max_steps` 个）。审计自身失败 → 内部 `verdict="error"` 安全终止（见上表 T11）。
 5. **可选节点**：news / sentiment analyst 由配置开关控制，关闭时对应 category 的工具归入 technical，行为与三 analyst 基线完全一致。
 6. **证据条数硬上限 80**（T6）：`build_evidence` 最后一步统一截断，超出时按来源保留最新 80 条，并在保留的最后一条 `note` 里写明"截断 N 条"；报告因此不会因证据过载而膨胀。
 7. **报告里的 `anomalies` 字段由代码填**（D3）：`build_response_from_state` 用 `detect_anomalies` 计算后覆盖模型输出（模型填了也会被覆盖，避免双写）；检测失败不静默——报告照常产出但往 `errors` 追加原因。它与存储层 `anomalies` 表（`record_anomaly` 持久化的历史异常事件）是两回事。
@@ -81,7 +81,8 @@ iiix plugin serve market-gateway
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `CRITIC_MAX_REVISIONS` | 2 | Critic 打回重写最大轮次 |
+| `CRITIC_MAX_REVISIONS` | 2 | Critic 打回重写最大轮次（同时是 `research_more` 回环轮次上限） |
+| `GAP_MAX_STEPS` | 3 | research_more 回环轮最多代码级补齐几个 Critic 点名的缺口工具 |
 | `GRAPH_RECURSION_LIMIT` | 25 | LangGraph 递归上限（防无限回环） |
 
 ### 可选分析员
@@ -156,7 +157,7 @@ iiix plugin serve market-gateway
   → Critic: LLM 审计 report vs evidence → Critique
     → pass: END
     → revise: 回 Reasoning 重写（≤ N 轮）
-    → research_more: 回 Supervisor 补充研究（最多 1 次）
+    → research_more: 回 Supervisor 补充研究（≤ `critic_max_revisions` 次，默认 2；回环轮读到 missing_points / missing_tool_keys 与已执行工具清单，代码层补齐缺口工具、丢弃重复步骤）
     → error（仅节点内部产生，T11）: 审计自身失败 / verdict 无法识别 → 写 errors 并安全终止
   → anomalies: 代码用 detect_anomalies 覆盖 report["anomalies"]（D3，不依赖模型输出）
   → 落库：research 记录 + daily_state 快照
