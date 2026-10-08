@@ -23,7 +23,8 @@ def _clear_market_cache():
 
 def test_resolve_ttl_uses_settings_for_news_search():
     settings = Settings()
-    assert _resolve_ttl("news_search", settings) == settings.news_search_ttl_seconds
+    # A2.4：news_search TTL 分档后，_resolve_ttl（看不到 time_limit）返回 week 档默认
+    assert _resolve_ttl("news_search", settings) == settings.news_ttl_week_seconds
     # 不传 settings 保持旧映射行为（其它测试依赖）
     assert _resolve_ttl("nonexistent_tool_xyz") == 30.0
 
@@ -43,5 +44,5 @@ async def test_news_search_cache_ttl_survives_execute(monkeypatch):
     key = _make_cache_key("news_search", {"query": "A股"})
     entry = market_cache._store[key]
     remaining = entry.expires_at - time.monotonic()
-    # 旧实现这里 ≈30s（被 execute() 的默认 TTL 覆盖）
-    assert remaining > float(Settings().news_search_ttl_seconds) - 60
+    # time_limit 未传默认 d 档（1800s）；旧实现这里 ≈30s（被 execute() 的默认 TTL 覆盖）
+    assert remaining > float(Settings().news_ttl_day_seconds) - 60

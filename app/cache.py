@@ -166,15 +166,34 @@ def _make_cache_key(tool: str, arguments: dict) -> str:
     return f"{tool}:{sorted_args}"
 
 
-def _resolve_ttl(tool: str, settings=None) -> float:
+def _resolve_ttl(tool: str, settings=None, arguments: dict | None = None) -> float:
     """根据工具名选择 TTL。
 
-    T17：``news_search`` 的 6 小时 TTL 来自 settings（DDGS 限流保护），
-    不能落进 30 秒默认值——旧实现 ``execute()`` 会用它重新 set 同一个 key，
-    把内部工具写入的 21600s 覆盖掉。settings 未传时保持旧返回值（测试依赖）。
+    T17：``news_search`` 与新闻面聚合内部工具的 TTL 来自 settings（DDGS 限流
+    保护 / 新闻时效），不能落进 30 秒默认值——旧实现 ``execute()`` 会用它重新
+    set 同一个 key，把内部工具写入的专用 TTL 覆盖掉。settings 未传时保持旧
+    返回值（测试依赖）。
+
+    ``arguments``：A2.4 起 news_search 的 TTL 按 ``time_limit`` 分d/w/m 三档。
+    execute() 拿到分档 TTL 后还会对同一 key 再 set 一次，必须能把参数传进来，
+    否则 d/m 两档会被这里的 week 默认值覆盖掉（分档形同失效）。
     """
-    if tool == "news_search" and settings is not None:
-        return float(settings.news_search_ttl_seconds)
+    if settings is not None:
+        # news_search 的 TTL 分档见 tool_runtime（d/w/m 各档）
+        if tool == "news_search":
+            tier = str((arguments or {}).get("time_limit", "") or "").strip().lower()
+            if tier == "d":
+                return float(settings.news_ttl_day_seconds)
+            if tier == "m":
+                return float(settings.news_ttl_month_seconds)
+            # w 档与无参（未知档位）都落 week 默认
+            return float(settings.news_ttl_week_seconds)
+        if tool == "internal_symbol_news":
+            return float(settings.news_symbol_ttl_seconds)
+        if tool == "internal_market_telegraph":
+            return float(settings.news_telegraph_ttl_seconds)
+        if tool == "internal_news_digest":
+            return float(settings.news_digest_ttl_seconds)
     mapping = {
         # A 股
         "get_market_quotes": QUOTE_TTL,

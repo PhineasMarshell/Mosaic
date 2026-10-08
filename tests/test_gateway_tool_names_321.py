@@ -123,9 +123,13 @@ def test_all_new_operation_ids_resolve():
 
 
 def test_tool_counts_unchanged():
-    """本轮只改名不增删：ALL_TOOLS 仍 44；BY_NAME 37（7 条差额来自共享 operationId）。"""
-    assert len(ALL_TOOLS) == 44
-    assert len(BY_NAME) == 37
+    """3.2.1 改名轮只改名不增删；新闻面多源接入（A3）后 ALL_TOOLS 44→47。
+
+    44→47 = 新增 symbol_news / telegraph / news_digest 三条 INTERNAL 新闻工具。
+    BY_NAME 37→40（同样 +3）；差额 7 仍来自共享 operationId（键唯一、name可复用）。
+    """
+    assert len(ALL_TOOLS) == 47
+    assert len(BY_NAME) == 40
     assert len(NEW_TOOL_NAMES) == 32
 
 

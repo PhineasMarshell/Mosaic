@@ -60,6 +60,10 @@ class MarketAnalystNode:
             "get_market_health",
             # —— T8：搜索 / 新闻 / 龙虎榜 / 港股内部聚合，本就不依赖 A 股 symbol ——
             "news_search",
+            # —— 新闻面多源聚合（A4）：query 型 / 可空参；symbol_news 必须有
+            #    symbol，不进白名单，走 symbol 守卫自动补齐 ——
+            "internal_news_digest",
+            "internal_market_telegraph",
             "search_stocks",
             "get_stock_longhu",
             "internal_hk_northbound",

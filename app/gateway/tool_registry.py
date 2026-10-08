@@ -6,7 +6,7 @@
 - 新增市场域只需添加新 ToolMeta 条目并更新 DEFAULT_DOMAINS
 - 兼容旧版 resolve_tool(key) → ToolMeta 查询
 
-所有 44 个 Market Gateway Tool 均在此声明，按域分组。
+所有 47 个 Market Gateway Tool 均在此声明，按域分组。
 后续 Tool 名变化时，优先修改这里，而不是 Planner。
 """
 
@@ -572,14 +572,45 @@ _US_STOCK_PLACEHOLDERS = [
 ]
 
 # ------------------------------------------------------------------ #
-# 新闻舆情 — DDGS 内部直连（跨域通用）                                 #
+# 新闻舆情 — 多源新闻聚合（内部直连，跨域通用）                        #
 # ------------------------------------------------------------------ #
 
-_NEWS_SEARCH = [
+_NEWS_TOOLS = [
     ToolMeta(
         "news_search",
         "news_search",
-        "DDGS 新闻舆情搜索（必填: query=搜索词; 可选: max_results, time_limit=d/w/m，不限市场域）",
+        "DDGS 新闻舆情搜索（必填: query=搜索词; 可选: max_results, time_limit=d/w/m，不限市场域；"
+        "限流常态化，仅作轻量单源兜底，主路用 symbol_news/news_digest）",
+        domain="cross",
+        priority="medium",
+        http_method="INTERNAL",
+        http_path="",
+        category="news",
+    ),
+    ToolMeta(
+        "symbol_news",
+        "internal_symbol_news",
+        "A股个股新闻聚合（东财个股新闻+Google资讯，跨源去重带来源；symbol 必填如 SH600519/600519）",
+        domain="a_share",
+        priority="high",
+        http_method="INTERNAL",
+        http_path="",
+        category="news",
+    ),
+    ToolMeta(
+        "telegraph",
+        "internal_market_telegraph",
+        "财联社电报快讯（全市场最新电报流；可选 keyword 过滤标题/内容）",
+        domain="a_share",
+        priority="high",
+        http_method="INTERNAL",
+        http_path="",
+        category="news",
+    ),
+    ToolMeta(
+        "news_digest",
+        "internal_news_digest",
+        "多源新闻聚合搜索（Google资讯+DDGS 双源去重；query 必填，不限市场域）",
         domain="cross",
         priority="medium",
         http_method="INTERNAL",
@@ -642,7 +673,7 @@ ALL_TOOLS: list[ToolMeta] = (
     + _CRYPTO_DERIVATIVES
     + _CRYPTO_COINGLASS
     + _US_STOCK_PLACEHOLDERS
-    + _NEWS_SEARCH
+    + _NEWS_TOOLS
     # + _SENTIMENT_TOOLS  # P4-5：评论 MCP 就绪后取消注释
     + _HEALTH_TOOLS
 )

@@ -7,11 +7,13 @@
 - 结果截断（K 线防 prompt 失控）
 - HK 北向内部工具执行
 - DDGS 新闻舆情内部工具执行
+- 新闻面多源聚合内部工具执行（symbol_news / telegraph / news_digest）
 - SEC EDGAR 美股基本面内部工具执行（us_fundamentals / us_filings_recent）
 
 analyst 节点通过此层执行分配给自己的工具。
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -25,6 +27,20 @@ from app.models.market import STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, Norm
 from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
 from app.research.news_search import extract_news_entries as _extract_news_entries
 from app.research.news_search import search_news as _search_news
+from app.research.news_sources import (
+    NewsItem,
+    clip,
+    dedup_news,
+    fetch_code_name_map,
+    fetch_ddgs,
+    fetch_google_rss,
+    fetch_stock_news,
+    fetch_telegraph,
+    multi_source_count,
+    rank_news,
+    symbol_to_akshare6,
+)
+from app.research.news_sources.types import DdgsSourceError
 from app.research.sec_edgar import fetch_us_fundamentals as _fetch_us_fundamentals
 from app.research.sec_edgar import fetch_us_recent_filings as _fetch_us_filings_recent
 
@@ -37,6 +53,97 @@ _US_FILINGS_TTL_SECONDS = 3600
 
 #: SEC_EDGAR_CONTACT 未配置时的错误文案（SEC 公平访问政策要求声明访问身份）
 _SEC_EDGAR_CONTACT_MISSING = "SEC_EDGAR_CONTACT 未配置（SEC 公平访问政策要求声明访问身份，见 .env.example）"
+
+#: code↔name 名称表在 market_cache 的键（TTL 由 settings.news_code_name_ttl_seconds 控制）
+_CODE_NAME_CACHE_KEY = "internal:code_name_map"
+
+
+def _news_published_str(item: NewsItem) -> str:
+    """NewsItem.published_at（naive datetime | None）→ 'YYYY-MM-DD HH:MM:SS' 字符串。"""
+    return item.published_at.strftime("%Y-%m-%d %H:%M:%S") if item.published_at else ""
+
+
+def _news_window(items: list[NewsItem]) -> tuple[str, str]:
+    """deduped 池的时间窗（最新/最早），无时间数据时为空串。"""
+    stamps = [i.published_at for i in items if i.published_at]
+    if not stamps:
+        return "", ""
+    return max(stamps).strftime("%Y-%m-%d %H:%M"), min(stamps).strftime("%Y-%m-%d %H:%M")
+
+
+def _build_news_datums(
+    *,
+    tool: str,
+    meta: dict,
+    items: list[NewsItem],
+    text_limit: int,
+    item_metric: str,
+    meta_metric: str = "news_meta",
+    include_stats: bool = True,
+    instrument: str | None = None,
+    include_url: bool = True,
+    multi_source_titles: int | None = None,
+) -> list[NormalizedDatum]:
+    """NewsItem 列表 → NormalizedDatum（meta + item 条目 + stats），domain 统一 'media'。
+
+    item 条目结构对齐 extract_news_entries 现口径：url 允许为空（电报无链接字段）。
+    stats 的 per_source 在传入的 items（保留池）上统计；multi_source_titles 必须由
+    调用方传**去重前合池**的统计结果（传 None 时退化在 items 上算，恒为 0）。
+    """
+    entries: list[NormalizedDatum] = [NormalizedDatum(domain="media", tool=tool, metric=meta_metric, value=meta)]
+    for i, item in enumerate(items, 1):
+        value: dict = {
+            "title": item.title,
+            "source": item.source,
+            "published_at": _news_published_str(item),
+            "text": clip(item.text, text_limit),
+        }
+        if include_url:
+            value["url"] = item.url
+        entries.append(
+            NormalizedDatum(
+                domain="media",
+                tool=tool,
+                metric=f"{item_metric}_{i}",
+                value=value,
+                timestamp=_news_published_str(item),
+                source=item.source or None,
+                instrument=instrument,
+            )
+        )
+    per_source: dict[str, int] = {}
+    for item in items:
+        key = item.source or "未知来源"
+        per_source[key] = per_source.get(key, 0) + 1
+    if include_stats:
+        multi = multi_source_count(items) if multi_source_titles is None else multi_source_titles
+        entries.append(
+            NormalizedDatum(
+                domain="media",
+                tool=tool,
+                metric="news_stats",
+                value={"per_source": per_source, "multi_source_titles": multi},
+            )
+        )
+    return entries
+
+
+def _news_status(sources_ok: list[str], sources_failed: list[str], kept_count: int) -> tuple[str, str | None]:
+    """新闻聚合工具的状态裁决。
+
+    全部已尝试源失败或聚合 0 条 → error（对齐「0 条 datum 判 error」的既有纪律）；
+    恰一源失败 → partial（note 写明哪路挂了）；否则 success。
+    """
+    failed_note = "、".join(sources_failed)
+    if not kept_count:
+        if not sources_ok:
+            return STATUS_ERROR, f"全部新闻源失败: {failed_note}"
+        if sources_failed:
+            return STATUS_ERROR, f"新闻源可用但 0 条结果（失败源: {failed_note}）"
+        return STATUS_ERROR, "新闻源可用但 0 条结果"
+    if sources_failed:
+        return STATUS_PARTIAL, f"部分新闻源失败: {failed_note}"
+    return STATUS_SUCCESS, None
 
 
 def _normalize_us_fundamentals(data: dict) -> list[NormalizedDatum]:
@@ -252,7 +359,7 @@ class ToolRuntime:
             # 导致 called_signatures 阻止不了重复调用）。
             called_signatures.add(signature)
             cache_key = _make_cache_key(tool_name, arguments)
-            ttl = _resolve_ttl(tool_name, self.settings)
+            ttl = _resolve_ttl(tool_name, self.settings, arguments)
             market_cache.set(cache_key, result.model_copy(deep=True), ttl=ttl)
 
         return result
@@ -463,7 +570,15 @@ class ToolRuntime:
                     error=meta.get("error"),
                 )
                 if status == STATUS_SUCCESS:
-                    market_cache.set(cache_key, result, ttl=self.settings.news_search_ttl_seconds)
+                    # TTL 分档：time_limit=d 是「今天的新闻」，缓存 6 小时是错误语义
+                    # （A2.4 实测发现并修正）—— d/w/m 三档各自配 TTL。
+                    ttl_tier = {
+                        "d": self.settings.news_ttl_day_seconds,
+                        "w": self.settings.news_ttl_week_seconds,
+                        "m": self.settings.news_ttl_month_seconds,
+                    }
+                    ttl = ttl_tier.get(str(time_limit), self.settings.news_ttl_week_seconds)
+                    market_cache.set(cache_key, result, ttl=ttl)
                 return result
             except Exception as exc:
                 logger.warning("Internal tool news_search failed: %s", exc)
@@ -474,6 +589,15 @@ class ToolRuntime:
                     normalized=[],
                     error=f"Internal fetch failed: {exc}",
                 )
+
+        if tool_name == "internal_symbol_news":
+            return await self._run_internal_symbol_news(arguments)
+
+        if tool_name == "internal_market_telegraph":
+            return await self._run_internal_market_telegraph(arguments)
+
+        if tool_name == "internal_news_digest":
+            return await self._run_internal_news_digest(arguments)
 
         if tool_name == "internal_us_fundamentals":
             # SEC 公平访问政策门闩：未声明访问身份不得发起任何网络请求
@@ -579,3 +703,303 @@ class ToolRuntime:
             normalized=[],
             error=f"Unknown internal tool: {tool_name}",
         )
+
+    # ------------------------------------------------------------------ #
+    # 新闻面多源聚合工具（A2）                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _clamp_int(value, default: int, low: int, high: int) -> int:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(low, min(high, n))
+
+    async def _fetch_code_name(self, symbol6: str) -> str:
+        """code↔name 名称表（market_cache 长 TTL；表取不到不阻塞，用 6 位码兜底）。"""
+        cached = market_cache.get(_CODE_NAME_CACHE_KEY)
+        if isinstance(cached, dict):
+            return str(cached.get(symbol6, ""))
+        try:
+            code_map = await fetch_code_name_map(timeout=60.0)
+            market_cache.set(_CODE_NAME_CACHE_KEY, code_map, ttl=self.settings.news_code_name_ttl_seconds)
+            return str(code_map.get(symbol6, ""))
+        except Exception as exc:  # noqa: BLE001 名称表失败不阻塞主路
+            logger.warning("Internal tool news: code_name map fetch failed (non-fatal): %s", exc)
+            return ""
+
+    async def _run_internal_symbol_news(self, arguments: dict) -> ToolResult:
+        """internal_symbol_news — A 股个股新闻聚合（东财个股新闻 + Google 资讯）。"""
+        tool = "symbol_news"
+        cache_key = _make_cache_key("internal_symbol_news", arguments)
+        cached = market_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Cache hit for internal_symbol_news")
+            return cached
+
+        symbol_raw = str(arguments.get("symbol", "")).strip()
+        symbol6 = symbol_to_akshare6(symbol_raw)
+        if not symbol6:
+            return ToolResult(
+                tool=tool,
+                arguments=arguments,
+                status=STATUS_ERROR,
+                normalized=[],
+                error=f"无法识别的 A 股代码: {symbol_raw!r}（需 SH600519/SZ000001/600519 等 6 位代码，不猜）",
+            )
+        top_k = self._clamp_int(arguments.get("top_k", 8), default=8, low=1, high=15)
+        include_google = bool(arguments.get("include_google", True))
+        timeout = float(self.settings.news_source_timeout_seconds)
+
+        name = await self._fetch_code_name(symbol6)
+        google_query = name or symbol6
+
+        sources_ok: list[str] = []
+        sources_failed: list[str] = []
+        east_items: list[NewsItem] = []
+        google_items: list[NewsItem] = []
+
+        tasks = [fetch_stock_news(symbol6, timeout=timeout)]
+        if include_google:
+            tasks.append(fetch_google_rss(google_query, timeout=timeout))
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+        east_out = outcomes[0]
+        if isinstance(east_out, BaseException):
+            sources_failed.append("eastmoney")
+            logger.warning("Internal tool internal_symbol_news: eastmoney failed: %s", east_out)
+        else:
+            sources_ok.append("eastmoney")
+            east_items = east_out
+        if include_google:
+            google_out = outcomes[1]
+            if isinstance(google_out, BaseException):
+                sources_failed.append("google")
+                logger.warning("Internal tool internal_symbol_news: google rss failed: %s", google_out)
+            else:
+                sources_ok.append("google")
+                google_items = google_out
+
+        pool = east_items + google_items
+        total_before_dedup = len(pool)
+        # multi_source_titles 必须在**去重前**算：dedup 会把同标题跨源条目折叠成一条
+        multi_source = multi_source_count(pool)
+        deduped, dup_count = dedup_news(pool)
+        ranked = rank_news(deduped)
+        kept = ranked[:top_k]
+        window_start, window_end = _news_window(deduped)
+        meta = {
+            "symbol": symbol_raw,
+            "symbol6": symbol6,
+            "name": name,
+            "sources_ok": sources_ok,
+            "sources_failed": sources_failed,
+            "total_before_dedup": total_before_dedup,
+            "duplicates_removed": dup_count,
+            "kept": len(kept),
+            "window_start": window_start,
+            "window_end": window_end,
+            "multi_source_titles": multi_source,
+        }
+        status, note = _news_status(sources_ok, sources_failed, len(kept))
+        normalized = (
+            _build_news_datums(
+                tool=tool,
+                meta=meta,
+                items=kept,
+                text_limit=int(self.settings.news_max_text_chars),
+                item_metric="news_top",
+                instrument=symbol6,
+                multi_source_titles=multi_source,
+            )
+            if status != STATUS_ERROR
+            else []
+        )
+        result = ToolResult(
+            tool=tool,
+            arguments=arguments,
+            status=status,
+            partial=status == STATUS_PARTIAL,
+            normalized=normalized,
+            error=note,
+            note=note,
+        )
+        logger.info(
+            "Internal tool internal_symbol_news: %s → kept %d/%d (status=%s)",
+            symbol6,
+            len(kept),
+            total_before_dedup,
+            status,
+        )
+        if status != STATUS_ERROR:
+            market_cache.set(cache_key, result, ttl=self.settings.news_symbol_ttl_seconds)
+        return result
+
+    async def _run_internal_market_telegraph(self, arguments: dict) -> ToolResult:
+        """internal_market_telegraph — 财联社电报快讯（全市场最新电报流）。"""
+        tool = "telegraph"
+        cache_key = _make_cache_key("internal_market_telegraph", arguments)
+        cached = market_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Cache hit for %s", "internal_market_telegraph")
+            return cached
+
+        top_k = self._clamp_int(arguments.get("top_k", 15), default=15, low=1, high=30)
+        keyword = str(arguments.get("keyword", "")).strip()
+        try:
+            items = await fetch_telegraph(timeout=float(self.settings.news_source_timeout_seconds))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Internal tool telegraph failed: %s", exc)
+            return ToolResult(
+                tool=tool,
+                arguments=arguments,
+                status=STATUS_ERROR,
+                normalized=[],
+                error=f"财联社电报抓取失败: {exc}",
+            )
+        total = len(items)
+        if keyword:
+            items = [i for i in items if keyword in i.title or keyword in i.text]
+        ranked = rank_news(items)[:top_k]
+        window_start, window_end = _news_window(ranked)
+        meta = {
+            "total": total,
+            "kept": len(ranked),
+            "keyword": keyword,
+            "window_start": window_start,
+            "window_end": window_end,
+        }
+        status = STATUS_SUCCESS if ranked else STATUS_ERROR
+        normalized = (
+            _build_news_datums(
+                tool=tool,
+                meta=meta,
+                items=ranked,
+                text_limit=400,
+                item_metric="telegraph",
+                meta_metric="telegraph_meta",
+                include_stats=False,
+                include_url=False,
+            )
+            if status == STATUS_SUCCESS
+            else []
+        )
+        result = ToolResult(
+            tool=tool,
+            arguments=arguments,
+            status=status,
+            normalized=normalized,
+            error=None if status == STATUS_SUCCESS else "财联社电报 0 条结果",
+        )
+        logger.info("Internal tool telegraph: total %d → kept %d", total, len(ranked))
+        if status == STATUS_SUCCESS:
+            market_cache.set(cache_key, result, ttl=self.settings.news_telegraph_ttl_seconds)
+        return result
+
+    async def _run_internal_news_digest(self, arguments: dict) -> ToolResult:
+        """internal_news_digest — 跨市场主题/事件聚合（Google 资讯 + DDGS）。"""
+        tool = "news_digest"
+        cache_key = _make_cache_key("internal_news_digest", arguments)
+        cached = market_cache.get(cache_key)
+        if cached is not None:
+            logger.info("Cache hit for %s", "internal_news_digest")
+            return cached
+
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            return ToolResult(
+                tool=tool,
+                arguments=arguments,
+                status=STATUS_ERROR,
+                normalized=[],
+                error="缺少必填参数 query（搜索关键词）",
+            )
+        top_k = self._clamp_int(arguments.get("top_k", 8), default=8, low=1, high=15)
+        time_limit = str(arguments.get("time_limit", "d")).strip().lower()
+        if time_limit not in ("d", "w", "m"):
+            time_limit = "d"
+        timeout = float(self.settings.news_source_timeout_seconds)
+
+        sources_ok: list[str] = []
+        sources_failed: list[str] = []
+        google_items: list[NewsItem] = []
+        ddgs_items: list[NewsItem] = []
+
+        google_out, ddgs_out = await asyncio.gather(
+            self._fetch_google_for_digest(query, timeout),
+            self._fetch_ddgs_with_retry(query, time_limit, timeout),
+            return_exceptions=True,
+        )
+        if isinstance(google_out, BaseException):
+            sources_failed.append("google")
+            logger.warning("Internal tool news_digest: google rss failed: %s", google_out)
+        else:
+            sources_ok.append("google")
+            google_items = google_out
+        if isinstance(ddgs_out, BaseException):
+            sources_failed.append("ddgs")
+            logger.warning("Internal tool news_digest: ddgs failed: %s", ddgs_out)
+        else:
+            sources_ok.append("ddgs")
+            ddgs_items = ddgs_out
+
+        pool = google_items + ddgs_items
+        total_before_dedup = len(pool)
+        multi_source = multi_source_count(pool)
+        deduped, dup_count = dedup_news(pool)
+        ranked = rank_news(deduped)
+        kept = ranked[:top_k]
+        window_start, window_end = _news_window(deduped)
+        meta = {
+            "query": query,
+            "time_limit": time_limit,
+            "sources_ok": sources_ok,
+            "sources_failed": sources_failed,
+            "total_before_dedup": total_before_dedup,
+            "duplicates_removed": dup_count,
+            "kept": len(kept),
+            "window_start": window_start,
+            "window_end": window_end,
+            "multi_source_titles": multi_source,
+        }
+        status, note = _news_status(sources_ok, sources_failed, len(kept))
+        normalized = (
+            _build_news_datums(
+                tool=tool,
+                meta=meta,
+                items=kept,
+                text_limit=int(self.settings.news_max_text_chars),
+                item_metric="news_top",
+                multi_source_titles=multi_source,
+            )
+            if status != STATUS_ERROR
+            else []
+        )
+        result = ToolResult(
+            tool=tool,
+            arguments=arguments,
+            status=status,
+            partial=status == STATUS_PARTIAL,
+            normalized=normalized,
+            error=note,
+            note=note,
+        )
+        logger.info(
+            "Internal tool news_digest: %r → kept %d/%d (status=%s)", query, len(kept), total_before_dedup, status
+        )
+        if status != STATUS_ERROR:
+            market_cache.set(cache_key, result, ttl=self.settings.news_digest_ttl_seconds)
+        return result
+
+    @staticmethod
+    async def _fetch_google_for_digest(query: str, timeout: float) -> list[NewsItem]:
+        return await fetch_google_rss(query, timeout=timeout)
+
+    @staticmethod
+    async def _fetch_ddgs_with_retry(query: str, time_limit: str, timeout: float) -> list[NewsItem]:
+        """DDGS 限流实证：首败自动重试 1 次（只许一次，不许更多）。"""
+        try:
+            return await fetch_ddgs(query, time_limit=time_limit, timeout=timeout)
+        except DdgsSourceError:
+            logger.info("Internal tool news_digest: ddgs first attempt failed, retrying once")
+            return await fetch_ddgs(query, time_limit=time_limit, timeout=timeout)
