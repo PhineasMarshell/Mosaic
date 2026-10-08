@@ -62,6 +62,18 @@ _DOMAIN_RULES = {
 }
 
 
+# 新闻证据纪律（A7）：跨域规则，不分市场域 —— 三域以上共用，且 unknown 域
+# 的 _get_domain_rules 返回空串，放 _DOMAIN_RULES 里会丢。在 prompt 组装处
+# 无条件附加（新闻面论断只可能引用 news_*/telegraph_* 证据，与域无关）。
+_NEWS_RULES = (
+    "[新闻证据纪律]\n"
+    "- 涉及新闻/事件/消息面的论断必须引用 news_* 或 telegraph_* 证据，并标注时间与来源\n"
+    "- 单一来源的传闻性表述必须明示『单一来源，未交叉确认』\n"
+    "- 标题相同且出现于 ≥2 个独立来源（news_meta.multi_source_titles）方可称『已证实』\n"
+    "- 数条新闻只是样本，不得据此推断全市场情绪或长期趋势\n"
+)
+
+
 def _field(obj, key, default=None):
     """从 dict 或对象读取字段 —— LangGraph 可能传入任一形式。"""
     if isinstance(obj, dict):
@@ -166,6 +178,8 @@ class CriticNode:
 
             if rules:
                 prompt_pieces.extend(["\n=== 审查规则 ===\n", rules])
+            # A7：新闻证据纪律跨域通用，无条件附加（不受 _DOMAIN_RULES 域组织限制）
+            prompt_pieces.extend(["\n=== 新闻证据纪律 ===\n", _NEWS_RULES])
 
             prompt_pieces.extend(
                 [

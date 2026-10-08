@@ -40,9 +40,13 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
 
 2. "steps" —— 数组，每项包含：
    - tool_key: **工具的逻辑 key**（注册表文本中 `-` 左边的部分，如 `snapshot`, `klines`, `overview`，**不是右边的 operationId**）
-   - arguments: 参数对象。注意：**并非所有工具都能空参调用**。需要搜索词的查询类工具（如 `news_search`）必须传 `query` 字段；市场域工具通常需传 `symbol`/`secid` 等标识符。不确定时保留 `{{}}` 但 purpose 要描述预期用途。
+   - arguments: 参数对象。注意：**并非所有工具都能空参调用**。需要搜索词的查询类工具（如 `news_search`、`news_digest`）必须传 `query` 字段；市场域工具通常需传 `symbol`/`secid` 等标识符。不确定时保留 `{{}}` 但 purpose 要描述预期用途。
    - purpose: 调用该工具的目的描述
    - priority: "high" | "medium" | "low"
+
+新闻工具选用指引（按问题类型选对工具）：
+- A股个股新闻/消息 → `symbol_news`（传 symbol 如 SH600519/600519）；大盘盘面快讯 → `telegraph`（可选 keyword）
+- 跨市场主题/事件/港美股个股新闻 → `news_digest`（传 query）；轻量单源关键词查询 → `news_search`（传 query）
 
 可选字段 "early_stop": 布尔值，true 表示提前终止（通常不需要）。
 
