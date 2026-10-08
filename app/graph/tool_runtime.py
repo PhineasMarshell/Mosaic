@@ -64,7 +64,12 @@ def _news_published_str(item: NewsItem) -> str:
 
 
 def _news_window(items: list[NewsItem]) -> tuple[str, str]:
-    """deduped 池的时间窗（最新/最早），无时间数据时为空串。"""
+    """deduped 池的时间窗，返回 ``(最新时刻, 最早时刻)``，无时间数据时为空串。
+
+    命名陷阱（已踩过一次）：调用方把这两个值分别写进 meta 的 ``window_start`` /
+    ``window_end``，但**语义是反的**——``window_start`` 装的是最新、``window_end``
+    装的是最早。渲染「截止/最新」一律取第一个返回值，不要按 start/end 字面理解。
+    """
     stamps = [i.published_at for i in items if i.published_at]
     if not stamps:
         return "", ""

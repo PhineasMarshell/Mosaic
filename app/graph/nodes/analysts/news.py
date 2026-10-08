@@ -49,8 +49,10 @@ class NewsAnalystNode(MarketAnalystNode):
             sources_ok = meta.get("sources_ok") or []
             sources_failed = meta.get("sources_failed") or []
             if result.tool == "telegraph":
-                window_end = str(meta.get("window_end") or "")
-                piece = f"电报{items}条" + (f"(截止{window_end[-5:]})" if window_end else "")
+                # 注意：_news_window 返回 (最新, 最早)，所以最新时刻在 window_start。
+                # 这里曾误用 window_end（最早那条）渲染「截止」，导致摘要时间比实际最新消息还早。
+                latest = str(meta.get("window_start") or "")
+                piece = f"电报{items}条" + (f"(截止{latest[-5:]})" if latest else "")
             else:
                 window_start = str(meta.get("window_start") or "")
                 piece = f"{result.tool} {items}条({_source_labels(sources_ok)}"

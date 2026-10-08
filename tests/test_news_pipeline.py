@@ -745,6 +745,67 @@ class TestNewsDigestOverride:
         digest = node._make_digest(["quote"], [empty])
         assert digest  # 回退基类摘要，不为空
 
+    def _telegraph_result(self, *, latest: str, earliest: str, count: int = 2) -> ToolResult:
+        """电报结果 fixture。
+
+        注意 window_start/window_end 的语义是**反的**：由 tool_runtime._news_window
+        写入，window_start 装最新时刻、window_end 装最早时刻。
+        """
+        meta = {
+            "total": count,
+            "kept": count,
+            "keyword": "",
+            "window_start": latest,
+            "window_end": earliest,
+        }
+        normalized = [
+            NormalizedDatum(domain="media", tool="telegraph", metric="telegraph_meta", value=meta),
+        ]
+        for i in range(1, count + 1):
+            normalized.append(
+                NormalizedDatum(domain="media", tool="telegraph", metric=f"telegraph_{i}", value={"title": f"快讯{i}"})
+            )
+        return ToolResult(tool="telegraph", arguments={}, status="success", normalized=normalized)
+
+    def test_telegraph_digest_uses_latest_not_earliest(self):
+        """回归 P1：电报摘要的「截止」必须是**最新**那条。
+
+        曾误用 window_end（最早）渲染，出现「电报10条(截止18:14)」而最新一条是 18:35
+        ——摘要把新闻说得比实际更旧。这里用最早/最新差 21 分钟的数据锁死该行为。
+        """
+        from app.graph.nodes.analysts.news import NewsAnalystNode
+
+        node = NewsAnalystNode(Settings())
+        result = self._telegraph_result(latest="2026-10-08 18:35", earliest="2026-10-08 18:14")
+        digest = node._make_digest(["telegraph"], [result])
+        assert "截止18:35" in digest
+        assert "18:14" not in digest
+        assert len(digest) <= 200
+
+    def test_telegraph_digest_without_time_window(self):
+        """无时间数据时不应输出「截止」残缺文案。"""
+        from app.graph.nodes.analysts.news import NewsAnalystNode
+
+        node = NewsAnalystNode(Settings())
+        result = self._telegraph_result(latest="", earliest="", count=1)
+        digest = node._make_digest(["telegraph"], [result])
+        assert "截止" not in digest
+        assert "1条" in digest
+
+    def test_news_window_returns_latest_first(self):
+        """_news_window 返回 (最新, 最早) —— 顺序契约，渲染方按位置取，不按 start/end 字面猜。"""
+        from app.graph.tool_runtime import _news_window
+
+        items = [
+            _news_item(1, at=datetime(2026, 10, 8, 18, 35)),
+            _news_item(2, at=datetime(2026, 10, 8, 18, 14)),
+            _news_item(3, at=None),
+        ]
+        latest, earliest = _news_window(items)
+        assert latest == "2026-10-08 18:35"
+        assert earliest == "2026-10-08 18:14"
+        assert _news_window([_news_item(4, at=None)]) == ("", "")
+
 
 def test_critic_news_rules_attached():
     """A7 契约：critic.py 存在跨域 _NEWS_RULES 且在 prompt 组装处无条件附加。"""

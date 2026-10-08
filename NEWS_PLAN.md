@@ -443,12 +443,13 @@ supervisor 的 `route_candidate_categories` 已含 news（`news_enabled` 时）�
 
 ### 7.3 与计划真值的偏差（逐条）
 
-**代码缺陷（4 个，均由本次 A9 测试暴露并修复，非计划预期内）**
+**代码缺陷（5 个，均由测试/实测暴露并修复，非计划预期内）**
 
 1. **`fetch_ddgs` 直接 `await` 同步函数** —— 计划 A1 写「复用 `_do_news_search`」，实现写成 `asyncio.wait_for(_do_news_search(...))`，而 `_do_news_search` 是**同步**函数 → 运行时必抛 `'dict' object can't be awaited`，DDGS 源 100% 失败。修复：改 `asyncio.to_thread(_do_news_search, ...)`。测试日志实证 `WARNING news_search.py:94 ... 'dict' object can't be awaited`。
 2. **`multi_source_titles` 在去重后池上统计恒为 0** —— 计划 A2.1 只说「multi_source_titles 统计」，未指明池。`dedup_news` 会把同标题跨源条目折叠成一条（只留先出现者），在去重后池上算，该数字**永远为 0**，Critic 的「≥2 源才算已证实」抓手彻底失效。修复：`multi_source_count` 改在**去重前合池**上算，经 `_build_news_datums(multi_source_titles=...)` 参数传入 stats 与 meta。**e2e 实测该数字为 2，有牙**。
 3. **`parse_rss` 的 description 用 `findtext` 丢嵌套标签正文** —— 计划 A1 只说「description 去标签取纯文本」。`findtext` 只返回第一个文本节点，`<description>内容<b>摘要</b></description>` 只拿到 `内容`。修复：新增 `_element_text()` 用 `itertext()` 取全文本，title/link/pubDate 同步加固。
 4. **`_resolve_ttl` 覆盖 news_search TTL 分档（A2.4 失效）** —— 计划 A2.4 说「`_resolve_ttl` 改返回 week 档默认」，但 `execute()` 在 `_do_execute` 之后会用 `_resolve_ttl` 对**同一 key 再 set 一次**（`tool_runtime.py:361-363`），把 d/m 两档刚写进去的分档 TTL 又覆盖回 week 21600 → **分档形同失效**。修复：`_resolve_ttl(tool, settings, arguments)` 新增 `arguments` 形参，按 `time_limit` 返回对应档位（§2 处 A2.4 的设计前提在此与既有 execute 缓存机制冲突，计划未预见）。
+5. **电报摘要的「截止」取了最早那条（P1 文案错）** —— 根因是 `_news_window` 返回 `(max, min)`，但调用方把两个值分别写进 meta 的 `window_start` / `window_end`，于是 **`window_start` 装的是最新、`window_end` 装的是最早（命名与语义相反）**。`news.py` 电报分支拿 `window_end` 渲染「截止」，实测输出「电报10条(截止18:14)」而最新一条是 18:35 —— 摘要把新闻说得比实际更旧。影响面仅限摘要那一行文字（≤200 字），数据/条数/来源标注/去重口径均正确；`symbol_news`/`news_digest` 分支恰好取的是 `window_start`，所以标对了。修复：电报分支改取 `window_start`，并给 `_news_window` 补「返回 (最新, 最早)、按位置取不要按 start/end 字面猜」的 docstring 警示 + 一条锁定返回顺序的契约测试。该分支此前**零测试覆盖**，本轮补 3 个用例（最新值渲染 / 无时间窗不出残缺文案 / `_news_window` 返回顺序）。已用「注入旧写法→用例变红→恢复→变绿」验证新测试确实咬得住该缺陷。
 
 **事实补充（计划未写明）**
 
@@ -467,14 +468,22 @@ supervisor 的 `route_candidate_categories` 已含 news（`news_enabled` 时）�
 
 | 阶段 | `MARKET_GATEWAY_MODE=mcp` | `MARKET_GATEWAY_MODE=http` |
 |---|---|---|
-| 计划基线（§1.7，主 Agent 上一会话实测） | 575 passed + 0 skipped | 575 passed + 0 skipped |
-| 本次改动后最终 | **691 passed, 0 failed, 0 skipped**（12.5s） | **691 passed, 0 failed, 0 skipped**（11.9s） |
-| 净增 | +116 | +116 |
+| **实际基线**（`23b0aca` 收尾复测，见下方订正说明） | **628 passed** + 0 skipped | **628 passed** + 0 skipped |
+| 计划 §1.7 所记基线 | ~~575 passed~~（**过时，见订正**） | ~~575 passed~~ |
+| 本次改动后（含 P1 修复与电报摘要补测） | **694 passed, 0 failed, 0 skipped**（10.3s） | **694 passed, 0 failed, 0 skipped**（10.1s） |
+| 净增 | **+66**（其中 `test_news_pipeline.py` 66 个，其余为既有测试改断言） | **+66** |
+
+**基线订正**：§1.7 的「575 passed」是主 Agent **上一会话**的旧数字，本计划执行期间
+（情绪面 / 迁移面等并行落地）既有测试数已增长。实测收尾态 `test_news_pipeline.py` 收尾前
+为 63 个用例、全量 691，即收尾前基线 = 691 − 63 = **628**；本轮 P1 修复补 3 个用例后为
+694（+66）。核对依据：既有测试（`test_tool_runtime_ttl` / `test_tool_registry` /
+`test_gateway_tool_names_321`）本计划**只改断言与 docstring、未增删用例**，故净增全部来自
+新测试文件。575 与 628 的差额来自本计划范围外的并行工作，不是本次实现引入。
 
 - `ruff check . --no-cache` → `All checks passed!`
 - `ruff format --check . --no-cache` → `128 files already formatted`
 - `.venv/Scripts/python.exe -m pip check` → `No broken requirements found.`
-- `tests/test_news_pipeline.py` 单文件：63 passed，**不触真实网络、不打真实 LLM**（akshare 三接口、Google httpx、DDGS 全部 monkeypatch 模块全局；`market_cache` 用 autouse fixture 每例清空）。
+- `tests/test_news_pipeline.py` 单文件：**66 passed**（P1 修复后），**不触真实网络、不打真实 LLM**（akshare 三接口、Google httpx、DDGS 全部 monkeypatch 模块全局；`market_cache` 用 autouse fixture 每例清空）。
 - 中途状态留档：接手时（前一 Agent 留下的 A9 草稿）双模式实测为 **6 failed / 683 passed**，其中 4 项是真实实现缺陷、1 项是 `test_gateway_tool_names_321` 计数未同步、3 项是测试期望写错（TTL 档位断言误把 `time_limit` 当 `deadline` 位置参数传入、跨源同题 fixture 标题不同导致 multi_source 误判、registry 域过滤期望与代码实况不符）。
 
 ### 7.5 Phase B 真链路 e2e（`MARKET_GATEWAY_MODE=http`，内部工具不走 Gateway）
