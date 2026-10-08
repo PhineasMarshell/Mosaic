@@ -48,7 +48,7 @@ iiix plugin serve market-gateway
 | **TechnicalAnalyst** | 工具执行 | 执行 technical 类工具（情绪/涨停/板块/行情/K线），产出 Evidence + finding digest |
 | **FundamentalAnalyst** | 工具执行 | 执行 fundamental 类工具（F10/财务/股东/业务），产出 Evidence + finding digest |
 | **MoneyflowAnalyst** | 工具执行 | 执行 moneyflow 类工具（龙虎榜/北向资金/资金流），产出 Evidence + finding digest |
-| **NewsAnalyst** | 工具执行 | 执行 news 类工具（DDGS 新闻搜索），开关控制，默认关闭 |
+| **NewsAnalyst** | 工具执行 | 执行 news 类工具（多源新闻聚合：东财个股新闻 + 财联社电报 + Google 资讯 + DDGS，跨源去重、来源标注），开关控制，默认关闭 |
 | **SentimentAnalyst** | 工具执行 + LLM | 评论爬取 + 清洗 + 聚合 + LLM 打分，开关控制，默认关闭（依赖评论 MCP） |
 | **Evidence Gate** | 纯代码 | 检查 ToolResult 状态（success/partial/error），判定证据是否具备基本可用性；`has_evidence=False` 时 Reasoning **降级不短路**：报告照常产出，但强制 confidence=low + data_caveats + errors（T15/D2） |
 | **Reasoning** | LLM | 汇总所有 Evidence + findings，生成结构化 MarketIntelligence 报告 |

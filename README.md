@@ -167,7 +167,7 @@ Researching...
 }
 ```
 
-### 44 个工具覆盖 5 大市场
+### 47 个工具覆盖 5 大市场
 
 | 类别 | 数量 | 覆盖领域 |
 |------|------|----------|
@@ -182,6 +182,7 @@ Researching...
 | 美股(雪球通道) | 2 | 历史K线(us_klines)、复盘时间窗(us_window)，裸代码 symbol |
 | 美股基本面(SEC EDGAR) | 2 | 营收/净利/EPS/毛利年报+季报(us_fundamentals)、近期申报(us_filings_recent)，XBRL 直连 |
 | 健康检查 | 2 | 网关进程、行情模块状态 |
+| 新闻舆情 | 4 | DDGS 搜索(兜底)、个股新闻聚合、财联社电报快讯、多源主题聚合 |
 
 > 注：`klines`、`snapshot`、`window` 为跨域通用工具，被多个市场域复用。
 >
@@ -362,7 +363,15 @@ GRAPH_RECURSION_LIMIT=25         # LangGraph 递归上限（防无限回环）
 SENTIMENT_ENABLED=false          # 舆情分析员总开关（评论 MCP 就绪后启用）
 SENTIMENT_MAX_COMMENTS=500       # 单次拉取评论上限
 NEWS_ENABLED=false               # 新闻分析员总开关
-NEWS_SEARCH_TTL_SECONDS=21600    # DDGS 搜索结果缓存时长（秒）
+NEWS_TTL_DAY_SECONDS=1800        # news_search 缓存（time_limit=d「今天的新闻」）
+NEWS_TTL_WEEK_SECONDS=21600      # news_search 缓存（time_limit=w）
+NEWS_TTL_MONTH_SECONDS=86400     # news_search 缓存（time_limit=m）
+NEWS_SYMBOL_TTL_SECONDS=900      # 个股新闻聚合缓存
+NEWS_TELEGRAPH_TTL_SECONDS=300   # 财联社电报快讯缓存（变化快）
+NEWS_DIGEST_TTL_SECONDS=900      # 多源主题聚合缓存
+NEWS_CODE_NAME_TTL_SECONDS=86400 # 全A code↔name 名称表缓存（首载约 5-6s）
+NEWS_MAX_TEXT_CHARS=800          # 单条新闻正文进 datum 的截断长度
+NEWS_SOURCE_TIMEOUT_SECONDS=15   # 单个新闻源抓取超时
 ```
 
 都是 `.env` 中的配置项，不是硬编码。
@@ -454,6 +463,12 @@ Mosaic/
 │   │   ├── reasoning.py       # 推理引擎（注入对话历史 + 各 analyst 中间结论）
 │   │   ├── evidence.py        # 证据构建
 │   │   ├── news_search.py     # DDGS 新闻搜索
+│   │   ├── news_sources/      # 多源新闻适配层（纯函数 + 各源 fetch）
+│   │   │   ├── types.py       #   NewsItem + 各源失败异常 + 时间归一
+│   │   │   ├── google_rss.py  #   Google 资讯 RSS（走代理，stdlib XML 解析）
+│   │   │   ├── akshare_sources.py  # 东财个股新闻 / 财联社电报 / 全A名称表
+│   │   │   ├── ddgs_source.py #   DDGS 薄封装（限流常态）
+│   │   │   └── aggregate.py   #   去重/排序/截断/交叉源统计（纯函数）
 │   │   └── hk_northbound.py   # 港股通北向资金（东财直连，不走 Gateway）
 │   │
 │   ├── models/
@@ -483,6 +498,7 @@ Mosaic/
 │   ├── test_ask_endpoint.py   # 同步端点 + 错误分类
 │   ├── test_briefs.py         # 定时简报
 │   ├── test_news_search.py    # 新闻搜索缓存
+│   ├── test_news_pipeline.py  # 多源新闻聚合（解析/聚合纯函数 + 三个聚合工具 + TTL）
 │   ├── test_data_integrity.py # 域数据隔离
 │   ├── test_tool_registry.py
 │   ├── test_tool_registry_multi_domain.py
@@ -532,12 +548,18 @@ Mosaic/
 
 ### Internal Tools
 
-Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过 Market Gateway 直接调用内部函数。当前内置了五个内部工具：
+Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过 Market Gateway 直接调用内部函数。当前内置了八个内部工具：
 - `internal_hk_northbound` — 港股通北向资金净流入数据（直连东方财富）
 - `internal_hk_index` — 恒生指数 & 恒生科技指数快照（直连东方财富）
-- `news_search` — DDGS 新闻舆情搜索（跨域通用）
+- `news_search` — DDGS 新闻舆情搜索（跨域通用，**单源兜底**，限流常态化）
+- `internal_symbol_news` — A股个股新闻聚合（东财个股新闻 + Google 资讯，跨源去重带来源；需 `symbol`）
+- `internal_market_telegraph` — 财联社电报快讯（全市场最新电报流；可选 `keyword` 过滤）
+- `internal_news_digest` — 多源新闻聚合搜索（Google 资讯 + DDGS 双源去重；需 `query`，不限市场域）
 - `internal_us_fundamentals` — 美股基本面：营收/净利/EPS/毛利（直连 SEC EDGAR XBRL，需 `SEC_EDGAR_CONTACT`）
 - `internal_us_filings_recent` — 美股近期 SEC 申报文件元信息（直连 SEC EDGAR，需 `SEC_EDGAR_CONTACT`）
+
+新闻面的聚合工具对**单源失败是容错的**：某个信源挂掉只降级为 `status=partial` 并在
+`sources_failed` 里记名，其余源照常出 datum（Google 资讯硬依赖本机代理，代理断开即走这条路径）。
 
 这为不经过统一网关的外部数据源提供了干净的集成方式，当未来这些接口迁移到 Gateway 后只需更新 tool_name 即可无缝切换。
 
@@ -576,7 +598,7 @@ Internal project — see [Mosaic产品设计文档](../Mosaic产品设计文档.
 ### Latest
 
 - **架构升级**：LangGraph 多节点架构全面落地（P2.5 + P3 + P4 + P5），Supervisor 路由 + 三 Analyst 并行采集 + Critic 闭环审计；旧路径（market_detective / planner / evaluator / kernel）已全部删除
-- **新闻分析员**：新增 NewsAnalystNode（配置开关 `NEWS_ENABLED`），DDGS 搜索结果走 6h 长 TTL 缓存
+- **新闻分析员**：新增 NewsAnalystNode（配置开关 `NEWS_ENABLED`）；后升级为**多源新闻聚合**（东财个股新闻 + 财联社电报 + Google 资讯 + DDGS，跨源去重、来源标注），`news_search` TTL 按 `time_limit` 分 d/w/m 三档
 - **定时简报走图**：Morning/Evening Brief 改为调用完整 LangGraph 调查（含 LLM），失败时回退 memory 模板；简报 JSON 存 `memory/morning/` 和 `memory/evening/`
 - **存储迁移**：Market Memory 从 `~/.mosaic/memory.db` 迁入项目目录 `memory/memory.db`
 - **SSE 协议**：progress 事件新增 `node` 字段，逐节点推送研究进度（supervisor/technical/fundamental/moneyflow/gate/reasoning/critic）
