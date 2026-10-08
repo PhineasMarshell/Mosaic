@@ -370,7 +370,7 @@ supervisor 的 `route_candidate_categories` 已含 news（`news_enabled` 时）�
 
 | 边界 | 事实 |
 |---|---|
-| DDGS 限流是常态 | 首测成、五连败（§1.2）；定位兜底，带 1 次重试，永不作为唯一源 |
+| DDGS 限流是常态 | 首测成、五连败（§1.2）；A0 复测 9 次全败。定位兜底，带 1 次重试，永不作为唯一源；**已决策接受「Google 单源 + partial」语义**（见 §7.8-1） |
 | Google RSS 代理硬依赖 | 直连 ConnectTimeout 实测（§1.1）；代理挂 → 该源 partial 降级（Phase B 必须实测这条路径） |
 | DDGS region 参数化已放弃 | cn-zh/zh-cn 实测均无结果，保持 wt-wt |
 | Bing RSS / cninfo 公告已剔除 | 死亡记录见 §1.5；公告信源价值高，后续可单独复测 cninfo |
@@ -493,13 +493,15 @@ supervisor 的 `route_candidate_categories` 已含 news（`news_enabled` 时）�
 1. **TTL 档位数值**（day 1800 / week 21600 / month 86400；symbol 900 / telegraph 300 / digest 900）——已按此实现并全部落 `.env`，用户可只调 `.env`。注意：day 档已因 §7.3-4 的修复而**真正生效**（修复前恒为 week）。
 2. **A7 注入点**——选 **(a) 模块级 `_NEWS_RULES` + prompt 组装处无条件附加**，理由见 §7.3-9。
 3. **`news_digest` 的 DDGS `time_limit` 默认值**——保持 **`d`**（与 news_search 对齐），非法档位回落 `d`。
-4. **`include_google` 是否暴露给 planner**——**不暴露**（现状即实现层参数，planner 不可见）。理由：planner 看到该开关会倾向于为了「稳」而关掉 Google 源，而 Google 恰恰是唯一的跨源交叉验证来源（`multi_source_titles` 的另一半）；这是降级决策，应由降级逻辑（partial）而非 planner 表达。
+4. **`include_google` 是否暴露给 planner**——**不暴露**（已决策，见 §7.8-5）。该开关只能减信息量（关掉后 `multi_source_titles` 在结构上恒为 0），不能加信息量；降级决策应由降级逻辑（partial）表达，而不是交给规划层。
 
 ### 7.8 遗留问题
 
-1. **DDGS 长期不可用**（本轮 0/9）——`news_digest` 在现网大概率长期 `status=partial`。建议后续单独评估是否把 DDGS 换成其他兜底源，或接受「Google 单源 + partial」语义。
+1. ~~DDGS 长期不可用~~ —— **已决策（用户裁定，2026-10-08）：接受「Google 单源 + partial」语义。** DDGS 维持兜底源定位（失败重试 1 次、永不作为唯一源），`news_digest` 在现网大概率长期 `status=partial`，属**预期行为而非故障**。后续若要换兜底源，须先重跑 `scripts/verify_news.py` 复测候选信源再改实现。
 2. **Bing News RSS / cninfo 公告**仍为死亡记录（§1.5），未复活；公告类信源价值高，值得后续单独 A0 复测。
 3. `stock_info_a_code_name()` 首载 7.6s 靠 24h TTL 摊销；服务重启后的首次 `symbol_news` 调用会因此变慢（实测 7.1s 含此开销），可接受但需知晓。
+4. **「主动关源」与「降级失败」在 datum 上不可区分**（本次讨论发现，未修）：`include_google=False` 时 `sources_failed=[]`、`status=success`，只靠 `sources_ok` 少一项区分不了「Google 从没被试过」与「Google 试了并成功」；且 digest 不打印 `sources_failed`。现状 `include_google` 默认 `True` 且不对 planner 暴露，不会触发。若将来开放该参数，建议同时在 `news_meta` 补 `google_skipped` 标记，否则 Critic 的新闻证据纪律会读到歧义证据。
+5. **`include_google` 不对 planner 暴露**（已决策，理由见 §7.7-4 的修正版）：该开关只能减信息量——关掉后 `sources_ok` 只剩东财，`multi_source_titles` 在结构上恒为 0，跨源确认能力整个消失。补充说明：上一轮曾表述为「planner 会倾向关掉它」，该表述不准确——它当前不在注册表 purpose 文案里，planner 无从看到；真实理由是「只能减信息量、不能加信息量的开关，暴露给规划层无正收益」，而其唯一可见成本只是延迟（断代理实测 11s vs 东财单独 7s）。
 
 ### 7.9 提交记录（本地，未 push）
 

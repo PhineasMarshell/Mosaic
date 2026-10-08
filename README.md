@@ -561,6 +561,21 @@ Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过
 新闻面的聚合工具对**单源失败是容错的**：某个信源挂掉只降级为 `status=partial` 并在
 `sources_failed` 里记名，其余源照常出 datum（Google 资讯硬依赖本机代理，代理断开即走这条路径）。
 
+新闻面已知边界（2026-10-08 实测，已决策接受）：
+
+- **DDGS 限流是常态**：A0 复测 9 次全败（`DDGSException`/`TimeoutException`）。按「Google 单源 +
+  partial」语义接受现状 —— DDGS 定位兜底源，失败自动重试 1 次，**永不作为唯一源**。
+  后果是 `news_digest` 在现网大概率长期为 `status=partial`，这是预期行为而非故障。
+  若需换兜底源，需先重跑 `scripts/verify_news.py` 复测候选信源。
+- **Google 资讯硬依赖本机代理**：直连 `ConnectTimeout`（A0 第 5 项已复现）。代理断开时该源进
+  `sources_failed`、状态转 `partial`，东财/电报主路照常出 datum。断代理实测 `symbol_news`
+  仍出 10 条 datum，耗时约 11s（比双源单次多约 4s）。
+- **`news_meta.multi_source_titles` 统计去重前合池**：它是「同一标题出现于 ≥2 个独立来源」的条数，
+  是 Critic 判断「已证实」的抓手；在去重后的池上算会恒为 0，故不能后置。
+- **财联社电报无链接字段**（实测列里没有 url）：datum 允许空 url，Critic 不得因缺 url 判无效。
+- `include_google` 是**实现层参数**，默认 `True`，**不对 planner 暴露**：它只能减信息量
+  （关掉后 `sources_ok` 只剩东财，跨源确认在结构上不可能发生），不能加信息量。
+
 这为不经过统一网关的外部数据源提供了干净的集成方式，当未来这些接口迁移到 Gateway 后只需更新 tool_name 即可无缝切换。
 
 ## 设计理念
