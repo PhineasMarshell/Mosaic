@@ -3,7 +3,10 @@
 输出 Critique（pass / revise / research_more）：
 - pass: 证据充分，报告可信 -> END
 - revise: 有 unsupported claims -> 回 Reasoning 重写（<= max_revisions 轮）
-- research_more: 有 missing points -> 带缺口感召 Supervisor 补充研究（最多 1 次）
+- research_more: 有 missing points -> 带缺口感召 Supervisor 补充研究
+  （回环由 settings.critic_max_revisions 限次，默认 2）；回环轮 Supervisor 会读到
+  本节点的 missing_points / missing_tool_keys 与已执行工具清单，并在代码层补齐缺口工具、
+  丢弃已拿到数据的重复步骤。
 
 P2 验收：Critic 条件边路由正确；打回重写的完整路径有测试。
 """
@@ -16,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
 from app.errors import LLMOutputError
+from app.graph.gap_loop import allowed_keys, executed_keys, render_unexecuted_registry, sanitize_missing_tool_keys
 from app.llm_json import parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -31,6 +35,7 @@ class Critique(BaseModel):
     verdict: Verdict
     reason: str = ""
     missing_points: list[str] = []  # 证据缺口（research_more 时喂回 Supervisor）
+    missing_tool_keys: list[str] = []  # 建议补充的工具 registry key（research_more 时喂回 Supervisor，代码级补齐）
     unsupported_claims: list[str] = []  # 无证据支撑的表述（revise 时喂回 Reasoning）
 
 
@@ -181,13 +186,27 @@ class CriticNode:
             # A7：新闻证据纪律跨域通用，无条件附加（不受 _DOMAIN_RULES 域组织限制）
             prompt_pieces.extend(["\n=== 新闻证据纪律 ===\n", _NEWS_RULES])
 
+            # 结构化缺口：把「本域还没拿到数据」的工具列给 Critic，它才能点名补充
+            # （missing_tool_keys 只能从这里挑；已拿到数据的工具不再出现）。
+            from app.gateway.tool_registry import registry_text
+
+            gap_registry = registry_text(domains=[domain, "cross"])
+            prompt_pieces.extend(
+                [
+                    "\n=== 可补充的工具（本域注册表，已排除已拿到数据的工具）===\n",
+                    render_unexecuted_registry(gap_registry, results),
+                ]
+            )
+
             prompt_pieces.extend(
                 [
                     "\n\n请逐条审查报告中的核心论断是否有对应证据支撑。"
                     "注意：不要因为缺少理想数据就判 fail -- 看已有证据够不够回答用户问题。"
+                    "missing_points 用自然语言描述缺口；missing_tool_keys 只能从上面"
+                    "「可补充的工具」小节里挑 key（可多个；只有 verdict=research_more 时填）。"
                     "\n\n必须只返回合法 JSON object。",
                     '{"verdict": "pass|revise|research_more", "reason": "...", '
-                    '"missing_points": [...], "unsupported_claims": [...]}',
+                    '"missing_points": [...], "missing_tool_keys": [...], "unsupported_claims": [...]}',
                 ]
             )
 
@@ -235,6 +254,16 @@ class CriticNode:
                 }
 
             logger.info("Critic verdict: %s (reason: %s)", critique.verdict, critique.reason)
+
+            # 落库前过滤：与 prompt 里「可补充的工具」小节用**同一份**可见集合，
+            # 保证喂回 Supervisor 的 key 一定可被 resolve、且不是已拿到数据的工具。
+            # 过滤不是错误 —— 只写 warning，不写 errors（保住 errors == [] 断言）。
+            gap_allowed = allowed_keys(gap_registry)
+            critique.missing_tool_keys, invalid_gap_keys = sanitize_missing_tool_keys(
+                critique.missing_tool_keys, gap_allowed, executed_keys(results)
+            )
+            if invalid_gap_keys:
+                logger.warning("Critic: 丢弃不可见或已拿到数据的缺口 key: %s", invalid_gap_keys)
 
             return {"critique": critique}
 

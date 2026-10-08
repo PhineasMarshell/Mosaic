@@ -4,13 +4,18 @@
 输出 ResearchState.intent + route，被各 analyst 节点消费。
 """
 
+import logging
+
 from openai import AsyncOpenAI
 
 from app.agent.prompts_graph import PLANNER_PROMPT
 from app.config import Settings
 from app.gateway.tool_registry import registry_text
+from app.graph.gap_loop import append_gap_steps, drop_repeat_steps, gap_tool_keys, render_gap_context
 from app.llm_json import parse_json_object
 from app.models.research import DEFAULT_DOMAINS, ResearchPlan
+
+logger = logging.getLogger(__name__)
 
 # 默认全部启用；后续可通过配置关闭某些域
 _ENABLED_DOMAINS: list = DEFAULT_DOMAINS
@@ -97,12 +102,19 @@ class SupervisorNode:
             registry = registry_text()
         question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
 
+        # research_more 回环：Critic 的缺口与上一轮已执行的工具都不在回环边上，
+        # 必须由本节点从 state 读出后渲染进 planner prompt（信息闭环）。
+        critique = state.get("critique") if isinstance(state, dict) else getattr(state, "critique", None)
+        results = state.get("results", []) if isinstance(state, dict) else getattr(state, "results", [])
+        revision_context = render_gap_context(critique, results, self.settings.max_research_steps)
+
         prompt = PLANNER_PROMPT.format(
             question=question,
             registry=registry,
             max_steps=self.settings.max_research_steps,
             enabled_domains=", ".join(_ENABLED_DOMAINS),
             conversation_history=conv_history if conv_history else "（无）",
+            revision_context=revision_context,
         )
 
         response = await self.client.chat.completions.create(
@@ -141,6 +153,28 @@ class SupervisorNode:
         filtered_keys = [s.tool_key for s in plan.steps if f"- {s.tool_key}:" not in registry]
         if filtered_keys:
             plan.steps = [s for s in plan.steps if f"- {s.tool_key}:" in registry]
+
+        # 回环轮（research_more）的代码级闭环：先丢掉已拿到数据的重复步骤，
+        # 再把 Critic 点名、LLM 没覆盖、且在本次注册表文本里的缺口工具补到最前面
+        # （预算耗尽前优先执行）。快乐路径不写 errors，保住 errors == [] 断言。
+        gap_keys, invalid_gap_keys = gap_tool_keys(critique, registry, results)
+        if invalid_gap_keys:
+            logger.warning("Supervisor: Critic 缺口 key 被丢弃（不可见或已拿到数据）: %s", invalid_gap_keys)
+
+        plan.steps, dropped_repeat = drop_repeat_steps(plan.steps, results)
+        if dropped_repeat:
+            logger.info("Supervisor: 回环轮丢弃已拿到数据的重复步骤: %s", dropped_repeat)
+
+        plan.steps, forced_gap = append_gap_steps(
+            plan.steps,
+            gap_keys,
+            registry,
+            max_steps=self.settings.max_research_steps,
+            max_gap_steps=getattr(self.settings, "gap_max_steps", 3),
+            question=question,
+        )
+        if forced_gap:
+            logger.info("Supervisor: 代码级补齐 Critic 缺口工具: %s", forced_gap)
         return plan, filtered_keys
 
     def _build_route(self, plan: ResearchPlan) -> list:

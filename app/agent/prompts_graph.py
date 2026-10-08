@@ -22,6 +22,13 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
 
 {conversation_history}
 
+--- 补充研究轮上下文（回环轮才有内容） ---
+
+{revision_context}
+
+硬要求：若上面列出了 "Critic 建议补充的工具 key"，你必须把这些 key **全部**列入 steps；
+          不要重复规划 "已执行且已拿到数据的工具" 里的调用（它们本轮不会带来新数据）。
+
 --- 任务说明 ---
 
 第一步：从用户问题中判断目标市场域（domain）。可用值：a_share, crypto, hk_stock, commodities, us_stock, macro, unknown

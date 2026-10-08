@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     # ── LangGraph 图配置（P2+） ────────────────────
     #: Critic 打回 Reasoning 重写的最大轮次
     critic_max_revisions: int = 2
+    #: research_more 回环轮最多代码级补齐几个 Critic 点名的缺口工具
+    gap_max_steps: int = 3
     #: LangGraph recursion limit（防止无限循环）
     graph_recursion_limit: int = 25
 
