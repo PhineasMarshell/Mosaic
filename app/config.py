@@ -83,8 +83,23 @@ class Settings(BaseSettings):
     sentiment_max_comments: int = 500
     #: 新闻分析员总开关
     news_enabled: bool = False
-    #: DDGS 搜索结果缓存时长（秒），缓解限流
-    news_search_ttl_seconds: int = 21600
+    #: news_search 的 TTL 分档（A2.4）：time_limit=d 是「今天的新闻」，
+    #: 缓存 6 小时是错误语义 —— d/w/m 各自设档。
+    news_ttl_day_seconds: int = 1800
+    news_ttl_week_seconds: int = 21600
+    news_ttl_month_seconds: int = 86400
+    #: internal_symbol_news（东财个股新闻 + Google 资讯聚合）
+    news_symbol_ttl_seconds: int = 900
+    #: internal_market_telegraph（财联社电报快讯，变化快）
+    news_telegraph_ttl_seconds: int = 300
+    #: internal_news_digest（Google + DDGS 主题聚合）
+    news_digest_ttl_seconds: int = 900
+    #: 全A code↔name 名称表（首载实测约 5-6s，长 TTL 摊销）
+    news_code_name_ttl_seconds: int = 86400
+    #: 单条新闻正文进 datum 的截断长度
+    news_max_text_chars: int = 800
+    #: 单个新闻源（Google RSS / 东财 / 电报）的抓取超时
+    news_source_timeout_seconds: int = 15
 
     # ── SEC EDGAR（美股基本面） ────────────────────
     #: SEC 公平访问政策要求所有请求声明访问身份，格式 "YourName your@email.com"。
