@@ -3,7 +3,7 @@
 用法：
     .venv/Scripts/python.exe scripts/verify_news.py
 
-探针清单（NEWS_PLAN.md §2-A0）：
+探针清单：
     1. akshare stock_news_em('600519')      — 东财个股新闻（字段/条数）
     2. akshare stock_info_global_cls()      — 财联社电报（字段/条数）
     3. akshare stock_info_a_code_name()     — 全A code↔name 表（行数量级/首载耗时）

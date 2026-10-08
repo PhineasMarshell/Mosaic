@@ -25,7 +25,7 @@
 
 完整清单见 `app/gateway/tool_registry.py`（47 个工具，覆盖 A股/Crypto/港股/大宗商品/美股/新闻）。
 
-新闻工具的已知边界（2026-10-08 实测，详见 `NEWS_PLAN.md` §5）：
+新闻工具的已知边界（2026-10-08 实测）：
 
 - DDGS **限流是常态**（首测成、随后 5 连败）：只作兜底，失败自动重试 1 次，永不作为唯一源。
 - Google 资讯 RSS **硬依赖本机代理**（直连 ConnectTimeout）：代理断开时该源记 `sources_failed`，
