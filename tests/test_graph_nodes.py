@@ -348,12 +348,16 @@ def test_build_arguments_empty_without_stocks():
 
 
 def test_build_arguments_no_symbol_for_whitelist_tools():
-    """白名单工具即使在有 stocks 的情况下也不应携带 symbol 参数。"""
+    """无 symbol 工具即使在有 stocks 的情况下也不应携带 symbol 参数。
+
+    阶段 3 起"是否需要 symbol"由 ``ToolMeta.requires_symbol`` 声明（不再是
+    跨节点硬编码白名单），所以这里的 meta 必须带上该属性。
+    """
     import types
 
     settings = Settings()
     node = _TestAnalyst(settings)
-    meta = types.SimpleNamespace(tool_name="list_limit_up_stocks", key="limit_up_pool")
+    meta = types.SimpleNamespace(tool_name="list_limit_up_stocks", key="limit_up_pool", requires_symbol=False)
     args = node._build_arguments(meta, "a_share", ["600519"])
     assert args == {}
 
@@ -735,7 +739,8 @@ async def test_reasoning_node_accepts_dict_evidence(monkeypatch):
     # 用替换 __init__ 的方式注入 mock client（绕过真实 OpenAI 连接）
     def mock_init(self, settings, **kwargs):
         self.settings = settings
-        self.critic_max_revisions = 2
+        # 阶段 6：ReasoningNode 只持有 revise 路径的上限（research_more 额度在 supervisor）
+        self.max_rewrites = settings.effective_max_rewrites
         from app.research.reasoning import ReasoningEngine
 
         self._engine = object.__new__(ReasoningEngine)

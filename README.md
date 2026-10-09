@@ -31,7 +31,7 @@ Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
                         Reasoning (LLM 汇总证据 → MarketIntelligence)
                                 ↓
                         Critic (LLM 结论-证据审计)
-                          pass │  revise / research_more（≤ critic_max_revisions 轮）
+                          pass │  revise / research_more（各 ≤ max_rewrites / max_research_rounds 轮）
                            ↓   └──────► 回 Reasoning 重写 / 回 Supervisor 补研究
                           error（仅审计自身失败时内部产生 → 安全终止）
                          END
@@ -40,7 +40,7 @@ Supervisor (LLM 路由：解析意图 + 选 analyst + 分配工具预算)
 关键设计：
 - **证据账本是唯一契约**：各 analyst 只往 `state.evidence` 追加 Evidence 条目，不写结论；结论由 Reasoning 统一产出
 - **证据条数硬上限 80**：`build_evidence` 统一截断，超出时按来源保留最新 80 条，并在最后一条 `note` 注明"截断 N 条"
-- **Critic 闭环**：证据不足时打回 Reasoning 重写（revise）或回 Supervisor 补充研究（research_more），两类回环都受 `critic_max_revisions` 限次（默认 2）；回环轮 Supervisor 会读到 Critic 的 `missing_points` / `missing_tool_keys` 与已执行工具清单，并在代码层补齐缺口工具、丢弃已拿到数据的重复步骤；审计自身失败时产出内部 `verdict="error"` 安全终止（不当成 pass，也不伪造 research_more）
+- **Critic 闭环**：证据不足时打回 Reasoning 重写（revise）或回 Supervisor 补充研究（research_more），两类回环**分别计数、分别限次**（`max_rewrites` / `max_research_rounds`，默认各 1；旧配置名 `CRITIC_MAX_REVISIONS` 仍可写，但只能把两者收得更紧）；`research_more` 在剩余预算不足以跑完一轮时不再启动、直接落安全终态；回环轮 Supervisor 会读到 Critic 的 `missing_points` / `missing_tool_keys` 与已执行工具清单，并在代码层补齐缺口工具、丢弃已拿到数据的重复步骤；审计自身失败时产出内部 `verdict="error"` 安全终止（不当成 pass，也不伪造 research_more）
 - **可选节点**：news / sentiment analyst 由配置开关控制，关闭时行为与三 analyst 基线完全一致
 
 ## 支持的市场域
@@ -358,7 +358,10 @@ RESEARCH_TIMEOUT_SECONDS=30      # 单次工具调用 / MCP 握手超时
 RESEARCH_BUDGET_SECONDS=300      # 一次完整调查的总预算
 STREAM_HEARTBEAT_SECONDS=15      # SSE 静默期心跳间隔
 LLM_TIMEOUT_SECONDS=90           # 单次 LLM 调用超时
-CRITIC_MAX_REVISIONS=2           # Critic 打回重写最大轮次
+MAX_REWRITES=1                   # revise → Reasoning 重写轮次上限
+MAX_RESEARCH_ROUNDS=1            # research_more → Supervisor 补研究轮次上限
+RESEARCH_ROUND_MIN_REMAINING_SECONDS=60  # 剩余预算低于此值不再启动 research_more 回环
+# CRITIC_MAX_REVISIONS=2         # 旧配置名：仍可写，但只能把上面两个上限收得更紧
 GRAPH_RECURSION_LIMIT=25         # LangGraph 递归上限（防无限回环）
 SENTIMENT_ENABLED=false          # 舆情分析员总开关（评论 MCP 就绪后启用）
 SENTIMENT_MAX_COMMENTS=500       # 单次拉取评论上限

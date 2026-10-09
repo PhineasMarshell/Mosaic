@@ -224,14 +224,19 @@ def test_set_enabled_domains():
 @pytest.mark.asyncio
 async def test_supervisor_route_groups_by_category():
     """plan 含 technical / fundamental / moneyflow 三类 steps → route 分 3 组，
-    每组 analyst 正确、budget == len(tool_calls)。"""
+    每组 analyst 正确、budget == len(tool_calls)。
+
+    阶段 3 起：A 股**市场级**问题（无 6 位代码）会由代码层强制注入市场级最低
+    证据集并剔除必然跳过的步骤，那会改变本用例关心的"三组"形状。这里用带
+    代码的个股问题，让 LLM 计划原样通过，专注验证分组逻辑本身。
+    """
     openai = FakeOpenAI(
         return_text="""{
         "intent": {
             "domain": "a_share",
-            "task": "market_diagnosis",
+            "task": "company_research",
             "time_scope": "today",
-            "question": "今天A股发生了什么？"
+            "question": "600519 今天怎么样？"
         },
         "steps": [
             {"tool_key": "sentiment", "arguments": {}, "purpose": "看情绪"},
@@ -245,7 +250,7 @@ async def test_supervisor_route_groups_by_category():
     node = SupervisorNode(settings)
     _patch_client(node, openai)
 
-    result = await node(_make_state())
+    result = await node(_make_state(question="600519 今天怎么样？"))
     route = result["route"]
 
     assert len(route) == 3
@@ -265,14 +270,19 @@ async def test_supervisor_route_groups_by_category():
 
 @pytest.mark.asyncio
 async def test_supervisor_route_empty_steps():
-    """plan steps 为空 → route == []。"""
+    """plan steps 为空 → route == []。
+
+    阶段 3 起：A 股市场级问题即使 steps 为空也会被注入市场级最低证据集
+    （见 tests/test_market_level_plan.py）。本用例验证的是 ``_build_route``
+    对空 steps 的行为，故用不受该策略影响的 crypto 域。
+    """
     openai = FakeOpenAI(
         return_text="""{
         "intent": {
-            "domain": "a_share",
-            "task": "market_summary",
+            "domain": "crypto",
+            "task": "market_diagnosis",
             "time_scope": "today",
-            "question": "看看行情"
+            "question": "BTC 今天怎么样？"
         },
         "steps": []
     }"""
@@ -282,5 +292,5 @@ async def test_supervisor_route_empty_steps():
     node = SupervisorNode(settings)
     _patch_client(node, openai)
 
-    result = await node(_make_state())
+    result = await node(_make_state(question="BTC 今天怎么样？", domain="crypto"))
     assert result["route"] == []

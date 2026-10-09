@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.config import Settings
+from app.gateway.tool_registry import ALL_TOOLS
 from app.graph.state import AnalystName
 from app.graph.tool_runtime import ToolRuntime
 from app.models.market import STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, ToolResult
@@ -42,33 +43,13 @@ class MarketAnalystNode:
     #: 该分析员负责的工具类别
     category: AnalystName | str = "technical"
 
-    #: 无需 symbol 即可安全执行的 tool_name 白名单（GET / 聚合类端点）。
-    #: 任何不在列表中的工具调用时必须提供 symbol，否则会因参数校验失败报错。
-    WHITELIST_NO_SYMBOL: set[str] = frozenset(
-        [
-            # —— technical (情绪/涨跌池/板块) ——
-            "get_ashare_sentiment",
-            "get_limit_up_count",
-            "list_limit_up_sectors",
-            "list_limit_up_stocks",
-            # —— crypto 无币种要求 ——
-            "list_hyperliquid_symbols",
-            "get_hyperliquid_user_count",
-            "list_hyperliquid_vaults",
-            "list_exchanges",
-            "get_service_health",
-            "get_market_health",
-            # —— T8：搜索 / 新闻 / 龙虎榜 / 港股内部聚合，本就不依赖 A 股 symbol ——
-            "news_search",
-            # —— 新闻面多源聚合（A4）：query 型 / 可空参；symbol_news 必须有
-            #    symbol，不进白名单，走 symbol 守卫自动补齐 ——
-            "internal_news_digest",
-            "internal_market_telegraph",
-            "search_stocks",
-            "get_stock_longhu",
-            "internal_hk_northbound",
-            "internal_hk_index",
-        ]
+    #: **兼容别名，只读**（阶段 3 ④）：内容由 ``app.gateway.tool_registry`` 的
+    #: ``ToolMeta.requires_symbol`` 派生。这里不再是"无 symbol 可执行"的声明点，
+    #: 也不要再往这里加名字——新增无 symbol 工具请在注册表里声明
+    #: ``requires_symbol=False``（在 ``ToolMeta`` 构造时或 ``_SYMBOL_FREE_TOOLS``）。
+    #: 保留该属性只为不打断既有测试/外部引用。
+    WHITELIST_NO_SYMBOL: frozenset[str] = frozenset(
+        meta.tool_name for meta in ALL_TOOLS if not meta.requires_symbol
     )
 
     def __init__(self, settings: Settings):
@@ -105,6 +86,11 @@ class MarketAnalystNode:
             # Truncate oversized results
             for r in results:
                 self._runtime.truncate(r)
+
+            # 阶段 0：实际执行摘要（status / partial / normalized 条数 / 缓存命中）
+            from app.graph import run_log
+
+            run_log.log_executions(state, results, category=self.category)
 
             # 统一构建 Evidence 列表（§1 约定：source_tool / timestamp 语义）
             from app.research.evidence import build_evidence
@@ -241,8 +227,9 @@ class MarketAnalystNode:
                 continue
 
             arguments = dict(tc.get("arguments") or {})
-            # symbol 守卫：非白名单工具且 planner 没给 symbol → 用问题里抽到的代码补，仍无则跳过
-            if meta.tool_name not in self.WHITELIST_NO_SYMBOL and not arguments.get("symbol"):
+            # symbol 守卫（阶段 3 ④）：是否需要 symbol 由注册表元数据声明，
+            # planner 没给 → 用问题里抽到的代码补，仍无则跳过。
+            if meta.requires_symbol and not arguments.get("symbol"):
                 if stocks:
                     arguments["symbol"] = ";".join(stocks)
                 else:
@@ -267,7 +254,18 @@ class MarketAnalystNode:
 
             # D4：只在真正执行前扣减——被跳过的调用（上面那些 continue）不消耗预算
             budget -= 1
-            results.append(await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline))
+            exec_started = time.monotonic()
+            result = await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
+            # 阶段 2：把**原计划的 registry key** 写进结果。缺口判定必须读这个字段，
+            # 而不是拿 operationId 反查（同一 operationId 被多个 registry key 复用时，
+            # 反查只能拿到规范条目，会把兄弟 key 的缺口误判成"已满足"）。
+            try:
+                result.tool_key = tool_key
+                # 阶段 6：单次工具耗时（指标数据源）。伪对象没有该字段时一并跳过。
+                result.duration_ms = round((time.monotonic() - exec_started) * 1000, 1)
+            except Exception:  # noqa: BLE001 — 伪对象缺字段时不该炸掉整个 analyst
+                logger.debug("%s: 无法写入 tool_key / duration_ms 到结果对象 %r", self.category, type(result))
+            results.append(result)
 
         return results
 
@@ -281,8 +279,8 @@ class MarketAnalystNode:
         tool_name = meta.tool_name
         arguments: dict[str, Any] = {}
 
-        # 对于需要 symbol 的工具（不在白名单），若已知 stock codes → 全部传入。
-        if tool_name not in self.WHITELIST_NO_SYMBOL and stocks:
+        # 对于需要 symbol 的工具（注册表声明 requires_symbol），若已知 stock codes → 全部传入。
+        if getattr(meta, "requires_symbol", True) and stocks:
             arguments["symbol"] = ";".join(stocks)
 
         # 特定工具的额外参数：

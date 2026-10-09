@@ -20,10 +20,13 @@ from app.graph.nodes.critic import CriticNode
 # ------------------------------------------------------------------ #
 
 
-def _route_state(verdict, revision_count=0, with_report=True):
+def _route_state(verdict, rewrite_count=0, research_round_count=0, with_report=True):
+    """路由输入：阶段 6 拆成两个独立计数器（`revision_count` 只是它们的和）。"""
     return {
         "critique": {"verdict": verdict},
-        "revision_count": revision_count,
+        "rewrite_count": rewrite_count,
+        "research_round_count": research_round_count,
+        "revision_count": rewrite_count + research_round_count,
         "report": {"what_happened": "x"} if with_report else None,
     }
 
@@ -35,9 +38,11 @@ def _route_state(verdict, revision_count=0, with_report=True):
         ("PASS", "end"),
         ("revise", "reasoning"),
         ("research_more", "supervisor"),
-        ("fail", "end"),
-        ("", "end"),
-        (None, "end"),
+        # 阶段 5：非法 / 缺失 verdict 不再静默 END（那会被当成正常完成），
+        # 而是进 finalize_audit 落一个可解释的终态。
+        ("fail", "finalize_audit"),
+        ("", "finalize_audit"),
+        (None, "finalize_audit"),
     ],
 )
 def test_route_decision(verdict, expected):
@@ -45,16 +50,21 @@ def test_route_decision(verdict, expected):
     assert critic_route_decision(_route_state(verdict), settings) == expected
 
 
-def test_revise_exhausted_revisions_ends():
+def test_revise_exhausted_revisions_goes_to_finalize_audit():
+    """阶段 5：轮次耗尽后必须经过 finalize_audit 落终态，而不是静默 END。
+
+    阶段 6：revise 的额度是 `max_rewrites`（默认 1），与 research_more 的额度分开。
+    """
     settings = Settings()
-    state = _route_state("revise", revision_count=settings.critic_max_revisions)
-    assert critic_route_decision(state, settings) == "end"
+    state = _route_state("revise", rewrite_count=settings.effective_max_rewrites)
+    assert critic_route_decision(state, settings) == "finalize_audit"
 
 
-def test_research_more_without_report_ends():
+def test_research_more_without_report_goes_to_finalize_audit():
+    """report 为 None 时不进 supervisor 回环，但仍必须落终态。"""
     settings = Settings()
     state = _route_state("research_more", with_report=False)
-    assert critic_route_decision(state, settings) == "end"
+    assert critic_route_decision(state, settings) == "finalize_audit"
 
 
 # ------------------------------------------------------------------ #

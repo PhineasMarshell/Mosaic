@@ -11,6 +11,14 @@ from app.net_env import install_proxy_env_normalization
 install_proxy_env_normalization()
 
 
+def _clamp_cap(cap: int, legacy: int | None) -> int:
+    """回环轮次上限的口径归一：负值按 0 处理；旧配置名只能收紧、不能放宽。"""
+    value = max(0, int(cap))
+    if legacy is not None:
+        value = min(value, max(0, int(legacy)))
+    return value
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -71,8 +79,20 @@ class Settings(BaseSettings):
     mosaic_data_dir: str = ""
 
     # ── LangGraph 图配置（P2+） ────────────────────
-    #: Critic 打回 Reasoning 重写的最大轮次
-    critic_max_revisions: int = 2
+    #: 阶段 6：两条回环路径的**独立**上限，不再共用一个"总轮次"数字。
+    #: 改写（revise → reasoning）只烧 LLM；补证据（research_more → supervisor）
+    #: 要重跑工具、吃整次调查的预算 —— 代价与风险不同，必须分别设限。
+    #: 默认 1 / 1：先把路由与数据覆盖修对，再按真实通过率调高（不要盲目设 3+）。
+    max_rewrites: int = 1
+    max_research_rounds: int = 1
+    #: 兼容旧配置名（环境变量 `CRITIC_MAX_REVISIONS`）：显式设置时作为两条路径的
+    #: **共同上限**，语义只允许收紧（与上面两个上限取 min），不会放宽它们 ——
+    #: 老部署不会因为这里留了值而多跑轮次。留空 = 完全由上面两个字段决定。
+    critic_max_revisions: int | None = None
+    #: 阶段 6：`research_more` 回环前必须保留的最小剩余预算（秒）。
+    #: 低于它就不启动半轮工具 —— 来不及跑完 reasoning + critic，只会产出更差的
+    #: 报告并把预算烧光；此时直接进 finalize_audit 落终态（blocked/degraded 可解释）。
+    research_round_min_remaining_seconds: int = 60
     #: research_more 回环轮最多代码级补齐几个 Critic 点名的缺口工具
     gap_max_steps: int = 3
     #: LangGraph recursion limit（防止无限循环）
@@ -107,6 +127,19 @@ class Settings(BaseSettings):
     #: SEC 公平访问政策要求所有请求声明访问身份，格式 "YourName your@email.com"。
     #: 留空 = 美股基本面工具（us_fundamentals/us_filings_recent）直接返回 error。
     sec_edgar_contact: str = ""
+
+    # ── 阶段 6：两条回环路径的**实际**上限（唯一读取入口） ──
+    #: 路由与节点都必须读这两个属性，不要直接读 `max_rewrites` /
+    #: `max_research_rounds`，否则兼容字段 `critic_max_revisions` 会被绕过。
+    @property
+    def effective_max_rewrites(self) -> int:
+        """`revise → reasoning` 的实际上限。"""
+        return _clamp_cap(self.max_rewrites, self.critic_max_revisions)
+
+    @property
+    def effective_max_research_rounds(self) -> int:
+        """`research_more → supervisor` 的实际上限。"""
+        return _clamp_cap(self.max_research_rounds, self.critic_max_revisions)
 
 
 @lru_cache

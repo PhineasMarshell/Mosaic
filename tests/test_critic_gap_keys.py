@@ -30,7 +30,7 @@ from app.config import Settings
 from app.gateway.tool_registry import registry_text
 from app.graph.gap_loop import allowed_keys
 from app.graph.nodes.critic import CriticNode
-from app.models.market import ToolResult
+from app.models.market import NormalizedDatum, ToolResult
 
 # ------------------------------------------------------------------ #
 # 探测式取材                                                          #
@@ -128,9 +128,25 @@ def _state(results=None):
     }
 
 
-def _executed_result(registry_key: str) -> ToolResult:
-    """构造一条「已拿到数据」的 ToolResult（tool 存的是 operationId，不是 registry key）。"""
-    return ToolResult(tool=_tool_name_of(registry_key), arguments={}, status="success")
+def _executed_result(registry_key: str, *, tool_key: str | None = None, **kwargs) -> ToolResult:
+    """构造一条 ToolResult（tool 存的是 operationId，不是 registry key）。
+
+    阶段 2 起，「已拿到充分证据」还要求 tool_key 匹配 + 非 partial + 有 normalized
+    数据（默认给 3 条），否则它**不算满足**任何缺口——这正是要锁住的行为。
+    """
+    datum_kwargs = {"domain": "a_share", "instrument": None, "tool": _tool_name_of(registry_key)}
+    normalized = [
+        NormalizedDatum(metric=f"m{i}", value=i, **datum_kwargs)  # type: ignore[arg-type]
+        for i in range(3)
+    ]
+    return ToolResult(
+        tool=_tool_name_of(registry_key),
+        tool_key=tool_key if tool_key is not None else registry_key,
+        arguments={},
+        status="success",
+        normalized=normalized,
+        **kwargs,
+    )
 
 
 # ------------------------------------------------------------------ #
@@ -154,17 +170,20 @@ async def test_critic_prompt_lists_supplementary_tools():
 
     prompt = node.client.chat.completions.last_prompt
     assert prompt is not None
-    assert "=== 可补充的工具（本域注册表，已排除已拿到数据的工具）===" in prompt
+    assert "=== 可补充的工具（本域注册表；已执行的工具标注现有数据量，覆盖不足仍可点名重拉）===" in prompt
     # 未执行的缺口工具必须在 prompt 里（否则 Critic 根本无从点名）
     assert f"- {_GAP_KEY}:" in prompt
-    # 已拿到数据的工具那一行必须被剔除（不能提示 Critic 再点它）
-    assert f"- {_EXECUTED_KEY}:" not in prompt
+    # 已执行的工具**不再被隐藏**（阶段 2 补修）：prompt 组装时本轮 Critic 的
+    # required_coverage 还不存在，无法预判"3 条数据"对"要 ≥20 条"的缺口是否够用；
+    # 隐藏等于让 Critic 永远点不到名。改为标注现有数据量。
+    assert f"- {_EXECUTED_KEY}:" in prompt
+    assert "现有数据 3 条" in prompt
     assert out["critique"].missing_tool_keys == [_GAP_KEY]
     assert out.get("errors", []) == []
 
 
 async def test_critic_drops_hallucinated_and_executed_gap_keys():
-    """T16：幻觉 key / 已拿到数据的 key 被丢弃，落库只剩合法 key，且不算错误。"""
+    """T16：幻觉 key / 已满足的 key 被丢弃，落库只剩合法 key，且不算错误。"""
     node = _make_node(
         json.dumps(
             {
@@ -178,4 +197,45 @@ async def test_critic_drops_hallucinated_and_executed_gap_keys():
     out = await node(_state([_executed_result(_EXECUTED_KEY)]))
 
     assert out["critique"].missing_tool_keys == [_GAP_KEY]
+    assert out.get("errors", []) == []
+
+
+async def test_critic_keeps_partial_gap_key_visible_for_retry():
+    """阶段 2：工具跑过但 partial → **不算满足**，仍须出现在可补充工具里并可被点名。
+
+    这条是本次线上故障的核心回归：旧实现按「工具名跑过」过滤，partial 的
+    limit_up_pool 被藏起来，Critic 再也点不到它，缺口永远补不上。
+    """
+    partial = ToolResult(
+        tool=_tool_name_of(_EXECUTED_KEY),
+        tool_key=_EXECUTED_KEY,
+        arguments={},
+        status="partial",
+        partial=True,
+        note="上游只返回前 50 条",
+        normalized=[NormalizedDatum(metric="data[0]", value=1, tool=_tool_name_of(_EXECUTED_KEY))],
+    )
+    node = _make_node(
+        json.dumps(
+            {
+                "issues": [
+                    {
+                        "kind": "missing_evidence",
+                        "claim": "缺涨停个股明细",
+                        "severity": "high",
+                        "action": "research_more",
+                        "required_tool_keys": [_EXECUTED_KEY],
+                        "required_coverage": {"min_datum_count": 20},
+                    }
+                ],
+                "reason": "证据不足",
+            }
+        )
+    )
+    out = await node(_state([partial]))
+
+    prompt = node.client.chat.completions.last_prompt
+    assert f"- {_EXECUTED_KEY}:" in prompt, "partial 的工具必须继续暴露给 Critic"
+    assert out["critique"].verdict == "research_more"
+    assert out["critique"].missing_tool_keys == [_EXECUTED_KEY]
     assert out.get("errors", []) == []

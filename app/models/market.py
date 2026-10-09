@@ -26,6 +26,12 @@ class NormalizedDatum(BaseModel):
 
 class ToolResult(BaseModel):
     tool: str
+    #: 阶段 2：本次调用**在计划里的 registry key**（analyst 从 route 写入）。
+    #: 缺口判定必须读它——``tool`` 存的是 gateway operationId，而同一个
+    #: operationId 会被多个 registry key 复用（quote/search、klines/snapshot/window），
+    #: 用 operationId 反查只会命中规范条目，把兄弟 key 的缺口误判成"已满足"。
+    #: 老结果/其他构造点可能为 None，此时覆盖度判定一律按"不满足"处理（保守）。
+    tool_key: str | None = None
     arguments: dict[str, Any]
     raw: Any = None
     status: Status
@@ -36,3 +42,6 @@ class ToolResult(BaseModel):
     #: _METADATA_KEYS 直接丢掉了，用户和 LLM 都看不到数据为什么不全。
     note: str | None = None
     normalized: list[NormalizedDatum] = Field(default_factory=list)
+    #: 阶段 6：本次执行的墙钟耗时（毫秒）。``None`` = 没有计时点（旧构造点 /
+    #: 反序列化的历史结果），与"耗时 0ms"不同 —— 指标聚合要能区分两者。
+    duration_ms: float | None = None

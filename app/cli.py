@@ -172,6 +172,26 @@ async def main(question: str | None = None) -> None:
     try:
         result = await orchestrator.run(question)
 
+        # 阶段 5：可信与否只看 delivery_status，绝不靠 errors 为空来推断。
+        if result.delivery_status != "verified":
+            print(f"研究未通过证据审计（delivery_status={result.delivery_status}）。", file=sys.stderr)
+            detail = result.delivery_reason
+            if not detail and isinstance(result.critique, dict):
+                detail = str(result.critique.get("reason", "") or "")
+            if detail:
+                print(f"原因: {detail}", file=sys.stderr)
+            if result.critique and result.critique.get("issues"):
+                print("未解决的问题:", file=sys.stderr)
+                for issue in result.critique["issues"][:10]:
+                    print(
+                        f"  - [{issue.get('kind')}/{issue.get('severity')}] {issue.get('claim') or issue.get('rationale', '')}",
+                        file=sys.stderr,
+                    )
+            # 运行错误（如果有）同样要显示——它们解释"为什么没能通过审计"。
+            for line in result.errors:
+                print(f"运行错误: {line}", file=sys.stderr)
+            sys.exit(2)
+
         if result.report is None:
             # T9：推理失败（reasoning 写 report=None）时，把 result.errors 里真正的
             # 原因打到 stderr 并非 0 退出。旧实现直接 result.report.model_dump() 抛

@@ -257,6 +257,20 @@ def _cap_evidence(evidence: list[Evidence], cap: int) -> list[Evidence]:
     return kept
 
 
+def _instrument_of(result: ToolResult) -> str | None:
+    """从工具调用参数里取本次针对的标的（``symbol``）。
+
+    统一用 ``";"`` 连接多标的调用（与 analyst 拼 ``symbol`` 的口径一致）；
+    没有标的的工具（市场级聚合、新闻、搜索）返回 ``None``——它们本就不针对
+    单个实体，不该被当成"某个公司的证据"。
+    """
+    raw = (getattr(result, "arguments", None) or {}).get("symbol")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
 def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> list[Evidence]:
     """从工具调用结果构建用户友好的证据链。
 
@@ -276,6 +290,9 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
     counter = 1
 
     for result in results:
+        # 阶段 4：把这次调用针对的标的记下来（工具参数里的 symbol），
+        # 使报告里的公司名可以对着证据校验，而不是凭模型记忆。
+        instrument = _instrument_of(result)
         if result.status == "error":
             evidence.append(
                 Evidence(
@@ -289,6 +306,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                     status="error",
                     partial=False,
                     note="",
+                    instrument=instrument,
                 )
             )
             counter += 1
@@ -327,6 +345,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                             status="success",
                             partial=False,
                             note=f"聚合了 {summary['count']} 条 K 线数据",
+                            instrument=instrument,
                         )
                     )
                     counter += 1
@@ -360,6 +379,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                         status=result.status,
                         partial=result.partial,
                         note="",
+                        instrument=instrument,
                     )
                 )
                 counter += 1
@@ -382,6 +402,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                                 status=result.status,
                                 partial=result.partial,
                                 note="",
+                                instrument=instrument,
                             )
                         )
                         counter += 1

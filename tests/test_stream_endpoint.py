@@ -257,6 +257,9 @@ def test_stream_converts_toolresult_objects_to_dicts(monkeypatch):
         "report": report,
         "results": tool_result_objs,
         "cache_stats": {},
+        # 真实图里 critic 节点总会写 critique；终态缺 critique 会被判 failed
+        # （阶段 5：不猜、不当 pass），report 也不会被当成可信结论返回。
+        "critique": {"verdict": "pass", "reason": "ok"},
     }
     graph = FakeGraph([], final_state)
     _use_fake_graph(monkeypatch, graph)

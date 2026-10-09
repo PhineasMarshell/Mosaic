@@ -15,6 +15,7 @@ from app.agent.orchestrator import Orchestrator
 from app.agent.persistence import persist_research
 from app.config import get_settings
 from app.errors import LLMOutputError, UpstreamTimeoutError
+from app.graph import run_log
 from app.logging_config import setup_logging
 from app.models.response import build_response_from_state
 
@@ -208,24 +209,60 @@ async def ask(request: dict):
             timeout=settings.research_budget_seconds,
         )
 
+        # 阶段 5：先看审计终态，再看有没有报告。blocked 不是运行失败（errors 可以是
+        # 空的），但同样不能当作可信结论交付，因此不落库、不返回 200 + 正文报告。
+        delivery = result.delivery_status or "failed"
+
+        if result.report is None and delivery == "blocked":
+            logger.warning(
+                "Research blocked for %s (final_audit_status=%s)",
+                question[:50],
+                result.final_audit_status,
+            )
+            run_log.log_delivery({"run_id": result.run_id}, delivery_status="blocked", persisted=False, sink="sync")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "question": question,
+                    "report": None,
+                    "conversation_id": conversation_id,
+                    "critique": result.critique,
+                    "errors": result.errors,
+                    "delivery_status": "blocked",
+                    "final_audit_status": result.final_audit_status,
+                    "delivery_reason": result.delivery_reason
+                    or "研究未通过证据审计，未返回可信结论，请重试或缩小问题范围",
+                    "retryable": True,
+                },
+            )
+
         if result.report is None:
             # 推理环节失败：给出明确的失败原因，而不是 200 + 一份空报告。
             # detail 必须是字符串 —— 前端 askSync 直接把它塞进 Error.message。
             logger.error("Research produced no report for %s (errors=%s)", question[:50], result.errors)
+            run_log.log_delivery(
+                {"run_id": result.run_id}, delivery_status=str(delivery), persisted=False, sink="sync"
+            )
             return JSONResponse(
                 status_code=502,
                 content={
                     "detail": "研究未能产出报告（推理环节失败），请重试",
                     "code": "no_report",
                     "errors": result.errors,
+                    "delivery_status": delivery,
+                    "final_audit_status": result.final_audit_status,
                 },
             )
 
-        data = result.model_dump()
+        #: run_id 只在内部串联日志，不出现在对外 JSON 响应里
+        data = {k: v for k, v in result.model_dump().items() if k != "run_id"}
 
         # T3：同步与 SSE 共用同一持久化逻辑，避免双路径漂移（SSE 曾读错字段层级，
-        # 把空摘要/空状态写入库）。
-        await persist_research(result, question, conversation_id)
+        # 把空摘要/空状态写入库）。阶段 5 起内部按 delivery_status 门控。
+        persisted = await persist_research(result, question, conversation_id)
+        run_log.log_delivery(
+            {"run_id": result.run_id}, delivery_status=str(delivery), persisted=persisted, sink="sync"
+        )
 
         return JSONResponse(content=data)
     except TimeoutError as exc:
@@ -284,9 +321,12 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         "question": question,
         "domain": domain,
         "conversation_id": conversation_id,
+        # 阶段 0：一次调查一个 run_id，跨节点落到每条结构化运行摘要日志
+        "run_id": run_log.new_run_id(),
         # T23b：SSE 路径同样把整次调查的预算截止时刻写进 state（与 Orchestrator.run 对齐）
         "budget_deadline": time.monotonic() + budget,
     }
+    run_log.log_run_start(initial_state)
 
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -338,11 +378,47 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         # ── 组装结果（与 orchestrator.run 共用同一构造器）──
         result = build_response_from_state(final_state, question=question, conversation_id=conversation_id)
 
-        verdict = result.critique.get("verdict") if isinstance(result.critique, dict) else None
-        if result.errors or verdict not in (None, "pass"):
-            logger.warning("Stream research completed with audit verdict=%s errors=%d", verdict, len(result.errors))
+        # ── 阶段 5：交付门控 ────────────────────────────────
+        # 只有 verified / degraded 才允许出现"调查完成"；blocked / failed 必须发
+        # 对应状态，绝不伪装成一次正常完成的研究。
+        delivery = result.delivery_status or "failed"
+        # delivery 日志必须带上**本次图运行真实**的 run_id，与 run_start / plan /
+        # executions / critic / route / finalize 对得上；绝不另生成一个 id。
+        final_state = {**final_state, "run_id": result.run_id or final_state.get("run_id")}
+        #: run_id 是内部字段，不出现在对外 SSE 载荷里
+        public_result = {k: v for k, v in result.model_dump().items() if k != "run_id"}
 
         if result.report is None:
+            if delivery == "blocked":
+                # 审计没通过：不是运行失败（errors 可以是空的），但也不能当作结论交付。
+                logger.warning(
+                    "Stream research blocked for %s (final_audit_status=%s)",
+                    question[:50],
+                    result.final_audit_status,
+                )
+                yield json_event(
+                    "progress",
+                    {
+                        "step": "blocked",
+                        "node": None,
+                        "message": "研究未通过证据审计，本次结果不可作为可信结论，请重试或缩小问题范围",
+                    },
+                )
+                yield json_event(
+                    "result",
+                    {
+                        "error": "研究未通过证据审计，未返回可信结论",
+                        "code": "blocked",
+                        "question": question,
+                        "delivery_status": "blocked",
+                        "final_audit_status": result.final_audit_status,
+                        "delivery_reason": result.delivery_reason,
+                        "critique": result.critique,
+                        "errors": result.errors,
+                    },
+                )
+                run_log.log_delivery(final_state, delivery_status="blocked", persisted=False, sink="sse")
+                return
             # 推理环节失败：与超时/上游错误保持一致，发一个带 error 的 result 事件，
             # 既不落库，也不让前端拿空报告去渲染。
             logger.error("Stream research produced no report for %s (errors=%s)", question[:50], result.errors)
@@ -354,17 +430,24 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                     "code": "no_report",
                     "question": question,
                     "errors": result.errors,
+                    "delivery_status": delivery,
+                    "final_audit_status": result.final_audit_status,
                 },
             )
+            run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=False, sink="sse")
             return
 
         yield json_event("progress", {"step": "done", "node": None, "message": "调查完成"})
 
-        save_result = result.model_dump()
+        save_result = public_result
         # T3：SSE 与同步共用同一持久化函数，内部从 result.report 读字段；
         # 旧实现读 model_dump() 顶层（字段嵌在 report 下），导致摘要恒空、当日状态
-        # 被空值覆盖且漏写 market_state。
+        # 被空值覆盖且漏写 market_state。阶段 5 起该函数内部还会按
+        # delivery_status 门控——未验证结果不写对话轮次 / 当日状态 / 记忆。
+        # 阶段 5：只有 verified 才可能真正落库（门控在 persist_research 内部）；
+        # 这里记录的是"是否放行到持久化"，与门控条件保持同一表达式，避免日志说谎。
         asyncio.create_task(persist_research(result, question, conversation_id))
+        run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=delivery == "verified", sink="sse")
 
         yield json_event("result", save_result)
 

@@ -76,16 +76,23 @@ def test_executed_index_only_counts_data():
     assert "c" not in index
 
 
-def test_executed_keys_maps_tool_name_to_key():
-    """T2：ToolResult.tool 是 operationId，executed_keys 必须映射回 registry key。"""
+def test_legacy_executed_keys_path_is_gone():
+    """阶段 6（方案 §4 灰度第 4 条）：按 operationId 反查判"已满足"的旧路径必须消失。
+
+    旧的 ``executed_keys()`` 只看"跑过没有"，同一 operationId 被多个 registry key
+    复用时会把兄弟 key 的缺口误判成已满足；它现在只留一个会抛错的桩，证据充分性
+    判据只有 ``satisfied_keys()``。
+    """
+    import pytest
+
     from app.gateway.tool_registry import resolve_tool_by_name
     from app.graph.gap_loop import executed_keys
 
     meta = _PLAIN_TOOL
-    canonical_key = resolve_tool_by_name(meta.tool_name).key
-    assert executed_keys([_result(meta.tool_name)]) == {canonical_key}
-    # 未知 operationId 静默忽略，不抛异常
-    assert executed_keys([_result("not_a_real_operation_id")]) == set()
+    with pytest.raises(NotImplementedError):
+        executed_keys([_result(meta.tool_name)])
+    # 反查能力本身还在（render/重复步骤判定仍需要），只是不再当充分性判据
+    assert resolve_tool_by_name(meta.tool_name).key
 
 
 # ------------------------------------------------------------------ #

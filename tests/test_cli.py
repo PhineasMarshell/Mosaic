@@ -47,10 +47,36 @@ async def test_valid_report_renders(monkeypatch, capsys):
             "confidence": "low",
         }
     )
-    result = ResearchResponse(question="q", report=report)
+    # 阶段 5：只有通过审计（delivery_status=verified）的结果才会被当作结论输出；
+    # 手工构造且没有审计结论的响应一律按"未验证"处理。
+    result = ResearchResponse(question="q", report=report, delivery_status="verified", final_audit_status="pass")
     _stub_run(monkeypatch, result)
 
     await cli.main("q")
 
     out = capsys.readouterr().out
     assert "指数普跌" in out
+
+
+async def test_unverified_report_is_not_rendered_as_conclusion(monkeypatch, capsys):
+    """回归：未经审计的报告不许像正常结论一样打印出来（哪怕 errors 为空）。"""
+    report = MarketIntelligence.model_validate(
+        {"market_state": "走强", "state_label": "RISK_ON", "what_happened": "市场走强", "confidence": "high"}
+    )
+    result = ResearchResponse(
+        question="q",
+        report=report,
+        delivery_status="blocked",
+        final_audit_status="research_exhausted",
+        delivery_reason="审计未通过（verdict=research_more）",
+        errors=[],
+    )
+    _stub_run(monkeypatch, result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await cli.main("q")
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "市场走强" not in captured.out, "blocked 的正文不得作为结论输出"
+    assert "未通过证据审计" in captured.err

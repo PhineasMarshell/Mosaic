@@ -8,6 +8,8 @@
 
 import json
 import logging
+import time
+from typing import Any, get_args
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -18,9 +20,13 @@ from app.errors import LLMOutputError
 from app.llm_json import parse_json_object
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
-from app.models.response import EvidenceItem, MarketIntelligence
+from app.models.response import ClaimEvidence, ClaimType, EvidenceItem, MarketIntelligence
+from app.research.entity_check import check_report_entities, report_text
 
 logger = logging.getLogger(__name__)
+
+#: claim_type 的合法取值（与 ``app/models/response.py`` 的 ``ClaimType`` 同源）。
+_CLAIM_TYPES: frozenset[str] = frozenset(get_args(ClaimType))
 
 
 def _get_evidence_key(item) -> str:
@@ -160,10 +166,75 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
                     status=original_ev.status,
                     partial=original_ev.partial,
                     note=combined_note if combined_note else None,
+                    instrument=original_ev.instrument,
                 )
             )
 
     return items
+
+
+def _parse_claims(raw_claims) -> list[ClaimEvidence]:
+    """把 LLM 的 claim—evidence 映射解析成模型对象（容忍形状错误）。
+
+    形状错的条目**丢弃**而不是抛 ``ValidationError``：claims 是可追溯性增强
+    字段，不该像 T20 那样"一个字段毁掉整份报告"（那会把此前所有已付费的工具
+    调用一起丢掉）。丢弃之后报告在 Critic 眼里就是"没有可追溯论断"，
+    会被要求逐条核对，比整份报告 502 更符合安全方向。
+    """
+    claims: list[ClaimEvidence] = []
+    for raw in _ensure_list(raw_claims):
+        if not isinstance(raw, dict):
+            continue
+        claim_text = str(raw.get("claim") or "").strip()
+        if not claim_text:
+            continue
+        evidence_ids = [
+            str(eid)
+            for eid in _ensure_list(raw.get("evidence_ids"))
+            if isinstance(eid, (str, int)) and str(eid).strip()
+        ]
+        claim_type = raw.get("claim_type")
+        if claim_type not in _CLAIM_TYPES:
+            claim_type = "other"
+        claims.append(ClaimEvidence(claim=claim_text, evidence_ids=evidence_ids, claim_type=claim_type))
+    return claims
+
+
+def _validate_claims(
+    claims: list[ClaimEvidence],
+    valid_ids: set[str],
+) -> tuple[list[ClaimEvidence], list[str]]:
+    """代码级校验 claim—evidence 映射，返回 ``(保留的 claims, violations)``。
+
+    LLM 编一个 evidence id 就宣称"有证据"的路必须在这里堵死：
+
+    - 不存在的 id 一律剥离（不能让引用看起来成立）；
+    - 一条论断原本引用了 id、剥离后一个都不剩 → 该论断在报告里就是无据的，
+      从 claims 中移除，并记入 violations；
+    - 本来就没引用任何 id 的论断不算 violation（它可以是显式标注的 inference），
+      但仍留在 claims 里供 Critic 审查。
+
+    violations 非空时调用方会把报告降级（confidence=low + data_caveats），
+    并且 Critic 节点会据此在代码层强制产出 ``unsupported_claim`` issue，
+    因此这种报告**不可能**被判 pass。
+    """
+    kept: list[ClaimEvidence] = []
+    violations: list[str] = []
+    for claim in claims:
+        if not claim.evidence_ids:
+            kept.append(claim)
+            continue
+        valid = [eid for eid in claim.evidence_ids if eid in valid_ids]
+        missing = [eid for eid in claim.evidence_ids if eid not in valid_ids]
+        if missing:
+            violations.append(
+                f"论断「{claim.claim[:80]}」引用了不存在的 evidence id: {', '.join(missing)}"
+            )
+        if not valid:
+            continue
+        claim.evidence_ids = valid
+        kept.append(claim)
+    return kept, violations
 
 
 class ReasoningEngine:
@@ -174,6 +245,10 @@ class ReasoningEngine:
             base_url=settings.openai_base_url,
             timeout=settings.llm_timeout_seconds,
         )
+        #: 阶段 6：最近一次 LLM 调用的用量与耗时（调用方读它 → run_log `llm` 事件）。
+        #: ``None`` = 没量到（打桩客户端 / 端点不回 usage），与"用了 0 token"不同。
+        self.last_llm_usage: Any = None
+        self.last_llm_duration_ms: float | None = None
 
     async def reason(
         self,
@@ -213,6 +288,7 @@ class ReasoningEngine:
             history_context=combined_context,
         )
 
+        _llm_started = time.perf_counter()
         response = await self.client.chat.completions.create(
             model=self.settings.openai_model,
             messages=[
@@ -225,6 +301,9 @@ class ReasoningEngine:
             response_format={"type": "json_object"},
             temperature=0.1,
         )
+        # 阶段 6：用量/耗时留给调用方打 run_log `llm` 事件（本层拿不到 run_id）。
+        self.last_llm_usage = getattr(response, "usage", None)
+        self.last_llm_duration_ms = (time.perf_counter() - _llm_started) * 1000
 
         content = response.choices[0].message.content
         # 空 completion / ```json 围栏 / 顶层数组，三种都在 parse_json_object 里
@@ -265,6 +344,27 @@ class ReasoningEngine:
             raw_evidence = payload.get("evidence", [])
             parsed_evidence = _parse_evidence(raw_evidence, evidence)
             payload["evidence"] = [ei.model_dump() for ei in parsed_evidence]
+
+            # 阶段 4③/④：claim—evidence 映射 + **代码级**引用校验。
+            # 合法 id 集合 = 真实证据账本 ∪ 已通过 _parse_evidence 核实的条目。
+            valid_ids = {item.id for item in evidence} | {ei.id for ei in parsed_evidence}
+            claims, violations = _validate_claims(_parse_claims(payload.get("claims")), valid_ids)
+            payload["claims"] = [claim.model_dump() for claim in claims]
+            payload["evidence_violations"] = violations
+            if violations:
+                # 引用了不存在的证据 id：报告必须降级，且证据可见（不能静默）。
+                payload["confidence"] = "low"
+                data_caveats.append(
+                    f"有 {len(violations)} 条论断引用了不存在的证据 id，已按「无据」处理："
+                    + "；".join(violations[:3])
+                )
+                payload["data_caveats"] = data_caveats
+                logger.warning("Reasoning 报告存在 %d 条无效 evidence 引用: %s", len(violations), violations[:3])
+
+            # 阶段 4（实体校验）：报告提到的实体必须有校验源。没有的记进
+            # unverified_entities —— Critic 据此禁止"某公司不存在/未上市"一类断言
+            # （无校验源时只能表达为"未验证"）。
+            payload["unverified_entities"] = check_report_entities(report_text(payload), evidence)[0]
 
             # Ensure confidence is valid
             conf = payload.get("confidence")

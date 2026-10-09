@@ -74,7 +74,14 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
        search 用 q，不是 keyword；eastmoney F10 系列用 symbol(纯数字如600519)，不是 code；
        klines/snapshot 查询 A 股时必须指定 exchange=tencent 或 exchange=xueqiu。
 
-A 股市场级：overview → sentiment → limit-up count → sectors → pool → quote
+A 股市场级（大盘/全市场问题）：sentiment → limit_up_count → limit_up_sectors → quote(symbol="000300") → telegraph
+  ⚠️ 市场级问题（问题里不含 6 位证券代码）的上述最低证据集由系统在代码层自动补入，
+     你**不需要**重复规划它们；请把 steps 留给额外需要的东西（如题材深挖用 limit_up_pool、
+     消息面用 news_digest/symbol_news）。
+  ⚠️ `overview`（get_company_overview）**必须**有 symbol（6 位个股代码），
+     大盘问题里没有代码时它不是可用工具——不要把它当市场综述的首选项，
+     否则它会被判为"计划了但无法执行"而从计划中剔除。
+  个股问题（问题里含 6 位代码，或已确定标的）：overview → detail → finance → longhu → abnormal_reasons
 Crypto: snapshot(exchange=binance) → klines → derivatives_history → funding_rate → liquidation_today → top_position → liqmap
 港股：hk_northbound_daily → hk_index_snapshot → quote(symbol=HK代码) → search(q=股票名) → hk_quote
 商品（OKX 永续）：klines(symbol=XAU/USDT:USDT) → snapshot(symbol=XAG/USDT:USDT, XPT/USDT:USDT)

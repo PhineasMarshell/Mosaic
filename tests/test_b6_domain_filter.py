@@ -144,7 +144,7 @@ async def test_no_explicit_domain_keeps_full_registry():
 async def test_out_of_domain_step_is_filtered_and_recorded():
     """守卫：不在渲染文本里的 step 不执行，errors 记 tool_call_filtered。"""
     node, _fake = _make_node(_PLAN_JSON)
-    plan, filtered = await node._plan({"question": "AAPL", "domain": "us_stock"})
+    plan, filtered, _adjustments = await node._plan({"question": "AAPL", "domain": "us_stock"})
     assert filtered == ["longhu"]
     assert [s.tool_key for s in plan.steps] == ["us_klines"]
 

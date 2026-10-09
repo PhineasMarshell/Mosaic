@@ -90,6 +90,17 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 
 例如：[{{"id":"technical-001","source_tool":"get_ashare_sentiment","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
 
+"claims": 数组，每个元素是一条**关键论断**及其证据引用（claim—evidence 映射）：
+   - claim: 论断文本（会出现在报告正文里的那句话）
+   - evidence_ids: 支撑这条论断的 evidence id 数组，只能引用上面 evidence 数组里**真实存在**的 id
+   - claim_type: "fact" | "inference" | "single_source" | "comparison" | "causation" | "structure" | "other"
+   规则：
+   - comparison（"最强/最密集/主线/领涨/落差最大"等比较）与 causation（"驱动/导致/因为"
+     等因果）**必须**至少有一个 evidence_id，否则不要写这条论断；
+   - single_source 用于只有一个来源的消息面论断，正文里必须写明"单一来源，未交叉确认"；
+   - fact 只能用于数据直接支持的内容；你自己的解释与推演一律用 inference；
+   - 引用一个不存在的 id 会被代码剥离，该条论断按"无据"处理并把整份报告降级（confidence=low）。
+
 "strong_areas": 强势方向列表（What's Moving）
 
 "what_changed": 数组，每个元素是字符串（与之前相比的变化）——
@@ -110,7 +121,12 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 --- 约束 ---
 
 - 不得创造数据。所有分析基于提供的数据。
-- 文本字段中绝对不能出现 [evidence-xxx] 格式的标签。这些引用只在 evidence 列表中出现。
+- 报告正文里出现的每个具体上市公司名，必须来自证据的 instrument 字段、或某个证据值中明确
+  提到的名称。不得用相近的公司名替代（"XX 科技" 与 "XX 科技股份" 是两家不同的公司）。
+- 没有证据支持的实体，不得断言其"不存在 / 未上市 / 查无此股"；无校验源时只能写
+  "未验证 / 无法确认"。
+- 文本字段中绝对不能出现 [evidence-xxx] 格式的标签。这些引用只在 evidence 与 claims 列表中出现。
+- 明确区分事实、推断与单源消息：单源消息必须写明来源与时间，不得写成既定事实。
 - 明确区分事实、解释、假设和结论。
 - 必须考虑反证。
 - 如果证据不足，直接说"不足以判断"。

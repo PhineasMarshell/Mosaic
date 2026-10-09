@@ -387,6 +387,14 @@ function addErrorBubble(message, canRetry) {
   scrollToBottom(false);
 }
 
+function addNoticeRow(message) {
+  const row = document.createElement('div');
+  row.className = 'msg-row ai';
+  row.innerHTML = `<div class="msg-avatar">✦</div><div class="msg-bubble"><div class="error-msg" style="border-color:var(--border)"><strong>注意</strong><br>${esc(message)}</div></div>`;
+  getMessages().appendChild(row);
+  scrollToBottom(false);
+}
+
 function addAIResponse(report) {
   const row = document.createElement('div');
   row.className = 'msg-row ai';
@@ -645,7 +653,21 @@ async function ask() {
 
 function renderResult(data) {
   if (!data) { addErrorBubble('后端返回了空结果', true); return; }
+  // 阶段 5：可信与否只看 delivery_status。没有通过证据审计的结果**不得**渲染成
+  // 正常报告 —— 也绝不能用 errors 为空当作"可信"的信号。
+  const delivery = data.delivery_status;
+  if (delivery && delivery !== 'verified' && delivery !== 'degraded') {
+    addErrorBubble(
+      data.delivery_reason || data.error || '研究未通过证据审计，未返回可信结论，请重试或缩小问题范围',
+      false,
+    );
+    return;
+  }
+  if (delivery === 'degraded') {
+    addNoticeRow('⚠️ 本次结果未完全通过证据审计，以下内容仅供参考');
+  }
   const report = data.report || data;
+  if (!report) { addErrorBubble('后端返回了空结果', true); return; }
   if (data.conversation_id) currentConversationId = data.conversation_id;
   addAIResponse(report);
 }

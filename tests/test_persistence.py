@@ -31,7 +31,39 @@ def _make_report() -> MarketIntelligence:
 
 
 def _make_good_response() -> ResearchResponse:
-    return ResearchResponse(question="今天市场怎么样", report=_make_report(), conversation_id=CONV_ID)
+    # 阶段 5：只有 delivery_status="verified" 的结果才允许写入对话轮次 / 当日状态。
+    # 直接构造 ResearchResponse 时必须显式带上审计结论——"没写"不等于"已验证"。
+    return ResearchResponse(
+        question="今天市场怎么样",
+        report=_make_report(),
+        conversation_id=CONV_ID,
+        final_audit_status="pass",
+        delivery_status="verified",
+    )
+
+
+async def test_unverified_result_never_reaches_memory(mem):
+    """阶段 5：blocked 结果不得写对话轮次 / 当日状态，且记录被标记为未验证。
+
+    这是本次改造的核心底线回归：`errors == []` 的 blocked 结果曾经被当作正常结果落库，
+    污染每日状态与后续记忆上下文。
+    """
+    blocked = ResearchResponse(
+        question="今天 A 股发生了什么？",
+        report=None,
+        conversation_id=CONV_ID,
+        critique={"verdict": "revise", "reason": "证据不足"},
+        errors=[],  # 运行没出错，只是审计没过
+        final_audit_status="revise_exhausted",
+        delivery_status="blocked",
+    )
+    persisted = await persist_research(blocked, blocked.question, CONV_ID, memory=mem)
+
+    assert persisted is False
+    assert mem.get_daily_state() is None
+    assert "今天 A 股发生了什么？" not in mem.get_conversation_history(CONV_ID, last_n=10)
+    row = mem.conn.execute("SELECT response FROM research_records").fetchone()
+    assert '"unverified": true' in row[0].replace('"unverified":true', '"unverified": true')
 
 
 @pytest.fixture

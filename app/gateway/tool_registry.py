@@ -34,6 +34,8 @@ class ToolMeta:
         "http_method",
         "http_path",
         "category",
+        "requires_symbol",
+        "market_level",
     )
 
     def __init__(
@@ -46,6 +48,8 @@ class ToolMeta:
         http_method: str = "GET",
         http_path: str = "",
         category: str = "shared",
+        requires_symbol: bool = True,
+        market_level: bool = False,
     ):
         self.key = key
         self.tool_name = tool_name
@@ -55,6 +59,15 @@ class ToolMeta:
         self.http_method = http_method
         self.http_path = http_path
         self.category = category
+        #: 阶段 3 ④：该工具**能否在没有 symbol 的情况下执行**。
+        #: 这是"无 symbol 可执行"的唯一声明点 —— analyst 的符号守卫与
+        #: supervisor 的计划前置检查都读它，不再维护跨节点硬编码白名单
+        #: （旧实现见 nodes/analysts/base.py 的 WHITELIST_NO_SYMBOL）。
+        self.requires_symbol = requires_symbol
+        #: 阶段 3 ⑤：该工具的数据口径是**整个市场**（情绪、涨停家数、涨停题材、
+        #: 全市场快讯……），而不是某个标的。这类数据点必须带日期与市场域，
+        #: 否则会拿一段无日期的旧数据声称"今日大盘……"（见 normalizer 合约）。
+        self.market_level = market_level
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -66,6 +79,8 @@ class ToolMeta:
             "http_method": self.http_method,
             "http_path": self.http_path,
             "category": self.category,
+            "requires_symbol": self.requires_symbol,
+            "market_level": self.market_level,
         }
 
 
@@ -677,6 +692,44 @@ ALL_TOOLS: list[ToolMeta] = (
     # + _SENTIMENT_TOOLS  # P4-5：评论 MCP 就绪后取消注释
     + _HEALTH_TOOLS
 )
+
+# ------------------------------------------------------------------ #
+# 阶段 3 ④：无 symbol 可执行的工具声明                                  #
+# ------------------------------------------------------------------ #
+
+#: operationId → 该工具的 datum 是否代表"整个市场"口径。
+#: 键存在 = 无需 symbol 即可执行（``ToolMeta.requires_symbol=False``）。
+#:
+#: 这是这项能力的**唯一**声明点：analyst 的符号守卫（``meta.requires_symbol``）
+#: 与 supervisor 的计划前置检查都读这里，不再有跨节点硬编码白名单。
+#: 历史包袱：``nodes/analysts/base.py`` 的 ``WHITELIST_NO_SYMBOL`` 保留为
+#: 只读兼容别名，内容由本表派生。
+_SYMBOL_FREE_TOOLS: dict[str, bool] = {
+    # —— A 股市场级聚合：整市场口径，datum 必须带日期与市场域 ——
+    "get_ashare_sentiment": True,
+    "get_limit_up_count": True,
+    "list_limit_up_sectors": True,
+    "list_limit_up_stocks": True,
+    "internal_market_telegraph": True,
+    # —— 无 symbol 可执行，但口径不是"整个市场" ——
+    "news_search": False,
+    "internal_news_digest": False,
+    "search_stocks": False,
+    "get_stock_longhu": False,
+    "internal_hk_northbound": False,
+    "internal_hk_index": False,
+    "list_hyperliquid_symbols": False,
+    "get_hyperliquid_user_count": False,
+    "list_hyperliquid_vaults": False,
+    "list_exchanges": False,
+    "get_service_health": False,
+    "get_market_health": False,
+}
+
+for _meta in ALL_TOOLS:
+    if _meta.tool_name in _SYMBOL_FREE_TOOLS:
+        _meta.requires_symbol = False
+        _meta.market_level = _SYMBOL_FREE_TOOLS[_meta.tool_name]
 
 #: key → ToolMeta 索引（业务层面使用）
 BY_KEY: dict[str, ToolMeta] = {x.key: x for x in ALL_TOOLS}

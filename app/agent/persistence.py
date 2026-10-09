@@ -52,30 +52,48 @@ async def persist_research(
     conversation_id: str | None,
     *,
     memory=None,
-) -> None:
+) -> bool:
     """把一次研究结果落库：研究记录 + 对话轮次 + 当日状态。
 
-    - 研究记录始终保存（即便没有报告，也便于事后排查）。
-    - ``result.report is None`` 时：只保存研究记录，**不写对话轮次、不写当日
-      状态**，以免空值覆盖当天已有的正确快照，并记一条 warning。
-    - 各项落库失败不致命，但以 warning 级别记录（旧实现是 debug，等于静默）。
+    阶段 5 门控（方案 §4 阶段 5 第 4 条）：
 
-    Args:
-        result: 编排器产出的完整响应。
-        question: 本轮用户问题。
-        conversation_id: 多轮对话 id；为空则不写对话轮次。
-        memory: 可注入的 Memory 存储（测试用）；默认走全局 ``get_memory()``。
+    - **只有 ``delivery_status == "verified"`` 的结果才允许进入对话轮次 / 当日状态
+      / 后续记忆上下文**。``errors == []`` 不构成放行理由——那只说明运行没出错。
+    - ``degraded``（本版尚未自动产生）与 ``blocked`` / ``failed`` 一律不落记忆库；
+      research_records 仍然写一条**明确标记为未验证**的记录，便于事后排查。
+    - ``result.report is None`` 时：只保存研究记录，**不写对话轮次、不写当日状态**，
+      以免空值覆盖当天已有的正确快照，并记一条 warning。
+
+    Returns:
+        是否把结论写进了可复用的研究 / 记忆（verified 才为 True）。
     """
     if memory is None:
         from app.memory.storage import get_memory
 
         memory = get_memory()
 
-    # 研究记录：始终保存，dump 形状与两条路径历史一致。
+    delivery_status = result.delivery_status
+    verified = delivery_status == "verified"
+
+    # 研究记录：始终保存，dump 形状与两条路径历史一致（多带一个 delivery_status，
+    # 让事后能区分"已验证"与"未验证"记录）。
     try:
-        memory.save_research(question, result.model_dump())
+        payload = result.model_dump()
+        payload["unverified"] = not verified
+        memory.save_research(question, payload)
     except Exception as exc:  # noqa: BLE001 — 落库失败不致命，但必须可见
         logger.warning("Research save failed (non-fatal): %s", exc)
+
+    if not verified:
+        logger.warning(
+            "persist_research: delivery_status=%s，跳过对话轮次与当日状态"
+            "（question=%s final_audit_status=%s errors=%d）",
+            delivery_status,
+            question[:50],
+            result.final_audit_status,
+            len(result.errors),
+        )
+        return False
 
     report = result.report
     if report is None:
@@ -84,7 +102,7 @@ async def persist_research(
             question[:50],
             result.errors,
         )
-        return
+        return False
 
     if conversation_id:
         try:
@@ -96,3 +114,4 @@ async def persist_research(
         memory.save_daily_state(data=_daily_state_data(report))
     except Exception as exc:  # noqa: BLE001
         logger.warning("Daily state save failed (non-fatal): %s", exc)
+    return True

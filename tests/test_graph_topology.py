@@ -54,18 +54,22 @@ def test_critic_route_pass_ends():
 
     assert (
         critic_route_decision(
-            {"critique": {"verdict": "pass", "reason": "ok"}, "revision_count": 0},
+            {"critique": {"verdict": "pass", "reason": "ok"}, "rewrite_count": 0},
             settings,
         )
         == "end"
     )
-    assert critic_route_decision({"critique": Critique(verdict="pass"), "revision_count": 0}, settings) == "end"
+    assert critic_route_decision({"critique": Critique(verdict="pass"), "rewrite_count": 0}, settings) == "end"
     assert critic_route_decision({}, settings) == "end"
     assert critic_route_decision({"critique": None}, settings) == "end"
 
 
 def test_critic_route_revise_continues_under_limit():
-    """revise ≤ max_revisions → 回 reasoning；超限 → END。"""
+    """revise < max_rewrites → 回 reasoning；用完 → finalize_audit（阶段 5/6）。
+
+    阶段 6 起 revise 的额度是 `settings.effective_max_rewrites`（默认 1），
+    research_more 的额度独立。
+    """
     settings = Settings()
     critique = {
         "verdict": "revise",
@@ -74,41 +78,124 @@ def test_critic_route_revise_continues_under_limit():
         "missing_points": [],
     }
 
-    assert critic_route_decision({"critique": critique, "revision_count": 0}, settings) == "reasoning"
-    assert critic_route_decision({"critique": critique, "revision_count": 1}, settings) == "reasoning"
-    assert critic_route_decision({"critique": critique, "revision_count": 2}, settings) == "end"
+    assert critic_route_decision({"critique": critique, "rewrite_count": 0}, settings) == "reasoning"
+    assert (
+        critic_route_decision({"critique": critique, "rewrite_count": 1}, settings) == "finalize_audit"
+    )
     assert (
         critic_route_decision(
-            {"critique": Critique(verdict="revise"), "revision_count": 0},
+            {"critique": Critique(verdict="revise"), "rewrite_count": 0},
             settings,
         )
         == "reasoning"
     )
 
 
+def test_critic_route_revise_counters_do_not_share_a_budget():
+    """阶段 6：改写用掉几轮，不影响 research_more 的额度（反之亦然）。"""
+    settings = Settings()
+    revise = {"verdict": "revise", "reason": "x"}
+    research = {"verdict": "research_more", "missing_points": ["m1"]}
+    report = {"what_happened": "x"}
+
+    # 已经用掉全部 research_more 额度 + 全部 rewrite 额度：两条路径都该落终态
+    assert (
+        critic_route_decision(
+            {
+                "critique": revise,
+                "rewrite_count": settings.effective_max_rewrites,
+                "research_round_count": settings.effective_max_research_rounds,
+            },
+            settings,
+        )
+        == "finalize_audit"
+    )
+    # 只用光了 research_more 额度：revise 仍应可用（旧实现会误判为耗尽）
+    assert (
+        critic_route_decision(
+            {"critique": revise, "rewrite_count": 0, "research_round_count": 99},
+            settings,
+        )
+        == "reasoning"
+    )
+    # 只用光了 rewrite 额度：research_more 仍应可用
+    assert (
+        critic_route_decision(
+            {"critique": research, "rewrite_count": 99, "research_round_count": 0, "report": report},
+            settings,
+        )
+        == "supervisor"
+    )
+
+
+def test_critic_route_research_more_reserves_minimum_remaining_budget():
+    """阶段 6②：剩余预算不够跑完半轮工具 + reasoning + critic → 不回 supervisor。"""
+    import time
+
+    settings = Settings()
+    critique = {"verdict": "research_more", "missing_points": ["m1"]}
+    base = {"critique": critique, "report": {"what_happened": "x"}}
+
+    # 剩余预算低于预留线（含负数/已超时）→ 直接落终态
+    assert (
+        critic_route_decision(
+            {**base, "budget_deadline": time.monotonic() + max(settings.research_round_min_remaining_seconds - 1, 0)},
+            settings,
+        )
+        == "finalize_audit"
+    )
+    assert (
+        critic_route_decision({**base, "budget_deadline": time.monotonic() - 1}, settings) == "finalize_audit"
+    )
+    # 剩余预算充足 → 正常回环
+    assert (
+        critic_route_decision(
+            {**base, "budget_deadline": time.monotonic() + settings.research_round_min_remaining_seconds + 60},
+            settings,
+        )
+        == "supervisor"
+    )
+    # 没有预算信息时不臆断（不因为"没数据"就阻断回环）
+    assert critic_route_decision({**base, "budget_deadline": None}, settings) == "supervisor"
+
+
 def test_critic_route_research_more_returns_to_supervisor():
-    """research_more ≤ max_revisions → 回 supervisor；超限 → END。"""
+    """research_more < max_research_rounds → 回 supervisor；用完 → finalize_audit。"""
     settings = Settings()
     critique = {"verdict": "research_more", "missing_points": ["m1"]}
     # 正常 research_more 场景：report 已存在但缺数据
-    state_with_report = {"critique": critique, "revision_count": 0, "report": {"what_happened": "existing"}}
+    state_with_report = {"critique": critique, "research_round_count": 0, "report": {"what_happened": "existing"}}
 
     assert critic_route_decision(state_with_report, settings) == "supervisor"
     assert (
         critic_route_decision(
-            {"critique": critique, "revision_count": 2, "report": {"what_happened": "x"}},
+            {
+                "critique": critique,
+                "research_round_count": settings.effective_max_research_rounds,
+                "report": {"what_happened": "x"},
+            },
             settings,
         )
-        == "end"
+        == "finalize_audit"
     )
 
 
-def test_critic_route_research_more_with_no_report_ends():
-    """report 为 None（reasoning 引擎失败）时 research_more 不应回 supervisor，直接终止防死循环。"""
+def test_critic_route_research_more_with_no_report_goes_to_finalize_audit():
+    """report 为 None（reasoning 引擎失败）时 research_more 不应回 supervisor，
+    直接落终态防死循环。"""
     settings = Settings()
     critique = {"verdict": "research_more", "missing_points": ["m1"]}
 
-    assert critic_route_decision({"critique": critique, "revision_count": 0}, settings) == "end"
+    assert critic_route_decision({"critique": critique, "research_round_count": 0}, settings) == "finalize_audit"
+
+
+def test_finalize_audit_node_is_registered(settings):
+    """阶段 5：图里必须有 finalize_audit 节点，且它的出边指向 END。"""
+    graph = build_graph(settings)
+    nodes = graph.get_graph().nodes
+    assert "finalize_audit" in nodes
+    edges = {(e.source, e.target) for e in graph.get_graph().edges}
+    assert ("finalize_audit", "__end__") in edges
 
 
 # ------------------------------------------------------------------ #
@@ -236,13 +323,17 @@ def _patch_tool_runtime(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
-    """supervisor plan 含 technical 工具 → 只有 technical analyst 执行。"""
+    """supervisor plan 含 technical 工具 → 只有 technical analyst 执行。
+
+    问题里带 6 位代码（个股问题）→ 阶段 3 的市场级最低证据集不注入，
+    LLM 计划原样执行，故这里恰好只有 1 条结果。
+    """
     from app.graph.builder import build_graph
     from app.graph.nodes.analysts.base import MarketAnalystNode
 
     plan_json = (
-        '{"intent":{"domain":"a_share","task":"market_summary",'
-        '"time_scope":"today","question":"测试"},'
+        '{"intent":{"domain":"a_share","task":"company_research",'
+        '"time_scope":"today","question":"600519 测试"},'
         '"steps":[{"tool_key":"sentiment","arguments":{},"purpose":"情绪"}]}'
     )
     _patch_supervisor_plan(monkeypatch, plan_json)
@@ -261,7 +352,7 @@ async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
     )  # T35-OK: 只包一层计数透传原 __call__，analyst 骨架仍真实运行
 
     graph = build_graph(Settings())
-    result_state = await graph.ainvoke({"question": "测试", "domain": "a_share"})
+    result_state = await graph.ainvoke({"question": "600519 测试", "domain": "a_share"})
 
     assert called_categories == ["technical"], f"route 非空时应只执行 technical，实际: {called_categories}"
     assert not result_state.get("errors")
@@ -270,12 +361,16 @@ async def test_fanout_routes_to_analyst_when_route_nonempty(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fanout_falls_back_to_all_analysts_when_route_empty(monkeypatch):
-    """supervisor plan steps 为空 → 三个默认 analyst 全上。"""
+    """supervisor plan steps 为空 → 三个默认 analyst 全上。
+
+    task 取 ``company_research``（非市场级）以免阶段 3 的最低证据集把 steps
+    填满 —— 本用例要的是真正"route 为空"的降级路径。
+    """
     from app.graph.builder import build_graph
     from app.graph.nodes.analysts.base import MarketAnalystNode
 
     plan_json = (
-        '{"intent":{"domain":"a_share","task":"market_summary","time_scope":"today","question":"测试"},"steps":[]}'
+        '{"intent":{"domain":"a_share","task":"company_research","time_scope":"today","question":"测试"},"steps":[]}'
     )
     _patch_supervisor_plan(monkeypatch, plan_json)
     _patch_reasoning_and_critic(monkeypatch)
@@ -417,9 +512,19 @@ def _fake_report():
     )
 
 
+def _critique_verdict(state_dict: dict) -> str:
+    """从 state 里取 Critic verdict（dict / 对象两种形式，与节点同口径）。"""
+    critique = state_dict.get("critique")
+    if critique is None:
+        return ""
+    if isinstance(critique, dict):
+        return str(critique.get("verdict") or "").strip().lower()
+    return str(getattr(critique, "verdict", "") or "").strip().lower()
+
+
 @pytest.mark.asyncio
 async def test_revise_loop_reinvokes_reasoning(monkeypatch):
-    """Critic 首次 revise → reasoning 节点被执行两次，revision_count 记 1。"""
+    """Critic 首次 revise → reasoning 节点被执行两次，rewrite_count 记 1。"""
 
     from app.graph.nodes import critic as crit_mod
     from app.graph.nodes import reasoning as rea_mod
@@ -435,10 +540,13 @@ async def test_revise_loop_reinvokes_reasoning(monkeypatch):
             sd = state.model_dump(exclude_none=False)
         else:
             sd = state
-        rc = sd.get("revision_count", 0) or 0
-        if sd.get("report") is not None:
-            rc += 1
-        return {"report": _fake_report(), "revision_count": rc}
+        wc = sd.get("rewrite_count", 0) or 0
+        # 与 ReasoningNode 同口径：只有 Critic 判 revise 的打回才算改写额度，
+        # research_more 回环带着报告回来是"补证据后重新成文"。
+        if sd.get("report") is not None and _critique_verdict(sd) == "revise":
+            wc += 1
+        research_rounds = sd.get("research_round_count", 0) or 0
+        return {"report": _fake_report(), "rewrite_count": wc, "revision_count": wc + research_rounds}
 
     monkeypatch.setattr(
         rea_mod.ReasoningNode, "__call__", fake_reasoning
@@ -460,12 +568,13 @@ async def test_revise_loop_reinvokes_reasoning(monkeypatch):
 
     assert critic_calls["n"] == 2
     assert result.get("report") is not None
+    assert result.get("rewrite_count") == 1
     assert result.get("revision_count") == 1
 
 
 @pytest.mark.asyncio
 async def test_research_more_loop_reinvokes_supervisor(monkeypatch):
-    """Critic 首次 research_more → supervisor 节点被执行两次。"""
+    """Critic 首次 research_more → supervisor 节点被执行两次，research_round_count 记 1。"""
     from app.graph.nodes import critic as crit_mod
     from app.graph.nodes import reasoning as rea_mod
     from app.graph.nodes import supervisor as sup_mod
@@ -481,10 +590,13 @@ async def test_research_more_loop_reinvokes_supervisor(monkeypatch):
             sd = state.model_dump(exclude_none=False)
         else:
             sd = state
-        rc = sd.get("revision_count", 0) or 0
-        if sd.get("report") is not None:
-            rc += 1
-        return {"report": _fake_report(), "revision_count": rc}
+        wc = sd.get("rewrite_count", 0) or 0
+        # 与 ReasoningNode 同口径：只有 Critic 判 revise 的打回才算改写额度，
+        # research_more 回环带着报告回来是"补证据后重新成文"。
+        if sd.get("report") is not None and _critique_verdict(sd) == "revise":
+            wc += 1
+        research_rounds = sd.get("research_round_count", 0) or 0
+        return {"report": _fake_report(), "rewrite_count": wc, "revision_count": wc + research_rounds}
 
     monkeypatch.setattr(
         rea_mod.ReasoningNode, "__call__", fake_reasoning
@@ -517,4 +629,5 @@ async def test_research_more_loop_reinvokes_supervisor(monkeypatch):
 
     assert supervisor_calls["n"] == 2
     assert result.get("report") is not None
+    assert result.get("research_round_count") == 1
     assert result.get("revision_count") == 1

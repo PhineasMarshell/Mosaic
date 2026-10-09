@@ -5,13 +5,21 @@
 """
 
 import logging
+import time
 
 from openai import AsyncOpenAI
 
 from app.agent.prompts_graph import PLANNER_PROMPT
 from app.config import Settings
 from app.gateway.tool_registry import registry_text
-from app.graph.gap_loop import append_gap_steps, drop_repeat_steps, gap_tool_keys, render_gap_context
+from app.graph.gap_loop import (
+    append_gap_steps,
+    coverage_requirements,
+    drop_repeat_steps,
+    gap_tool_keys,
+    render_gap_context,
+)
+from app.graph.market_plan import apply_market_summary_prefix
 from app.llm_json import parse_json_object
 from app.models.research import DEFAULT_DOMAINS, ResearchPlan
 
@@ -52,20 +60,45 @@ class SupervisorNode:
             base_url=settings.openai_base_url,
             timeout=settings.llm_timeout_seconds,
         )
+        #: 阶段 0：最近一次 _plan 代码级补齐的缺口 key（写进 run log 的 plan 事件）
+        self._last_forced_gap: list[str] = []
 
     async def __call__(self, state):
         """执行路由决策，返回要写入 state 的字段字典。"""
         try:
+            from app.graph import run_log
+
             # Normalize state to dict (handle both ResearchState and dict)
             if hasattr(state, "model_dump"):
                 s = state.model_dump(exclude_none=False)
             else:
                 s = state
-            plan, filtered_keys = await self._plan(s)
+            if not s.get("run_id"):
+                run_log.log_run_start(s)
+            plan, filtered_keys, plan_adjustments = await self._plan(s)
             result: dict = {
                 "intent": plan.intent,
                 "route": self._build_route(plan),
             }
+            # 阶段 6：本节点是 `research_more → supervisor` 回环的落点，只在这里增
+            # `research_round_count`（首次规划没有 critique，不算一轮研究）。
+            # 它与 `rewrite_count` 各自独立设限，互不挤占额度。
+            if s.get("critique"):
+                research_round_count = int(s.get("research_round_count", 0) or 0) + 1
+                result["research_round_count"] = research_round_count
+                result["revision_count"] = int(s.get("rewrite_count", 0) or 0) + research_round_count
+            # 阶段 0：把"计划了什么 / 哪些 key 被域守卫挡掉 / 代码级补了哪些缺口"
+            # 写进结构化运行日志——这是事后解释"为什么没补工具"的第一现场。
+            from app.graph import run_log
+
+            run_log.log_plan(
+                s,
+                plan,
+                filtered_keys=filtered_keys,
+                forced_gap=self._last_forced_gap,
+                prefix_keys=plan_adjustments[0],
+                unexecutable_keys=plan_adjustments[1],
+            )
             # B6 步 3：域守卫 —— 被过滤的 step 不执行，错误记账（不新增 LLM 调用）
             if filtered_keys:
                 result["errors"] = [
@@ -81,7 +114,7 @@ class SupervisorNode:
         """生成研究计划（包装 Planner.plan 逻辑）。
 
         Returns:
-            (plan, 被域守卫过滤掉的 step key 列表)
+            (plan, 被域守卫过滤掉的 step key 列表, (市场级前缀 key 列表, 必然跳过的 step key 列表))
         """
         conv_history = ""
         conv_id = state.get("conversation_id") if isinstance(state, dict) else getattr(state, "conversation_id", None)
@@ -117,6 +150,7 @@ class SupervisorNode:
             revision_context=revision_context,
         )
 
+        _llm_started = time.perf_counter()
         response = await self.client.chat.completions.create(
             model=self.settings.openai_model,
             messages=[
@@ -132,6 +166,17 @@ class SupervisorNode:
             ],
             response_format={"type": "json_object"},
             temperature=0,
+        )
+        # 阶段 6：规划这次 LLM 调用的用量/耗时（指标数据源；回环轮记 phase=replan）。
+        from app.graph import run_log
+
+        run_log.log_llm_call(
+            state,
+            node="supervisor",
+            phase="replan" if state.get("critique") else "initial",
+            model=self.settings.openai_model,
+            usage=getattr(response, "usage", None),
+            duration_ms=(time.perf_counter() - _llm_started) * 1000,
         )
 
         content = response.choices[0].message.content or "{}"
@@ -154,6 +199,17 @@ class SupervisorNode:
         if filtered_keys:
             plan.steps = [s for s in plan.steps if f"- {s.tool_key}:" in registry]
 
+        # 阶段 3 ②③：A 股市场综述的**确定性最低计划前缀**。LLM 只负责补充额外
+        # 工具；市场级最小证据集由代码注入并置于计划最前面，同时剔除"需要 symbol
+        # 却拿不到 symbol"的步骤（旧行为是计划 overview → 执行层静默跳过 →
+        # 零市场级数据下撰写报告，即"假覆盖"）。个股/指数问题不受影响。
+        prefix_keys, unexecutable_keys = apply_market_summary_prefix(
+            plan,
+            question=question,
+            registry=registry,
+            max_steps=self.settings.max_research_steps,
+        )
+
         # 回环轮（research_more）的代码级闭环：先丢掉已拿到数据的重复步骤，
         # 再把 Critic 点名、LLM 没覆盖、且在本次注册表文本里的缺口工具补到最前面
         # （预算耗尽前优先执行）。快乐路径不写 errors，保住 errors == [] 断言。
@@ -172,10 +228,15 @@ class SupervisorNode:
             max_steps=self.settings.max_research_steps,
             max_gap_steps=getattr(self.settings, "gap_max_steps", 3),
             question=question,
+            # 逐条 issue 的覆盖要求（含互相冲突的 arguments 变体）：每个尚未被满足的
+            # 变体各补一条独立步骤，让"同一工具、不同参数"的多次调用真实进入计划。
+            requirements=coverage_requirements(critique),
+            results=results,
         )
         if forced_gap:
             logger.info("Supervisor: 代码级补齐 Critic 缺口工具: %s", forced_gap)
-        return plan, filtered_keys
+        self._last_forced_gap = list(forced_gap)
+        return plan, filtered_keys, (prefix_keys, unexecutable_keys)
 
     def _build_route(self, plan: ResearchPlan) -> list:
         """将 ResearchPlan.steps 按工具 category 分组为 AnalystAssignment 列表。"""

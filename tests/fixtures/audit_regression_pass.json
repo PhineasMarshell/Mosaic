@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "脱敏成功回归样本（方案 §4 阶段 0 第 1 条）：Critic=pass 的快乐路径。",
+    "用途是锁住'阶段 5 的门控不许误伤已验证结果'—— verified 必须照常返回正文、",
+    "照常发 done、照常持久化。所有内容为编造。"
+  ],
+  "case_id": "ashare_market_summary_pass",
+  "question": "今天 A 股发生了什么？",
+  "run_id": "fixture0002",
+  "domain": "a_share",
+  "results": [
+    {
+      "tool_key": "sentiment",
+      "tool": "get_ashare_sentiment",
+      "arguments": {},
+      "status": "success",
+      "partial": false,
+      "datum_count": 2
+    },
+    {
+      "tool_key": "limit_up_count",
+      "tool": "get_limit_up_count",
+      "arguments": {},
+      "status": "success",
+      "partial": false,
+      "datum_count": 1
+    }
+  ],
+  "critic_sequence": [
+    {
+      "round": 1,
+      "response": {
+        "issues": [],
+        "reason": "关键论断均有对应证据"
+      },
+      "expected_verdict": "pass",
+      "expected_route": "end"
+    }
+  ],
+  "expected_outcome": {
+    "final_audit_status": "pass",
+    "delivery_status": "verified",
+    "report_returned": true,
+    "persisted": true,
+    "sse_done_event": true
+  }
+}

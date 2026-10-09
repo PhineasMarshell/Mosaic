@@ -55,4 +55,31 @@ async def test_orchestrator_includes_critique_and_errors(caplog):
     assert result.errors == ["Critic audit failed: boom"]
     assert result.tool_results == [tool_result.model_dump()]
     assert all(isinstance(item, dict) for item in result.tool_results)
-    assert any("audit verdict=research_more" in record.message for record in caplog.records)
+    # 阶段 5：非 pass 的审计终态是 blocked，且不返回正文报告；
+    # 日志按 delivery_status 判断可信与否（不再按 errors / verdict 文案）。
+    assert result.delivery_status == "blocked"
+    assert result.final_audit_status == "research_exhausted"
+    assert result.report is None
+    assert any("delivery_status=blocked" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_marks_pass_run_as_verified(caplog):
+    """快乐路径保持兼容：verdict=pass → verified + 正文报告正常返回。"""
+    final_state = {
+        "report": _report(),
+        "results": [],
+        "cache_stats": {},
+        "critique": {"verdict": "pass", "reason": "ok"},
+        "errors": [],
+    }
+    orchestrator = Orchestrator(Settings())
+    orchestrator._graph = FakeGraph(final_state)
+
+    caplog.set_level(logging.WARNING, logger="app.agent.orchestrator")
+    result = await orchestrator.run("q")
+
+    assert result.delivery_status == "verified"
+    assert result.final_audit_status == "pass"
+    assert result.report is not None
+    assert not [r for r in caplog.records if "delivery_status" in r.message]

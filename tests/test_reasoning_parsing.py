@@ -596,7 +596,14 @@ async def test_build_response_fills_anomalies_from_code(monkeypatch):
         what_happened="w",
         anomalies=[{"id": "model-made", "severity": 1}],
     )
-    state = {"report": report, "results": [prev, curr], "domain": "crypto"}
+    # 阶段 5：真实图终态一定带 critique；没有审计结论时正文不会被当作可信结论返回，
+    # 所以这里显式给出 pass 才能测到 anomalies 的代码填充。
+    state = {
+        "report": report,
+        "results": [prev, curr],
+        "domain": "crypto",
+        "critique": {"verdict": "pass", "reason": "ok"},
+    }
 
     response = build_response_from_state(state, question="q")
 

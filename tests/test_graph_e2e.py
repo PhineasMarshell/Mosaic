@@ -87,11 +87,17 @@ def mock_openai(monkeypatch):
             what_happened="测试：mock 报告",
             confidence="medium",
         )
-        is_revision = state.get("report") is not None
-        revision_count = state.get("revision_count") or 0
+        critique = state.get("critique")
+        verdict = ""
+        if isinstance(critique, dict):
+            verdict = str(critique.get("verdict") or "")
+        is_rewrite = (state.get("report") is not None) and verdict.strip().lower() == "revise"
+        rewrite_count = (state.get("rewrite_count") or 0) + (1 if is_rewrite else 0)
+        research_rounds = state.get("research_round_count") or 0
         return {
             "report": report,
-            "revision_count": revision_count + (1 if is_revision else 0),
+            "rewrite_count": rewrite_count,
+            "revision_count": rewrite_count + research_rounds,
         }
 
     monkeypatch.setattr(
@@ -140,10 +146,15 @@ async def test_full_flow_produces_report(graph):
 
     T31：旧的 skip 理由（"P3 特性 — 三 analyst Send 并行，P0 图为 supervisor→kernel"）
     已过期——app/graph/builder.py 早已注册三个 analyst，这是全文件唯一一条
-    真全链路用例，不该躺在 skip 里。"""
+    真全链路用例，不该躺在 skip 里。
+
+    阶段 3：问题带 6 位代码（个股口径）时才不会被注入市场级最低证据集，
+    route 才会为空并触发"三个 analyst 全上"的降级路径 —— 本用例要验的正是
+    后者（市场级问题走 tests/test_market_level_plan.py）。
+    """
     result = await graph.ainvoke(
         {
-            "question": "今天A股行情如何？",
+            "question": "600519 今天怎么样？",
             "domain": "a_share",
             "conversation_id": None,
         }
@@ -161,6 +172,36 @@ async def test_full_flow_produces_report(graph):
     assert _fallback_leaks(result.get("errors")) == [], (
         f"有节点滑进兜底降级分支: {_fallback_leaks(result.get('errors'))}"
     )
+
+
+@pytest.mark.asyncio
+async def test_market_level_question_plans_and_executes_market_tools(graph):
+    """阶段 3 验收：无 6 位代码的 A 股市场级问题，计划与实际执行都必须含市场级数据。
+
+    旧行为：planner 计划 ``overview``（必须有 symbol）→ 执行层静默跳过 →
+    报告在零市场级数据下撰写（"假覆盖"）。现在最低证据集由代码注入，
+    且必然跳过的 step 会被剔除并记账。
+    """
+    from app.gateway.tool_registry import resolve_tool
+    from app.graph.market_plan import MARKET_SUMMARY_MINIMUM
+
+    result = await graph.ainvoke(
+        {
+            "question": "今天A股发生了什么？",
+            "domain": "a_share",
+            "conversation_id": None,
+        }
+    )
+
+    minimum_keys = [key for key, _arguments, _purpose in MARKET_SUMMARY_MINIMUM]
+    planned = [call["tool_key"] for assignment in result.get("route", []) for call in assignment["tool_calls"]]
+
+    assert planned[: len(minimum_keys)] == minimum_keys, f"市场级最低证据集必须在计划最前: {planned}"
+    assert "overview" not in planned, f"大盘问题里必然被跳过的 step 不该留在计划里: {planned}"
+
+    executed = {tool for finding in result.get("findings", []) for tool in finding.get("tools_used", [])}
+    expected_operation_ids = {resolve_tool(key).tool_name for key in minimum_keys}
+    assert expected_operation_ids <= executed, f"计划了却没执行（假覆盖）: 期望 {expected_operation_ids} ⊄ {executed}"
 
 
 @pytest.mark.asyncio

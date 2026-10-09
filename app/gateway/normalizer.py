@@ -146,6 +146,15 @@ _METADATA_KEYS = {"partial", "status", "note", "source", "source_used"}
 #: 现在会置 partial=True 并写 note（见 _find_truncations）。
 _LIST_CAP = 50
 
+#: 阶段 3 ⑤：空返回必须给出**可引用的原因**，不能只是"没有数据"。
+_EMPTY_PAYLOAD_NOTE = "上游返回空载荷（200 + 空 body / 空容器）：本次调用没有拿到任何数据"
+
+#: 阶段 3 ⑤：市场级聚合工具（情绪 / 涨停家数 / 涨停题材 / 全市场快讯）的
+#: 数据点代表"整个市场在某一天的横截面"。上游没给时间戳时，数据点就失去了
+#: 日期锚点——报告于是可能拿一段旧数据声称"今日大盘上涨"（验收要求禁止）。
+#: 因此这里显式标注，让 Reasoning / Critic 都不能无视它。
+_MARKET_LEVEL_NO_TIMESTAMP_NOTE = "上游未提供时间戳：无法确认该数据是否为当日（不得据此断言「今日」）"
+
 #: 升序时间序列：截断时必须保留**末尾**（最新），否则会把几周前的数据
 #: 当成当前值。实测 90 天日线只保留前 50 根时，"最新收盘"比真实值低 21%。
 _SERIES_KEYS = {"candles", "candle", "hqdata", "klines", "kline", "series"}
@@ -738,6 +747,17 @@ def _extract_metrics(
     return result
 
 
+def _market_level_datum_note(tool: str, timestamp: str | None) -> str | None:
+    """市场级工具缺时间戳时要追加到每条 datum 的 note（阶段 3 ⑤）。"""
+    if timestamp:
+        return None
+    try:
+        meta = resolve_tool_by_name(tool)
+    except KeyError:
+        return None
+    return _MARKET_LEVEL_NO_TIMESTAMP_NOTE if getattr(meta, "market_level", False) else None
+
+
 # ------------------------------------------------------------------ #
 # 主入口                                                                #
 # ------------------------------------------------------------------ #
@@ -783,6 +803,7 @@ def normalize_tool_result(
             status="error",
             partial=False,
             normalized=[],
+            note=_EMPTY_PAYLOAD_NOTE,
             error="Gateway returned no data (empty response)",
         )
 
@@ -844,6 +865,13 @@ def normalize_tool_result(
         ]
     )
 
+    # 阶段 3 ⑤：市场级工具的数据点必须能说清"这是哪一天的市场"。
+    # 上游没给时间戳时逐条标注，避免报告拿无日期的旧数据声称"今日"。
+    market_note = _market_level_datum_note(tool, timestamp)
+    if market_note:
+        for datum in normalized:
+            datum.note = "; ".join(part for part in (datum.note, market_note) if part)
+
     # T1 兜底不变式：任何分支只要产出 0 条 datum，就绝不能报 success/partial，
     # 防止以后新增的分支再把"无数据"当成证据（例如整块 dict 只含元数据键）。
     if not normalized:
@@ -853,7 +881,7 @@ def normalize_tool_result(
             raw=raw,
             status="error",
             partial=False,
-            note=note,
+            note=note or _EMPTY_PAYLOAD_NOTE,
             normalized=[],
             error="Gateway returned no extractable data (normalization produced zero items)",
         )

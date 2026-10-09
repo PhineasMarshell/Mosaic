@@ -1,0 +1,198 @@
+{
+  "_comment": [
+    "脱敏失败回归样本（方案 §4 阶段 0 第 1 条）。",
+    "对应线上事故：'今天 A 股发生了什么？' 在两次修订耗尽后仍返回 verdict=revise，",
+    "且因为 errors=[] 被当成正常完成结果返回并写入了每日状态。",
+    "所有股票名 / 代码 / 数值均为编造，不含任何真实持仓或私有会话内容。"
+  ],
+  "case_id": "ashare_market_summary_revise_exhausted",
+  "question": "今天 A 股发生了什么？",
+  "run_id": "fixture0001",
+  "domain": "a_share",
+  "intent": {
+    "domain": "a_share",
+    "task": "market_summary",
+    "time_scope": "today",
+    "question": "今天 A 股发生了什么？"
+  },
+  "plan": [
+    {
+      "tool_key": "sentiment",
+      "operation_id": "get_ashare_sentiment",
+      "arguments": {},
+      "priority": "high"
+    },
+    {
+      "tool_key": "limit_up_count",
+      "operation_id": "get_limit_up_count",
+      "arguments": {},
+      "priority": "high"
+    },
+    {
+      "tool_key": "limit_up_sectors",
+      "operation_id": "list_limit_up_sectors",
+      "arguments": {},
+      "priority": "high"
+    },
+    {
+      "tool_key": "telegraph",
+      "operation_id": "internal_market_telegraph",
+      "arguments": {},
+      "priority": "high"
+    },
+    {
+      "tool_key": "limit_up_pool",
+      "operation_id": "list_limit_up_stocks",
+      "arguments": {},
+      "priority": "medium"
+    },
+    {
+      "tool_key": "overview",
+      "operation_id": "get_company_overview",
+      "arguments": {},
+      "priority": "high"
+    }
+  ],
+  "results": [
+    {
+      "tool_key": "sentiment",
+      "tool": "get_ashare_sentiment",
+      "arguments": {},
+      "status": "success",
+      "partial": false,
+      "datum_count": 2,
+      "metrics": ["sentiment.risk_appetite", "sentiment.up_down_ratio"]
+    },
+    {
+      "tool_key": "limit_up_count",
+      "tool": "get_limit_up_count",
+      "arguments": {},
+      "status": "success",
+      "partial": false,
+      "datum_count": 1,
+      "metrics": ["limit_up.count"]
+    },
+    {
+      "tool_key": "limit_up_sectors",
+      "tool": "list_limit_up_sectors",
+      "arguments": {},
+      "status": "success",
+      "partial": false,
+      "datum_count": 5,
+      "metrics": ["limit_up.sector[0]", "limit_up.sector[1]", "limit_up.sector[2]"]
+    },
+    {
+      "tool_key": "telegraph",
+      "tool": "internal_market_telegraph",
+      "arguments": {},
+      "status": "success",
+      "partial": false,
+      "datum_count": 4,
+      "metrics": ["telegraph.item[0]", "telegraph.item[1]"]
+    },
+    {
+      "_comment": "关键样本：limit_up_pool 跑了，但只回了一半 —— partial + 空 normalized。",
+      "tool_key": "limit_up_pool",
+      "tool": "list_limit_up_stocks",
+      "arguments": {},
+      "status": "partial",
+      "partial": true,
+      "note": "上游只返回前 20 条（应为 74 条）",
+      "datum_count": 0
+    },
+    {
+      "_comment": "关键样本：overview 被计划了，但执行层因 symbol 守卫静默跳过 —— 没有结果。",
+      "tool_key": null,
+      "tool": null,
+      "skipped": true,
+      "reason": "缺少 symbol 且问题中无 6 位代码"
+    }
+  ],
+  "first_report": {
+    "state_label": "RISK_ON",
+    "market_state": "市场整体走强",
+    "confidence": "high",
+    "what_happened": "今日 A 股普涨，商业航天题材全面走强，星测智测领涨。",
+    "unsupported_claims": [
+      "市场整体走强（缺指数 / 全市场涨跌家数证据）",
+      "商业航天全面走强（缺涨停个股明细与板块量化比较）",
+      "星测智测领涨（该标的无任何 evidence 支撑）",
+      "政策驱动导致涨停（仅一条单源电报，不能推出因果）"
+    ]
+  },
+  "critic_sequence": [
+    {
+      "round": 1,
+      "response": {
+        "issues": [
+          {
+            "kind": "unsupported_claim",
+            "claim": "市场整体走强",
+            "severity": "high",
+            "action": "research_more",
+            "rationale": "没有任何指数或全市场涨跌家数证据",
+            "required_tool_keys": ["overview"],
+            "required_coverage": {}
+          }
+        ],
+        "reason": "缺大盘证据"
+      },
+      "expected_verdict": "research_more",
+      "expected_route": "supervisor"
+    },
+    {
+      "round": 2,
+      "response": {
+        "issues": [
+          {
+            "kind": "missing_evidence",
+            "claim": "商业航天为当日涨停较集中的题材之一",
+            "severity": "high",
+            "action": "research_more",
+            "rationale": "limit_up_pool 只回了 partial 名单，无法比较题材密度",
+            "required_tool_keys": ["limit_up_pool"],
+            "required_coverage": {"min_datum_count": 20, "allow_partial": false}
+          },
+          {
+            "kind": "unsupported_claim",
+            "claim": "星测智测领涨",
+            "severity": "medium",
+            "action": "remove_or_qualify",
+            "rationale": "该标的无证据"
+          }
+        ],
+        "reason": "既缺个股明细又有个股无证据"
+      },
+      "expected_verdict": "research_more",
+      "expected_route": "supervisor",
+      "_comment": "两类 issue 并存时必须先补研究，不能因为有可删改项就判 revise。"
+    },
+    {
+      "round": 3,
+      "response": {
+        "issues": [
+          {
+            "kind": "missing_evidence",
+            "claim": "商业航天为当日涨停较集中的题材之一",
+            "severity": "high",
+            "action": "research_more",
+            "rationale": "补拉后仍是 partial，覆盖度不足",
+            "required_tool_keys": ["limit_up_pool"],
+            "required_coverage": {"min_datum_count": 20}
+          }
+        ],
+        "reason": "预算耗尽，缺口仍未满足"
+      },
+      "expected_verdict": "research_more",
+      "expected_route": "finalize_audit"
+    }
+  ],
+  "expected_outcome": {
+    "final_audit_status": "research_exhausted",
+    "delivery_status": "blocked",
+    "report_returned": false,
+    "persisted": false,
+    "sse_done_event": false,
+    "_comment": "errors 全程为空也不代表可信：这是本方案要修的核心混淆。"
+  }
+}

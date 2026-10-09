@@ -70,3 +70,28 @@ def test_anomaly_render_degrades_per_item():
     anomalies_block = anomalies_block[: anomalies_block.index(").join('')")]
     assert "try {" in anomalies_block
     assert "} catch (e) {" in anomalies_block
+
+
+def test_render_result_gates_on_delivery_status():
+    """阶段 5：未经审计的结果不得被渲染成正常报告。
+
+    锁住"调用方只能基于 delivery_status 判断可信"这条契约——旧实现直接
+    ``addAIResponse(report)``，blocked 的结果会被当成一次正常完成的研究。
+    """
+    src = _src()
+    assert "const delivery = data.delivery_status;" in src
+    assert "delivery !== 'verified' && delivery !== 'degraded'" in src
+    # 拦截分支必须在取 report / 渲染之前 return
+    blocked_branch = src[
+        src.index("const delivery = data.delivery_status;") : src.index("const report = data.report || data;")
+    ]
+    assert "return;" in blocked_branch
+    assert "addAIResponse(" not in blocked_branch
+    assert "delivery === 'degraded'" in src
+
+
+def test_frontend_never_infers_trust_from_empty_errors():
+    """前端不得把 errors 为空当作可信信号（它只是"没报错"）。"""
+    src = _src()
+    assert "if (data.errors" not in src
+    assert "errors.length === 0" not in src

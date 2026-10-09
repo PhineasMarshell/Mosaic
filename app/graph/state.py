@@ -108,6 +108,9 @@ class ResearchState(BaseModel):
     question: str
     conversation_id: str | None = None
     domain: str | None = None
+    #: 阶段 0：一次调查的短 id，跨节点传递并落到每条结构化运行摘要日志上。
+    #: 由 Orchestrator.run / SSE 路径生成；缺失时日志里 run_id=None（不猜、不补造）。
+    run_id: str | None = None
     #: T23b：整次调查的预算截止时刻（time.monotonic() 秒）。图启动前由 orchestrator /
     #: SSE 路径写入；research_more 回环时**覆盖**（标量字段无 reducer，正是想要的语义——
     #: 第二轮 analyst 不能重新获得一整份预算）。
@@ -131,7 +134,24 @@ class ResearchState(BaseModel):
 
     # ── Critic ──
     critique: object | None = None  # Critique from critic.py
-    revision_count: int = 0  # 修订轮次计数器
+    #: 阶段 6：两条回环路径**独立计数**，各自有独立上限（Settings.max_rewrites /
+    #: max_research_rounds）。旧实现共用一个 revision_count，"改写一轮"与
+    #: "补一轮证据"花掉的是同一份额度 —— 便宜的重写挤掉了必须重跑工具的研究轮。
+    #: `rewrite_count` 只在 `revise → reasoning` 递增（ReasoningNode 写入）；
+    #: `research_round_count` 只在 `research_more → supervisor` 递增（SupervisorNode 写入）。
+    rewrite_count: int = 0
+    research_round_count: int = 0
+    #: 兼容字段 = rewrite_count + research_round_count（总回环轮次，只用于日志/展示）。
+    #: 路由决策**不得**读它，否则计数拆分失去意义。
+    revision_count: int = 0
+
+    # ── 终态（阶段 5 保守版）──
+    #: 最终审计状态（由 finalize_audit 节点写入；pass 路径不经过该节点，
+    #: 由 build_response_from_state 从 critique.verdict 兜底派生）。
+    final_audit_status: object | None = None
+    #: 交付状态 verified / degraded / blocked / failed —— 调用方判断"能否当作
+    #: 可信结论展示"的**唯一**依据（errors == [] 不再代表可信）。
+    delivery_status: object | None = None
 
     # ── 并行写入字段（必须 reducer）──
     #: T16：evidence 按 id、findings 按 analyst 去重（回环覆盖，保留最新）
