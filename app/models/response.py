@@ -93,6 +93,8 @@ class ResearchResponse(BaseModel):
     cache_stats: dict[str, int] = Field(default_factory=dict)
     conversation_id: str | None = None
     critique: dict[str, Any] | None = None
+    #: report 被清空后仍保留的确定性 issue 摘要，供前端和诊断使用。
+    unresolved_issues: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     #: 阶段 5：最终审计状态与交付状态。缺省 None = "本次运行没有经过审计判定"，
     #: 调用方必须显式处理（不得推断 ``errors == []`` 即可信）。
@@ -117,11 +119,36 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
     critique = state.get("critique")
     delivery_status = state.get("delivery_status")
 
-    if delivery_status in ("verified", "degraded", "blocked", "failed"):
+    if (
+        delivery_status in ("verified", "degraded", "blocked", "failed")
+        and state.get("final_audit_status") in ("pass", "revise_exhausted", "research_exhausted", "error")
+    ):
         audit_status = state.get("final_audit_status")
-        reason = str(_critique_reason(critique) or "")
+        if state.get("delivery_reason"):
+            reason = str(state["delivery_reason"])
+        else:
+            _, _, reason = resolve_delivery(
+                critique,
+                errors,
+                blocked_reason=state.get("blocked_reason"),
+                gap_key_decisions=state.get("gap_key_decisions"),
+            )
+        if delivery_status == "verified":
+            verdict = critique.get("verdict") if isinstance(critique, dict) else getattr(critique, "verdict", None)
+            if verdict != "pass":
+                audit_status, delivery_status, reason = resolve_delivery(
+                    critique,
+                    errors,
+                    blocked_reason=state.get("blocked_reason"),
+                    gap_key_decisions=state.get("gap_key_decisions"),
+                )
     else:
-        audit_status, derived_delivery, reason = resolve_delivery(critique, errors)
+        audit_status, derived_delivery, reason = resolve_delivery(
+            critique,
+            errors,
+            blocked_reason=state.get("blocked_reason"),
+            gap_key_decisions=state.get("gap_key_decisions"),
+        )
         delivery_status = derived_delivery
 
     report_out = report
@@ -194,9 +221,16 @@ def build_response_from_state(
         cache_stats=dict(state.get("cache_stats") or {}),
         conversation_id=conversation_id,
         critique=critique,
+        unresolved_issues=list(state.get("unresolved_issues") or _unresolved_issues(critique)),
         errors=errors,
         final_audit_status=final_audit_status,
         delivery_status=delivery_status,
         delivery_reason=delivery_reason,
         run_id=state.get("run_id"),
     )
+
+
+def _unresolved_issues(critique: Any) -> list[str]:
+    from app.graph.nodes.finalize import unresolved_issue_summary
+
+    return unresolved_issue_summary(critique)

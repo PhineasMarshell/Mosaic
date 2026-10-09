@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Literal
 
 from app.graph import run_log
@@ -54,6 +55,9 @@ def _field(obj: Any, key: str, default: Any = None) -> Any:
 def resolve_delivery(
     critique: Any,
     errors: list[str] | None = None,
+    *,
+    blocked_reason: str | None = None,
+    gap_key_decisions: list | None = None,
 ) -> tuple[FinalAuditStatus, DeliveryStatus, str]:
     """（纯函数）由 Critique + errors 推导终态。
 
@@ -64,19 +68,35 @@ def resolve_delivery(
     errors = list(errors or [])
     reason = str(_field(critique, "reason", "") or "")
 
+    def explain(base: str) -> str:
+        details: list[str] = []
+        if blocked_reason:
+            details.append(f"阻断原因={blocked_reason}")
+        issues = unresolved_issue_summary(critique)
+        if issues:
+            details.append("未解决issue=" + "; ".join(issues[:5]))
+        decisions = gap_key_decisions or _field(critique, "gap_key_decisions", []) or []
+        if decisions:
+            rendered = ", ".join(
+                f"{_field(d, 'key', '?')}:{_field(d, 'reason', _field(d, 'decision', '?'))}"
+                for d in decisions[:10]
+            )
+            details.append("gap=" + rendered)
+        return base + ("；" + "；".join(details) if details else "")
+
     if verdict == "error":
-        return "error", "failed", reason or "Critic 审计失败，未产生可信结论"
+        return "error", "failed", explain(reason or "Critic 审计失败，未产生可信结论")
 
     if not verdict:
         # 没有 critique（理论上 critic 节点总会写）——不猜、不当 pass。
-        return "error", "failed", reason or "本次运行没有产生审计结论"
+        return "error", "failed", explain(reason or "本次运行没有产生审计结论")
 
     if verdict == "pass":
-        return "pass", "verified", reason or "审计通过"
+        return "pass", "verified", explain(reason or "审计通过")
 
     # 非 pass：保守阻断。方案 §4 阶段 5 第 3 条 —— 本版不自动生成降级报告。
     audit_status = _VERDICT_TO_AUDIT_STATUS.get(verdict, "error")
-    return audit_status, "blocked", reason or f"审计未通过（verdict={verdict}），不作为可信结论交付"
+    return audit_status, "blocked", explain(reason or f"审计未通过（verdict={verdict}），不作为可信结论交付")
 
 
 def unresolved_issue_summary(critique: Any) -> list[str]:
@@ -108,15 +128,33 @@ class FinalizeAuditNode:
 
             critique = s.get("critique")
             errors = list(s.get("errors") or [])
-            audit_status, delivery_status, reason = resolve_delivery(critique, errors)
+            remaining_budget = None
+            if s.get("budget_deadline") is not None:
+                try:
+                    remaining_budget = float(s["budget_deadline"]) - time.monotonic()
+                except (TypeError, ValueError):
+                    remaining_budget = None
+            audit_status, delivery_status, reason = resolve_delivery(
+                critique,
+                errors,
+                blocked_reason=s.get("blocked_reason"),
+                gap_key_decisions=s.get("gap_key_decisions"),
+            )
 
             unresolved = unresolved_issue_summary(critique)
+            gap_decisions = s.get("gap_key_decisions") or _field(critique, "gap_key_decisions", []) or []
             run_log.log_finalize(
                 s,
                 final_audit_status=audit_status,
                 delivery_status=delivery_status,
                 reason=reason,
                 unresolved_issues=unresolved,
+                blocked_reason=s.get("blocked_reason"),
+                research_round_count=int(s.get("research_round_count", 0) or 0),
+                rewrite_count=int(s.get("rewrite_count", 0) or 0),
+                remaining_budget=remaining_budget,
+                gap_key_decisions=gap_decisions,
+                executable_gap_steps=s.get("executable_gap_steps"),
             )
             if delivery_status != "verified":
                 logger.warning(
@@ -129,6 +167,10 @@ class FinalizeAuditNode:
             out: dict[str, Any] = {
                 "final_audit_status": audit_status,
                 "delivery_status": delivery_status,
+                "delivery_reason": reason,
+                "blocked_reason": s.get("blocked_reason"),
+                "remaining_budget": remaining_budget,
+                "unresolved_issues": unresolved,
             }
             # blocked / failed 时**清空正文报告**：未经审计的报告不允许作为结论返回。
             # 失败原因留在 critique（reviewer 可读）与 final_audit_status 里。
@@ -140,6 +182,7 @@ class FinalizeAuditNode:
             return {
                 "final_audit_status": "error",
                 "delivery_status": "failed",
+                "delivery_reason": f"finalize audit failed: {exc}",
                 "report": None,
                 "errors": [f"finalize audit failed: {exc}"],
             }

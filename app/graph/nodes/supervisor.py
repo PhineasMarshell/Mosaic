@@ -16,7 +16,7 @@ from app.graph.gap_loop import (
     append_gap_steps,
     coverage_requirements,
     drop_repeat_steps,
-    gap_tool_keys,
+    gap_key_decision,
     render_gap_context,
 )
 from app.graph.market_plan import apply_market_summary_prefix
@@ -62,6 +62,7 @@ class SupervisorNode:
         )
         #: 阶段 0：最近一次 _plan 代码级补齐的缺口 key（写进 run log 的 plan 事件）
         self._last_forced_gap: list[str] = []
+        self._gap_state: dict = {}
 
     async def __call__(self, state):
         """执行路由决策，返回要写入 state 的字段字典。"""
@@ -80,6 +81,7 @@ class SupervisorNode:
                 "intent": plan.intent,
                 "route": self._build_route(plan),
             }
+            result.update(getattr(self, "_gap_state", {}))
             # 阶段 6：本节点是 `research_more → supervisor` 回环的落点，只在这里增
             # `research_round_count`（首次规划没有 critique，不算一轮研究）。
             # 它与 `rewrite_count` 各自独立设限，互不挤占额度。
@@ -135,10 +137,37 @@ class SupervisorNode:
             registry = registry_text()
         question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
 
-        # research_more 回环：Critic 的缺口与上一轮已执行的工具都不在回环边上，
-        # 必须由本节点从 state 读出后渲染进 planner prompt（信息闭环）。
+        # 回环预检：Critic 的所有缺口都不可见/已满足/被截断时，不再调用 Planner。
+        # 这条路径没有任何可执行补查，直接把空计划交给 finalize，避免烧掉一轮
+        # 无法执行的 LLM 规划。
         critique = state.get("critique") if isinstance(state, dict) else getattr(state, "critique", None)
         results = state.get("results", []) if isinstance(state, dict) else getattr(state, "results", [])
+        preflight = gap_key_decision(
+            critique,
+            registry,
+            results,
+            max_keys=getattr(self.settings, "gap_max_steps", 3),
+        ) if critique else None
+        verdict = str(critique.get("verdict", "") if isinstance(critique, dict) else getattr(critique, "verdict", "")).lower()
+        if preflight and verdict == "research_more" and preflight.raw and not preflight.kept:
+            from app.models.research import ResearchIntent
+
+            intent = state.get("intent") if isinstance(state, dict) else getattr(state, "intent", None)
+            if isinstance(intent, dict):
+                intent = ResearchIntent.model_validate(intent)
+            if intent is None:
+                intent = ResearchIntent(domain=explicit_domain or "a_share", question=question)
+            self._last_forced_gap = []
+            self._gap_state = {
+                "gap_key_decisions": preflight.as_state(),
+                "executable_gap_steps": [],
+                "finalize_after_gap": True,
+                "blocked_reason": "no_executable_gap_steps",
+            }
+            return ResearchPlan(intent=intent, steps=[]), [], ([], [])
+
+        # research_more 回环：Critic 的缺口与上一轮已执行的工具都不在回环边上，
+        # 必须由本节点从 state 读出后渲染进 planner prompt（信息闭环）。
         revision_context = render_gap_context(critique, results, self.settings.max_research_steps)
 
         prompt = PLANNER_PROMPT.format(
@@ -213,9 +242,21 @@ class SupervisorNode:
         # 回环轮（research_more）的代码级闭环：先丢掉已拿到数据的重复步骤，
         # 再把 Critic 点名、LLM 没覆盖、且在本次注册表文本里的缺口工具补到最前面
         # （预算耗尽前优先执行）。快乐路径不写 errors，保住 errors == [] 断言。
-        gap_keys, invalid_gap_keys = gap_tool_keys(critique, registry, results)
-        if invalid_gap_keys:
-            logger.warning("Supervisor: Critic 缺口 key 被丢弃（不可见或已拿到数据）: %s", invalid_gap_keys)
+        decision = gap_key_decision(
+            critique,
+            registry,
+            results,
+            max_keys=getattr(self.settings, "gap_max_steps", 3),
+        )
+        gap_keys = decision.kept
+        if decision.dropped:
+            logger.warning(
+                "Supervisor: Critic 缺口 key 分类 raw=%s kept=%s dropped=%s reasons=%s",
+                decision.raw,
+                decision.kept,
+                decision.dropped,
+                decision.reason_counts(),
+            )
 
         plan.steps, dropped_repeat = drop_repeat_steps(plan.steps, results)
         if dropped_repeat:
@@ -236,6 +277,25 @@ class SupervisorNode:
         if forced_gap:
             logger.info("Supervisor: 代码级补齐 Critic 缺口工具: %s", forced_gap)
         self._last_forced_gap = list(forced_gap)
+        prior_disposition = []
+        if critique is not None:
+            raw_prior = critique.get("gap_key_decisions", []) if isinstance(critique, dict) else getattr(critique, "gap_key_decisions", [])
+            prior_disposition = list(raw_prior or [])
+        planned_gap = [step.tool_key for step in plan.steps if step.tool_key in gap_keys]
+        current_disposition = decision.as_state()
+        for row in current_disposition:
+            if row["decision"] == "kept" and row["key"] not in planned_gap:
+                row.update(decision="dropped", reason="budget_truncated")
+        disposition = prior_disposition + [row for row in current_disposition if row not in prior_disposition]
+        # Critic 要求补证据但本轮没有任何可执行步骤时，直接进入 finalize，
+        # 避免空 route 触发默认三 analyst 扇出再烧一轮。
+        no_executable_gap = bool(critique and (decision.raw or prior_disposition) and not planned_gap)
+        self._gap_state = {
+            "gap_key_decisions": disposition,
+            "executable_gap_steps": planned_gap,
+            "finalize_after_gap": no_executable_gap,
+            "blocked_reason": "no_executable_gap_steps" if no_executable_gap else None,
+        }
         return plan, filtered_keys, (prefix_keys, unexecutable_keys)
 
     def _build_route(self, plan: ResearchPlan) -> list:

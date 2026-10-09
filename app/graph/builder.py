@@ -53,6 +53,39 @@ def remaining_budget_seconds(state: dict) -> float | None:
         return None
 
 
+def research_round_budget(state: dict, settings: Settings) -> dict[str, object]:
+    """确定性计算 research_more 是否还值得启动。
+
+    同时检查墙钟预算、工具调用余额和 reasoning/critic 的最低保留时间。
+    这只是门控，不会启动任何工具或 LLM。
+    """
+    remaining = remaining_budget_seconds(state)
+    results = state.get("results") or []
+    used_calls = len(results)
+    max_calls = int(getattr(settings, "max_tool_calls", 0) or 0)
+    tool_remaining = max_calls - used_calls if max_calls > 0 else None
+    required_calls = max(1, int(getattr(settings, "research_round_min_tool_calls", 1) or 1))
+    required_minimum = max(
+        float(getattr(settings, "research_round_min_remaining_seconds", 0) or 0),
+        float(getattr(settings, "research_tool_min_budget_seconds", 0) or 0)
+        + float(getattr(settings, "reasoning_min_budget_seconds", 0) or 0)
+        + float(getattr(settings, "critic_min_budget_seconds", 0) or 0),
+    )
+    reasons: list[str] = []
+    if remaining is not None and remaining < required_minimum:
+        reasons.append("time_budget_insufficient")
+    if tool_remaining is not None and tool_remaining < required_calls:
+        reasons.append("tool_call_budget_insufficient")
+    return {
+        "budget_remaining": remaining,
+        "required_minimum": required_minimum,
+        "tool_calls_remaining": tool_remaining,
+        "required_tool_calls": required_calls,
+        "decision": "allow" if not reasons else "deny",
+        "reason": reasons[0] if reasons else "research_budget_available",
+    }
+
+
 def critic_route_decision(state, settings: Settings) -> str:
     """Critic 条件边的路由决策（模块级，便于单元测试）。
 
@@ -77,6 +110,16 @@ def critic_route_decision(state, settings: Settings) -> str:
     max_research_rounds = settings.effective_max_research_rounds
 
     def _decide(decision: str, reason: str) -> str:
+        budget_info = research_round_budget(state, settings) if decision in ("supervisor", "finalize_audit") else {}
+        gap_decisions = state.get("gap_key_decisions") or []
+        if not gap_decisions:
+            critique_obj = state.get("critique")
+            if isinstance(critique_obj, dict):
+                gap_decisions = critique_obj.get("gap_key_decisions") or []
+            else:
+                gap_decisions = getattr(critique_obj, "gap_key_decisions", []) or []
+        executable = state.get("executable_gap_steps") or []
+        blocked_reason = state.get("blocked_reason")
         run_log.log_route(
             state,
             decision,
@@ -86,6 +129,13 @@ def critic_route_decision(state, settings: Settings) -> str:
             max_rewrites=max_rewrites,
             max_research_rounds=max_research_rounds,
             reason=reason,
+            budget_remaining=budget_info.get("budget_remaining"),
+            required_minimum=budget_info.get("required_minimum"),
+            tool_calls_remaining=budget_info.get("tool_calls_remaining"),
+            required_tool_calls=budget_info.get("required_tool_calls"),
+            gap_key_decisions=gap_decisions,
+            executable_gap_steps=executable,
+            blocked_reason=blocked_reason or (reason if decision == "finalize_audit" else None),
         )
         return decision
 
@@ -116,11 +166,20 @@ def critic_route_decision(state, settings: Settings) -> str:
             return _decide("finalize_audit", "no_report_to_revise")
         if research_round_count >= max_research_rounds:
             return _decide("finalize_audit", "research_budget_exhausted")
-        # 阶段 6②：预留最小剩余预算。回环要再跑一轮工具 + reasoning + critic，
-        # 剩余时间不够时启动它只会烧光预算并产出更差的报告 —— 直接落终态。
-        remaining = remaining_budget_seconds(state)
-        if remaining is not None and remaining < max(0, settings.research_round_min_remaining_seconds):
-            return _decide("finalize_audit", "insufficient_remaining_budget")
+        gap_decisions = state.get("gap_key_decisions") or (
+            critique.get("gap_key_decisions", []) if isinstance(critique, dict)
+            else getattr(critique, "gap_key_decisions", [])
+        )
+        if gap_decisions and not any(
+            isinstance(row, dict) and row.get("decision") == "kept" for row in gap_decisions
+        ):
+            return _decide("finalize_audit", "no_executable_gap_steps")
+        # 回环前同时检查墙钟、工具调用余额和 reasoning/critic 最低预算。
+        budget_info = research_round_budget(state, settings)
+        if budget_info["decision"] == "deny":
+            return _decide("finalize_audit", str(budget_info["reason"]))
+        if state.get("finalize_after_gap"):
+            return _decide("finalize_audit", "no_executable_gap_steps")
         return _decide("supervisor", "research_allowed")
 
     if verdict == "pass":
@@ -180,6 +239,8 @@ def build_graph(settings: Settings):
     def _supervisor_fanout(state):
         if hasattr(state, "model_dump"):
             state = state.model_dump(exclude_none=False)
+        if state.get("finalize_after_gap"):
+            return "finalize_audit"
         route = state.get("route") or []
         assigned = {a.get("analyst") for a in route if isinstance(a, dict)}
         candidates = route_candidate_categories(settings)
@@ -192,6 +253,7 @@ def build_graph(settings: Settings):
         "technical": "technical",
         "fundamental": "fundamental",
         "moneyflow": "moneyflow",
+        "finalize_audit": "finalize_audit",
     }
     if settings.news_enabled:
         _fanout_map["news"] = "news"

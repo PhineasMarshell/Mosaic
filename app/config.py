@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     #: 低于它就不启动半轮工具 —— 来不及跑完 reasoning + critic，只会产出更差的
     #: 报告并把预算烧光；此时直接进 finalize_audit 落终态（blocked/degraded 可解释）。
     research_round_min_remaining_seconds: int = 60
+    #: 回环预算检查使用的最低 reasoning / critic 时间保留。
+    reasoning_min_budget_seconds: int = 15
+    critic_min_budget_seconds: int = 15
+    research_tool_min_budget_seconds: int = 10
+    #: 回环至少要能执行的工具调用数。
+    research_round_min_tool_calls: int = 1
     #: research_more 回环轮最多代码级补齐几个 Critic 点名的缺口工具
     gap_max_steps: int = 3
     #: LangGraph recursion limit（防止无限循环）

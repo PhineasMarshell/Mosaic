@@ -977,7 +977,8 @@ class CriticNode:
                 satisfied=satisfied_keys(results, requirements),
             )
             critique.missing_tool_keys = decision.kept
-            critique.gap_key_decisions = decision.as_records()
+            # 保留原始、保留和被过滤 key 的完整原因，不能让下一轮只看到 kept 列表。
+            critique.gap_key_decisions = decision.as_state()
             if decision.dropped:
                 logger.warning(
                     "Critic: 丢弃 %d 个缺口 key（%s）",
@@ -989,10 +990,14 @@ class CriticNode:
                 state,
                 critique,
                 conflicts=conflicts,
-                gap_key_decisions=decision.as_records(),
+                gap_key_decisions=decision.as_state(),
                 context_truncation=context_truncation,
             )
-            return {"critique": critique}
+            return {
+                "critique": critique,
+                "gap_key_decisions": decision.as_state(),
+                "executable_gap_steps": [],
+            }
 
         except LLMOutputError as exc:
             # T11：审计自身失败（LLM 超时 / JSON 坏）不再返回 research_more——

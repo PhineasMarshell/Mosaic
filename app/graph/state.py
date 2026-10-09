@@ -134,6 +134,14 @@ class ResearchState(BaseModel):
 
     # ── Critic ──
     critique: object | None = None  # Critique from critic.py
+    #: Critic 缺口 key 的完整分类（kept / dropped + 原因），供回环和终态诊断。
+    gap_key_decisions: list[dict] = []
+    #: 本轮实际可执行的补查步骤（代码级补齐后的 tool_key）。
+    executable_gap_steps: list = []
+    #: Supervisor 在没有可执行补查步骤时要求直接 finalize。
+    finalize_after_gap: bool = False
+    blocked_reason: str | None = None
+    remaining_budget: float | None = None
     #: 阶段 6：两条回环路径**独立计数**，各自有独立上限（Settings.max_rewrites /
     #: max_research_rounds）。旧实现共用一个 revision_count，"改写一轮"与
     #: "补一轮证据"花掉的是同一份额度 —— 便宜的重写挤掉了必须重跑工具的研究轮。
@@ -152,6 +160,8 @@ class ResearchState(BaseModel):
     #: 交付状态 verified / degraded / blocked / failed —— 调用方判断"能否当作
     #: 可信结论展示"的**唯一**依据（errors == [] 不再代表可信）。
     delivery_status: object | None = None
+    delivery_reason: str = ""
+    unresolved_issues: list[str] = []
 
     # ── 并行写入字段（必须 reducer）──
     #: T16：evidence 按 id、findings 按 analyst 去重（回环覆盖，保留最新）

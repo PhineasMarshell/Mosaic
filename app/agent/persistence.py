@@ -59,13 +59,12 @@ async def persist_research(
 
     - **只有 ``delivery_status == "verified"`` 的结果才允许进入对话轮次 / 当日状态
       / 后续记忆上下文**。``errors == []`` 不构成放行理由——那只说明运行没出错。
-    - ``degraded``（本版尚未自动产生）与 ``blocked`` / ``failed`` 一律不落记忆库；
-      research_records 仍然写一条**明确标记为未验证**的记录，便于事后排查。
-    - ``result.report is None`` 时：只保存研究记录，**不写对话轮次、不写当日状态**，
-      以免空值覆盖当天已有的正确快照，并记一条 warning。
+    - ``degraded``（本版尚未自动产生）与 ``blocked`` / ``failed`` 一律不写入 memory；
+      诊断信息保留在响应和结构化运行日志中。
+    - ``result.report is None`` 时不写任何持久化记录，以免空值污染历史状态。
 
     Returns:
-        是否把结论写进了可复用的研究 / 记忆（verified 才为 True）。
+        是否把结论写进了可复用的研究 / 记忆（完整 verified 审计才为 True）。
     """
     if memory is None:
         from app.memory.storage import get_memory
@@ -73,24 +72,23 @@ async def persist_research(
         memory = get_memory()
 
     delivery_status = result.delivery_status
-    verified = delivery_status == "verified"
-
-    # 研究记录：始终保存，dump 形状与两条路径历史一致（多带一个 delivery_status，
-    # 让事后能区分"已验证"与"未验证"记录）。
-    try:
-        payload = result.model_dump()
-        payload["unverified"] = not verified
-        memory.save_research(question, payload)
-    except Exception as exc:  # noqa: BLE001 — 落库失败不致命，但必须可见
-        logger.warning("Research save failed (non-fatal): %s", exc)
+    critique = result.critique or {}
+    verdict = critique.get("verdict") if isinstance(critique, dict) else getattr(critique, "verdict", None)
+    verified = (
+        delivery_status == "verified"
+        and result.final_audit_status == "pass"
+        and str(verdict or "").lower() == "pass"
+        and result.report is not None
+    )
 
     if not verified:
         logger.warning(
-            "persist_research: delivery_status=%s，跳过对话轮次与当日状态"
-            "（question=%s final_audit_status=%s errors=%d）",
+            "persist_research: delivery_status=%s/final_audit_status=%s/verdict=%s，跳过 memory、对话轮次与当日状态"
+            "（question=%s errors=%d）",
             delivery_status,
-            question[:50],
             result.final_audit_status,
+            verdict,
+            question[:50],
             len(result.errors),
         )
         return False
@@ -103,6 +101,13 @@ async def persist_research(
             result.errors,
         )
         return False
+
+    try:
+        payload = result.model_dump()
+        payload["unverified"] = False
+        memory.save_research(question, payload)
+    except Exception as exc:  # noqa: BLE001 — 落库失败不致命，但必须可见
+        logger.warning("Research save failed (non-fatal): %s", exc)
 
     if conversation_id:
         try:

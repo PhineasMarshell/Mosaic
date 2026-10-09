@@ -514,6 +514,9 @@ class GapKeyDecision:
     dropped: list[str] = field(default_factory=list)
     #: key → 丢弃原因（按首次判定记录），让 as_records 能保持输入顺序
     reasons: dict[str, str] = field(default_factory=dict)
+    #: 原始输入顺序。用于审计回放，不能只保留过滤后的列表。
+    raw: list[str] = field(default_factory=list)
+    records: list[dict[str, str]] = field(default_factory=list)
 
     def reason_counts(self) -> dict[str, int]:
         return {
@@ -527,6 +530,10 @@ class GapKeyDecision:
     def as_records(self) -> list[dict[str, str]]:
         """给 Critique.gap_key_decisions / 运行日志用的扁平记录（保持输入顺序）。"""
         return [{"key": key, "reason": self.reasons[key]} for key in self.dropped if key in self.reasons]
+
+    def as_state(self) -> list[dict[str, str]]:
+        """返回完整分类结果，包含保留项和所有被丢弃项。"""
+        return list(self.records)
 
 
 def classify_missing_tool_keys(
@@ -546,12 +553,19 @@ def classify_missing_tool_keys(
 
     for key in raw or []:
         if not isinstance(key, str) or not key:
-            decision.invalid.append(str(key))
+            invalid_key = str(key)
+            decision.invalid.append(invalid_key)
+            decision.raw.append(invalid_key)
+            decision.dropped.append(invalid_key)
+            decision.reasons.setdefault(invalid_key, "invalid")
+            decision.records.append({"key": invalid_key, "decision": "dropped", "reason": "invalid"})
             continue
+        decision.raw.append(key)
         if key in seen:
             decision.duplicated.append(key)
             decision.dropped.append(key)
             decision.reasons.setdefault(key, "duplicated")
+            decision.records.append({"key": key, "decision": "dropped", "reason": "duplicated"})
             continue
         seen.add(key)
 
@@ -559,18 +573,22 @@ def classify_missing_tool_keys(
             decision.not_visible.append(key)
             decision.dropped.append(key)
             decision.reasons.setdefault(key, "not_visible")
+            decision.records.append({"key": key, "decision": "dropped", "reason": "not_visible"})
             continue
         if key in satisfied:
             decision.already_satisfied.append(key)
             decision.dropped.append(key)
             decision.reasons.setdefault(key, "already_satisfied")
+            decision.records.append({"key": key, "decision": "dropped", "reason": "already_satisfied"})
             continue
         if limit is not None and len(decision.kept) >= limit:
             decision.budget_truncated.append(key)
             decision.dropped.append(key)
             decision.reasons.setdefault(key, "budget_truncated")
+            decision.records.append({"key": key, "decision": "dropped", "reason": "budget_truncated"})
             continue
         decision.kept.append(key)
+        decision.records.append({"key": key, "decision": "kept", "reason": "executable"})
 
     return decision
 
@@ -582,7 +600,10 @@ def sanitize_missing_tool_keys(raw: Any, allowed: set[str], executed: set[str]) 
     应传 ``satisfied_keys(results)``；保留旧名只为不打断既有调用点与回归测试。
     """
     decision = classify_missing_tool_keys(raw, allowed=allowed, satisfied=executed)
-    return decision.kept, decision.dropped
+    # 兼容旧包装的返回契约：非法类型不作为可路由 key 返回；完整 invalid
+    # 记录仍由新的 ``gap_key_decision`` / state 保留。
+    invalid = set(decision.invalid)
+    return decision.kept, [key for key in decision.dropped if key not in invalid]
 
 
 def gap_tool_keys(critique: Any, registry: str, results: Any) -> tuple[list[str], list[str]]:
@@ -595,6 +616,26 @@ def gap_tool_keys(critique: Any, registry: str, results: Any) -> tuple[list[str]
         _field(critique, "missing_tool_keys", []),
         allowed_keys(registry),
         satisfied_keys(results, coverage_requirements(critique)),
+    )
+
+
+def gap_key_decision(
+    critique: Any,
+    registry: str,
+    results: Any,
+    *,
+    max_keys: int | None = None,
+) -> GapKeyDecision:
+    """返回 Critic 缺口的完整、可回放分类结果。
+
+    ``gap_tool_keys`` 保留旧的二元返回契约；新的回环代码应使用本函数，避免把
+    ``not_visible``、``already_satisfied`` 和 ``budget_truncated`` 合并成一个原因。
+    """
+    return classify_missing_tool_keys(
+        _field(critique, "missing_tool_keys", []),
+        allowed=allowed_keys(registry),
+        satisfied=satisfied_keys(results, coverage_requirements(critique)),
+        max_keys=max_keys,
     )
 
 
@@ -683,7 +724,8 @@ def append_gap_steps(
             )
             present.add(key)
     merged = forced + list(steps)
-    return merged[:max_steps], [s.tool_key for s in forced]
+    selected = merged[:max_steps]
+    return selected, [s.tool_key for s in forced if s in selected]
 
 
 def render_gap_context(critique: Any, results: Any, max_steps: int) -> str:

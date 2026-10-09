@@ -219,7 +219,12 @@ async def ask(request: dict):
                 question[:50],
                 result.final_audit_status,
             )
-            run_log.log_delivery({"run_id": result.run_id}, delivery_status="blocked", persisted=False, sink="sync")
+            run_log.log_delivery(
+                {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
+                 "delivery_reason": result.delivery_reason, "critique": result.critique,
+                 "unresolved_issues": result.unresolved_issues},
+                delivery_status="blocked", persisted=False, sink="sync"
+            )
             return JSONResponse(
                 status_code=200,
                 content={
@@ -227,6 +232,7 @@ async def ask(request: dict):
                     "report": None,
                     "conversation_id": conversation_id,
                     "critique": result.critique,
+                    "unresolved_issues": result.unresolved_issues,
                     "errors": result.errors,
                     "delivery_status": "blocked",
                     "final_audit_status": result.final_audit_status,
@@ -241,7 +247,10 @@ async def ask(request: dict):
             # detail 必须是字符串 —— 前端 askSync 直接把它塞进 Error.message。
             logger.error("Research produced no report for %s (errors=%s)", question[:50], result.errors)
             run_log.log_delivery(
-                {"run_id": result.run_id}, delivery_status=str(delivery), persisted=False, sink="sync"
+                {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
+                 "delivery_reason": result.delivery_reason, "critique": result.critique,
+                 "unresolved_issues": result.unresolved_issues},
+                delivery_status=str(delivery), persisted=False, sink="sync"
             )
             return JSONResponse(
                 status_code=502,
@@ -251,6 +260,9 @@ async def ask(request: dict):
                     "errors": result.errors,
                     "delivery_status": delivery,
                     "final_audit_status": result.final_audit_status,
+                    "delivery_reason": result.delivery_reason,
+                    "critique": result.critique,
+                    "unresolved_issues": result.unresolved_issues,
                 },
             )
 
@@ -261,7 +273,10 @@ async def ask(request: dict):
         # 把空摘要/空状态写入库）。阶段 5 起内部按 delivery_status 门控。
         persisted = await persist_research(result, question, conversation_id)
         run_log.log_delivery(
-            {"run_id": result.run_id}, delivery_status=str(delivery), persisted=persisted, sink="sync"
+            {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
+             "delivery_reason": result.delivery_reason, "critique": result.critique,
+             "unresolved_issues": result.unresolved_issues},
+            delivery_status=str(delivery), persisted=persisted, sink="sync"
         )
 
         return JSONResponse(content=data)
@@ -414,6 +429,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                         "final_audit_status": result.final_audit_status,
                         "delivery_reason": result.delivery_reason,
                         "critique": result.critique,
+                        "unresolved_issues": result.unresolved_issues,
                         "errors": result.errors,
                     },
                 )
@@ -432,6 +448,9 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                     "errors": result.errors,
                     "delivery_status": delivery,
                     "final_audit_status": result.final_audit_status,
+                    "delivery_reason": result.delivery_reason,
+                    "critique": result.critique,
+                    "unresolved_issues": result.unresolved_issues,
                 },
             )
             run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=False, sink="sse")

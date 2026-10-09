@@ -98,6 +98,11 @@ def sanitize(value: Any, _depth: int = 0) -> Any:
         return [sanitize(v, _depth + 1) for v in clip_list(list(value))]
     if isinstance(value, dict):
         # 与 clip_args 同一语义：键数有上限，省略的键名显式标出来
+        # 工具执行行是固定的小 schema；保留其全部诊断字段（尤其是
+        # datum_count / duration_ms / partial），否则普通字典的键数截断会让
+        # 回放误判工具没有返回数据。
+        if "tool_key" in value and "status" in value:
+            return {k: sanitize(v, _depth + 1) for k, v in value.items()}
         return {k: sanitize(v, _depth + 1) for k, v in clip_args(value).items()}
     return value
 
@@ -223,12 +228,12 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
                 "operation_id": _field(r, "operation_id") or _field(r, "tool"),
                 "source_tool": _field(r, "operation_id") or _field(r, "tool"),
                 "tool": _field(r, "tool"),
+                # 放在 sanitize 的前 8 个字段内，确保关键耗时不会被字典截断。
+                "duration_ms": _field(r, "duration_ms"),
                 "arguments": clip_args(arguments),
                 "status": _field(r, "status"),
                 "partial": bool(_field(r, "partial", False)),
                 "datum_count": len(normalized),
-                # 阶段 6：单次工具耗时（没有计时点时记 None，不伪造 0）
-                "duration_ms": _field(r, "duration_ms"),
                 "note": clip(_field(r, "note"), 80),
                 "cache": cache or None,
             }
@@ -250,6 +255,14 @@ def log_critic(
     截断信息必须进 telemetry，否则"Critic 为什么没发现某条无据论断"不可解释。
     """
     issues = _field(critique, "issues", []) or []
+    decisions = gap_key_decisions or _field(critique, "gap_key_decisions", []) or []
+    gap_raw = [d.get("key") for d in decisions if isinstance(d, dict) and d.get("key")]
+    gap_kept = [d.get("key") for d in decisions if isinstance(d, dict) and d.get("decision") == "kept"]
+    gap_dropped = [
+        {"key": d.get("key"), "reason": d.get("reason")}
+        for d in decisions
+        if isinstance(d, dict) and d.get("decision") == "dropped"
+    ]
     emit(
         "critic",
         run_id=_run_id_of(state),
@@ -270,7 +283,10 @@ def log_critic(
             for i in issues
         ],
         verdict_conflicts=list(conflicts or []),
-        gap_key_decisions=gap_key_decisions or [],
+        gap_key_decisions=decisions,
+        gap_raw=gap_raw,
+        gap_kept=gap_kept,
+        gap_dropped=gap_dropped,
         context_truncation=context_truncation or {},
         evidence_identity=[
             {
@@ -294,6 +310,13 @@ def log_route(
     max_rewrites: int = 0,
     max_research_rounds: int = 0,
     reason: str | None = None,
+    budget_remaining: float | None = None,
+    required_minimum: float | None = None,
+    tool_calls_remaining: int | None = None,
+    required_tool_calls: int | None = None,
+    gap_key_decisions: Any = None,
+    executable_gap_steps: Any = None,
+    blocked_reason: str | None = None,
 ) -> None:
     """路由决定 + 轮次计数（路由日志让"为什么提前结束"可解释）。
 
@@ -314,6 +337,13 @@ def log_route(
         revision_count=total,
         max_rewrites=max_rewrites,
         max_research_rounds=max_research_rounds,
+        budget_remaining=budget_remaining,
+        required_minimum=required_minimum,
+        tool_calls_remaining=tool_calls_remaining,
+        required_tool_calls=required_tool_calls,
+        gap_key_decisions=gap_key_decisions or [],
+        executable_gap_steps=executable_gap_steps or [],
+        blocked_reason=blocked_reason,
     )
 
 
@@ -351,6 +381,12 @@ def log_finalize(
     delivery_status: str,
     reason: str,
     unresolved_issues: list | None = None,
+    blocked_reason: str | None = None,
+    research_round_count: int = 0,
+    rewrite_count: int = 0,
+    remaining_budget: float | None = None,
+    gap_key_decisions: Any = None,
+    executable_gap_steps: Any = None,
 ) -> None:
     """finalize_audit 节点的判定依据（为什么 verified / blocked / failed）。"""
     emit(
@@ -360,6 +396,12 @@ def log_finalize(
         delivery_status=delivery_status,
         reason=clip(reason),
         unresolved_issues=clip_list(unresolved_issues),
+        blocked_reason=clip(blocked_reason),
+        research_round_count=research_round_count,
+        rewrite_count=rewrite_count,
+        remaining_budget=remaining_budget,
+        gap_key_decisions=gap_key_decisions or [],
+        executable_gap_steps=executable_gap_steps or [],
     )
 
 
@@ -376,4 +418,12 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
         persisted=persisted,
         sink=sink,
         error_count=len(_field(state, "errors", []) or []),
+        final_audit_status=_field(state, "final_audit_status"),
+        delivery_reason=clip(_field(state, "delivery_reason", "")),
+        research_round_count=int(_field(state, "research_round_count", 0) or 0),
+        rewrite_count=int(_field(state, "rewrite_count", 0) or 0),
+        remaining_budget=_field(state, "remaining_budget"),
+        gap_key_decisions=_field(state, "gap_key_decisions", []) or [],
+        executable_gap_steps=_field(state, "executable_gap_steps", []) or [],
+        blocked_reason=clip(_field(state, "blocked_reason", "")),
     )
