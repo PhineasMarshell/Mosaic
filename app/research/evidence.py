@@ -11,6 +11,8 @@
 情况——超出上限的条目被截断而不是全部塞进 prompt。
 """
 
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -32,6 +34,10 @@ def _evidence_domain(result: ToolResult) -> str:
     """
     datum_domain = result.normalized[0].domain if result.normalized else None
     return datum_domain or infer_domain_from_tool(result.tool)
+
+
+def _operation_id(result: ToolResult) -> str:
+    return getattr(result, "operation_id", None) or result.tool
 
 
 # ── 过滤键：原始工具参数（不是证据）─────────────
@@ -264,14 +270,15 @@ def _instrument_of(result: ToolResult) -> str | None:
     没有标的的工具（市场级聚合、新闻、搜索）返回 ``None``——它们本就不针对
     单个实体，不该被当成"某个公司的证据"。
     """
-    raw = (getattr(result, "arguments", None) or {}).get("symbol")
+    arguments = getattr(result, "arguments", None) or {}
+    raw = arguments.get("symbol") or arguments.get("symbols")
     if raw is None:
         return None
-    text = str(raw).strip()
+    text = ";".join(str(item).strip() for item in raw) if isinstance(raw, list) else str(raw).strip()
     return text or None
 
 
-def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> list[Evidence]:
+def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, stable_ids: bool = False) -> list[Evidence]:
     """从工具调用结果构建用户友好的证据链。
 
     Args:
@@ -290,6 +297,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
     counter = 1
 
     for result in results:
+        start_index = len(evidence)
         # 阶段 4：把这次调用针对的标的记下来（工具参数里的 symbol），
         # 使报告里的公司名可以对着证据校验，而不是凭模型记忆。
         instrument = _instrument_of(result)
@@ -297,7 +305,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
             evidence.append(
                 Evidence(
                     id=f"{id_prefix}-{counter:03d}",
-                    source_tool=result.tool,
+                    source_tool=_operation_id(result),
                     domain="unknown",
                     metric="tool_status",
                     value=f"Failed: {result.error or 'unknown error'}"[:200],
@@ -307,14 +315,18 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                     partial=False,
                     note="",
                     instrument=instrument,
+                    tool_key=getattr(result, "tool_key", None),
+                    operation_id=_operation_id(result),
                 )
             )
+            if stable_ids:
+                _stabilize_result_ids(evidence[start_index:], result, id_prefix)
             counter += 1
             continue
 
         if result.status in ("success", "partial"):
             # 收集所有非过滤指标的 metric-value 对
-            valid_metrics: list[tuple[str, Any]] = []
+            valid_metrics: list[tuple[str, Any, Any]] = []
             candle_metrics: list[tuple[str, Any]] = []
 
             for datum in result.normalized:
@@ -327,7 +339,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                 if re.search(r"candles?\[\d+\]\.\w+$", datum.metric.lower()):
                     candle_metrics.append((datum.metric, datum.value))
                 else:
-                    valid_metrics.append((datum.metric, datum.value))
+                    valid_metrics.append((datum.metric, datum.value, datum))
 
             # 如果有 K 线指标，生成摘要
             if candle_metrics:
@@ -336,14 +348,14 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                     evidence.append(
                         Evidence(
                             id=f"{id_prefix}-{counter:03d}",
-                            source_tool=result.tool,
+                            source_tool=_operation_id(result),
                             domain=_evidence_domain(result),
                             metric="candle_summary",
                             value=summary,
                             timestamp=None,
                             source=None,
-                            status="success",
-                            partial=False,
+                            status=result.status,
+                            partial=result.partial,
                             note=f"聚合了 {summary['count']} 条 K 线数据",
                             instrument=instrument,
                         )
@@ -354,7 +366,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                 # valid_metrics 本就不含 candle 项，不会重复添加。
 
             # 添加其他有效指标
-            for metric, value in valid_metrics:
+            for metric, value, datum in valid_metrics:
                 # F10 数据：尝试进一步解析不可读值（dict/list → 数值）
                 if _is_eastmoney_f10_tool(result.tool) and isinstance(value, (dict, list)):
                     from app.gateway.normalizer import _deep_flatten_value
@@ -370,16 +382,16 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                 evidence.append(
                     Evidence(
                         id=f"{id_prefix}-{counter:03d}",
-                        source_tool=result.tool,
+                        source_tool=_operation_id(result),
                         domain=result.normalized[0].domain if result.normalized else "unknown",
                         metric=metric,
                         value=value,
-                        timestamp=result.normalized[0].timestamp if result.normalized else None,
-                        source=result.normalized[0].source if result.normalized else None,
-                        status=result.status,
-                        partial=result.partial,
-                        note="",
-                        instrument=instrument,
+                        timestamp=datum.timestamp,
+                        source=datum.source,
+                        status="partial" if datum.status == "partial" or result.status == "partial" else result.status,
+                        partial=datum.partial or result.partial,
+                        note=datum.note or getattr(result, "note", None),
+                        instrument=datum.instrument or instrument,
                     )
                 )
                 counter += 1
@@ -393,7 +405,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
                         evidence.append(
                             Evidence(
                                 id=f"{id_prefix}-{counter:03d}",
-                                source_tool=result.tool,
+                                source_tool=_operation_id(result),
                                 domain=_evidence_domain(result),
                                 metric=metric,
                                 value=value,
@@ -412,5 +424,32 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence") -> li
         # 通过 Evidence Gate。normalizer 现在已保证空结果必为 status=error（在上方
         # error 分支处理并 continue）；若此处仍遇到直接构造的空结果，按"无证据"跳过。
 
+        if stable_ids:
+            _stabilize_result_ids(evidence[start_index:], result, id_prefix)
+        for item in evidence[start_index:]:
+            item.tool_key = getattr(result, "tool_key", None)
+            item.operation_id = _operation_id(result)
+            item.source_tool = _operation_id(result)
+            result_note = getattr(result, "note", None)
+            if result_note and result_note not in (item.note or ""):
+                item.note = f"{item.note}；{result_note}" if item.note else result_note
+
     # T6：文档承诺的硬上限现在真正生效。
     return _cap_evidence(evidence, _MAX_EVIDENCE_ITEMS)
+
+
+def _stabilize_result_ids(items: list[Evidence], result: ToolResult, prefix: str) -> None:
+    """Keep an evidence identity tied to its tool call and metric across research rounds."""
+    signature = json.dumps(
+        [getattr(result, "tool_key", None), _operation_id(result), result.arguments],
+        sort_keys=True, ensure_ascii=False, default=str,
+    )
+    occurrences: dict[tuple[str, str | None], int] = {}
+    for item in items:
+        key = (item.metric, item.timestamp)
+        ordinal = occurrences.get(key, 0)
+        occurrences[key] = ordinal + 1
+        digest = hashlib.sha256(
+            json.dumps([signature, item.metric, item.timestamp, ordinal], ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:16]
+        item.id = f"{prefix}-{digest}"

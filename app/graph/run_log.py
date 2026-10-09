@@ -183,6 +183,7 @@ def log_plan(
             {
                 "tool_key": key,
                 "operation_id": operation_id,
+                "source_tool": operation_id,
                 "arguments": clip_args(arguments),
                 "priority": _field(step, "priority"),
             }
@@ -220,6 +221,7 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
             {
                 "tool_key": _field(r, "tool_key"),
                 "operation_id": _field(r, "operation_id") or _field(r, "tool"),
+                "source_tool": _field(r, "operation_id") or _field(r, "tool"),
                 "tool": _field(r, "tool"),
                 "arguments": clip_args(arguments),
                 "status": _field(r, "status"),
@@ -270,6 +272,15 @@ def log_critic(
         verdict_conflicts=list(conflicts or []),
         gap_key_decisions=gap_key_decisions or [],
         context_truncation=context_truncation or {},
+        evidence_identity=[
+            {
+                "id": _field(e, "id"),
+                "tool_key": _field(e, "tool_key"),
+                "operation_id": _field(e, "operation_id") or _field(e, "source_tool"),
+                "source_tool": _field(e, "source_tool"),
+            }
+            for e in (_field(state, "evidence", []) or [])
+        ],
     )
 
 

@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 class Evidence(BaseModel):
     id: str
     source_tool: str
+    tool_key: str | None = None
+    operation_id: str | None = None
     domain: str = "unknown"
     metric: str
     value: Any = None

@@ -8,6 +8,7 @@
 
 import json
 import logging
+import re
 import time
 from typing import Any, get_args
 
@@ -80,10 +81,8 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
         id_source_to_evidence[(original.id, original.source_tool)] = original
 
     def _resolve_evidence(eid: str, source_tool: str | None) -> Evidence | None:
-        if eid in duplicate_ids and source_tool:
-            composite = id_source_to_evidence.get((eid, source_tool))
-            if composite is not None:
-                return composite
+        if eid in duplicate_ids:
+            return id_source_to_evidence.get((eid, source_tool)) if source_tool else None
         return id_to_evidence.get(eid)
 
     for raw_item in raw_evidence or []:
@@ -108,6 +107,8 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
                         EvidenceItem(
                             id=eid,
                             source_tool=ev.source_tool,
+                            tool_key=ev.tool_key,
+                            operation_id=ev.operation_id,
                             domain=ev.domain,
                             metric=ev.metric,
                             value=ev.value,
@@ -158,6 +159,8 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
                 EvidenceItem(
                     id=item_id,
                     source_tool=original_ev.source_tool,
+                    tool_key=original_ev.tool_key,
+                    operation_id=original_ev.operation_id,
                     domain=original_ev.domain,
                     metric=original_ev.metric,
                     value=original_ev.value,
@@ -165,7 +168,7 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
                     source=original_ev.source,
                     status=original_ev.status,
                     partial=original_ev.partial,
-                    note=combined_note if combined_note else None,
+                    note="；".join(part for part in (original_ev.note, combined_note) if part) or None,
                     instrument=original_ev.instrument,
                 )
             )
@@ -235,6 +238,38 @@ def _validate_claims(
         claim.evidence_ids = valid
         kept.append(claim)
     return kept, violations
+
+
+_EVIDENCE_ID_RE = re.compile(r"\b(?:technical|fundamental|moneyflow|news|sentiment|evidence)-[A-Za-z0-9]+\b|\b[A-Za-z][A-Za-z0-9_-]*-\d{3,}\b")
+_REPORT_TEXT_FIELDS = ("title", "market_state", "what_happened")
+_REPORT_LIST_FIELDS = ("why", "strong_areas", "what_changed", "what_matters", "risks")
+
+
+def _validate_report_references(payload: dict, valid_ids: set[str]) -> list[str]:
+    """Remove invented evidence citations from user-visible prose as well as claims."""
+    violations: list[str] = []
+
+    def clean(text: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            eid = match.group()
+            if eid in valid_ids:
+                return eid
+            violation = f"报告正文引用了不存在的 evidence id: {eid}"
+            if violation not in violations:
+                violations.append(violation)
+            return "[无效证据引用已删除]"
+
+        return _EVIDENCE_ID_RE.sub(replace, text)
+
+    for field in _REPORT_TEXT_FIELDS:
+        if isinstance(payload.get(field), str):
+            payload[field] = clean(payload[field])
+    for field in _REPORT_LIST_FIELDS:
+        payload[field] = [clean(item) if isinstance(item, str) else item for item in payload[field]]
+    for claim in _ensure_list(payload.get("claims")):
+        if isinstance(claim, dict) and isinstance(claim.get("claim"), str):
+            claim["claim"] = clean(claim["claim"])
+    return violations
 
 
 class ReasoningEngine:
@@ -346,9 +381,11 @@ class ReasoningEngine:
             payload["evidence"] = [ei.model_dump() for ei in parsed_evidence]
 
             # 阶段 4③/④：claim—evidence 映射 + **代码级**引用校验。
-            # 合法 id 集合 = 真实证据账本 ∪ 已通过 _parse_evidence 核实的条目。
-            valid_ids = {item.id for item in evidence} | {ei.id for ei in parsed_evidence}
+            # 合法 id 集合只来自真实证据账本。
+            valid_ids = {item.id for item in evidence}
+            body_violations = _validate_report_references(payload, valid_ids)
             claims, violations = _validate_claims(_parse_claims(payload.get("claims")), valid_ids)
+            violations.extend(body_violations)
             payload["claims"] = [claim.model_dump() for claim in claims]
             payload["evidence_violations"] = violations
             if violations:

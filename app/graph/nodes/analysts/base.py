@@ -96,7 +96,7 @@ class MarketAnalystNode:
             # 统一构建 Evidence 列表（§1 约定：source_tool / timestamp 语义）
             from app.research.evidence import build_evidence
 
-            evidence_items = build_evidence(results, id_prefix=self.category)
+            evidence_items = build_evidence(results, id_prefix=self.category, stable_ids=True)
 
             return {
                 "results": results,

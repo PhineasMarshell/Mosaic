@@ -20,6 +20,7 @@
 """
 
 import logging
+import re
 import time
 from typing import Any, Literal
 
@@ -152,6 +153,9 @@ _ISSUE_RULES = (
     "- 「工具执行过」不等于「证据已充分」：如果某个工具返回 partial、空列表，"
     "或参数不覆盖这条缺口，照样把它算作未满足的缺口。\n"
     "- 证据被上下文截断时，不要据此判定'无证据'——只标记你确实看到了的部分。\n"
+    "- status=partial、partial=true、缺日期锚点或 note 指明截断的证据不得支撑全市场或明确资金流向等强结论。\n"
+    "- 没有完整同日上涨/下跌家数时，报告只能写无法确认，不能声称全市场全部上涨/下跌。\n"
+    "- 因果、资金从一板块流向另一板块、跨市场带动，须有同日同标的/板块直接证据；否则要求改为可能/无法确认或删除。\n"
     '- 非法输出会被安全终止：issues 必须是数组，元素必须是对象；'
     '显式写 "issues": null 会被判为非法 payload（要表达"没有 issue"请给空数组 []）。'
 )
@@ -228,13 +232,33 @@ _MAX_REVIEW_FIELD_CHARS = 2000
 _MAX_UNREFERENCED_EVIDENCE_LINES = 60
 
 
+def _market_priority(item) -> int:
+    metric = str(_field(item, "metric", "") or "").lower()
+    tool = str(_field(item, "source_tool", _field(item, "tool", "")) or "").lower()
+    if _field(item, "partial") or _field(item, "note") or _field(item, "timestamp"):
+        return 0
+    if any(token in metric for token in ("up_count", "down_count", "advancing", "declining", "上涨家数", "下跌家数")):
+        return 0
+    if any(token in tool for token in ("quote", "sentiment", "limit_up_count", "limit_up_sectors", "telegraph")):
+        return 1
+    if any(token in metric for token in ("timestamp", "date", "涨停")):
+        return 2
+    return 3
+
+
+def _incomplete(item) -> bool:
+    note = str(_field(item, "note", "") or "").lower()
+    return (_field(item, "status") != "success" or bool(_field(item, "partial"))
+            or any(token in note for token in ("截断", "仅返回", "truncat", "partial")))
+
+
 def _render_field(name: str, value: Any, truncations: list[dict]) -> str | None:
     """渲染单个字段；超限时截断并**留下明确的截断标记 + 截断记录**。"""
     text = str(value if value is not None else "").strip()
     if not text:
         return None
     if len(text) > _MAX_REVIEW_FIELD_CHARS:
-        truncations.append({"field": name, "shown": _MAX_REVIEW_FIELD_CHARS, "total": len(text)})
+        truncations.append({"field": name, "shown": _MAX_REVIEW_FIELD_CHARS, "total": len(text), "reason": "field_char_limit"})
         text = text[:_MAX_REVIEW_FIELD_CHARS] + (
             f"…[已截断：仅展示前 {_MAX_REVIEW_FIELD_CHARS} 字，共 {len(text)} 字]"
         )
@@ -344,6 +368,9 @@ def _render_evidence_item(item, *, value_limit: int = 500) -> str:
         value = value[:value_limit] + "…"
     head = f"{_field(item, 'id', '?')} | {_field(item, 'source_tool', '?')} | {_field(item, 'metric', '?')} = {value}"
     meta: list[str] = []
+    for key in ("tool_key", "operation_id"):
+        if _field(item, key):
+            meta.append(f"{key}={_field(item, key)}")
     status = _field(item, "status")
     if status:
         meta.append(f"status={status}")
@@ -376,6 +403,8 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
         "other_total": 0,
         "datums_omitted": 0,
         "results_omitted": 0,
+        "kept": [],
+        "omitted": [],
     }
     lines = ["=== 成功工具 ==="]
     if gate:
@@ -406,6 +435,7 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
                 lines.append(f"  !! {eid}: 不在证据账本中（该引用无法核实）")
                 continue
             stats["referenced_shown"] += 1
+            stats["kept"].append({"id": eid, "reason": "report_reference"})
             lines.append(f"  - {_render_evidence_item(item)}")
 
     referenced_set = set(referenced)
@@ -413,30 +443,50 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
     stats["other_total"] = len(others)
     lines.append("")
     lines.append("=== 其余证据（摘要；未展示的内容不能据此判定为无证据）===")
-    for item in others[:_MAX_UNREFERENCED_EVIDENCE_LINES]:
+    prioritized = sorted(enumerate(others), key=lambda pair: (_market_priority(pair[1]), pair[0]))
+    selected = [item for _, item in prioritized[:_MAX_UNREFERENCED_EVIDENCE_LINES]]
+    for item in selected:
         stats["other_shown"] += 1
+        stats["kept"].append({"id": _field(item, "id"), "reason": "market_minimum" if _market_priority(item) < 3 else "tool_quota"})
         lines.append(f"  - {_render_evidence_item(item, value_limit=120)}")
     omitted = len(others) - stats["other_shown"]
     if omitted > 0:
+        stats["omitted"].append({"kind": "evidence", "count": omitted, "reason": "unreferenced_evidence_limit"})
         lines.append(f"  …已省略 {omitted} 条（共 {len(others)} 条）；**未展示的内容不能据此判定为无证据**")
 
     # 原始 normalized 数据摘要（按工具）——保留旧视图，但把省略量显式记下来。
     lines.append("")
     lines.append("=== 原始 normalized 数据摘要（最多 20 个工具 × 10 条）===")
     shown_tools = 0
-    for result in (results or [])[:20]:
+    sorted_results = sorted(enumerate(results or []), key=lambda pair: (
+        _market_priority({"source_tool": _field(pair[1], "tool")}), pair[0]
+    ))
+    for _, result in sorted_results[:20]:
         normalized = _field(result, "normalized", []) or []
         shown_tools += 1
-        for datum in normalized[:10]:
+        result_meta = " ".join(
+            f"{key}={_field(result, key)}" for key in ("status", "partial", "note")
+            if _field(result, key)
+        )
+        lines.append(f"  TOOL {_field(result, 'tool_key', '?')} | {_field(result, 'operation_id') or _field(result, 'tool')} {result_meta}")
+        selected_datums = sorted(enumerate(normalized), key=lambda pair: (_market_priority(pair[1]), pair[0]))[:10]
+        for _, datum in selected_datums:
             metric = _field(datum, "metric", "?")
             value = str(_field(datum, "value", ""))[:80]
-            lines.append(f"  - {metric}: {value}")
+            meta = " ".join(
+                f"{key}={_field(datum, key)}" for key in ("timestamp", "status", "partial", "note")
+                if _field(datum, key)
+            )
+            lines.append(f"  - {_field(result, 'tool_key', '?')} | {_field(result, 'operation_id') or _field(result, 'tool')} | {metric}: {value} {meta}")
+            stats["kept"].append({"metric": metric, "reason": "market_minimum" if _market_priority(datum) < 3 else "tool_quota"})
         if len(normalized) > 10:
             stats["datums_omitted"] += len(normalized) - 10
+            stats["omitted"].append({"kind": "datum", "tool_key": _field(result, "tool_key"), "count": len(normalized) - 10, "reason": "per_tool_datum_limit"})
             lines.append(f"    …（该工具另有 {len(normalized) - 10} 条 datum 未展示）")
     total_tools = len(results or [])
     if total_tools > shown_tools:
         stats["results_omitted"] = total_tools - shown_tools
+        stats["omitted"].append({"kind": "result", "count": total_tools - shown_tools, "reason": "tool_limit"})
         lines.append(f"  …还有 {total_tools - shown_tools} 个工具的输出未展示；**未展示的内容不能据此判定为无证据**")
 
     return "\n".join(lines), stats
@@ -508,6 +558,50 @@ def _code_level_issues(report) -> list["AuditIssue"]:
                     ),
                 )
             )
+    return issues
+
+
+_DATE_RE = re.compile(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}")
+_BREADTH_RE = re.compile(r"(?:全市场|所有(?:股票|个股)|全部(?:股票|个股)).{0,12}(?:全部)?(?:上涨|下跌)|(?:全部|全线)(?:上涨|下跌)")
+_CAUSAL_RE = re.compile(r"(?:导致|带动|引发|造成)")
+_FLOW_RE = re.compile(r"资金.{0,24}(?:流向|转向|从.{1,20}流入)")
+_QUALIFIED_RE = re.compile(r"可能|或许|疑似|无法确认|尚不能确认|未能确认")
+
+
+def _coverage_issues(report, evidence) -> list["AuditIssue"]:
+    """Reject market-wide and causal facts beyond the observable coverage."""
+    items = list(evidence or [])
+    text = entity_report_text(report)
+    segments = [part.strip() for part in re.split(r"[。！？；\n]", text) if part.strip()]
+    complete = [item for item in items if not _incomplete(item)]
+    up = [item for item in complete if re.search(r"up_count|advancing|上涨家数", str(_field(item, "metric", "")), re.I)]
+    down = [item for item in complete if re.search(r"down_count|declining|下跌家数", str(_field(item, "metric", "")), re.I)]
+    issues: list[AuditIssue] = []
+    for segment in segments:
+        if _QUALIFIED_RE.search(segment):
+            continue
+        if _BREADTH_RE.search(segment):
+            opposing = down if "上涨" in segment else up
+            up_dates = {match.group() for i in up if (match := _DATE_RE.search(str(_field(i, "timestamp", "") or "")))}
+            down_dates = {match.group() for i in down if (match := _DATE_RE.search(str(_field(i, "timestamp", "") or "")))}
+            complete_breadth = bool(up_dates & down_dates)
+            zero_opposing = all(str(_field(i, "value", "")).strip() in ("0", "0.0") for i in opposing)
+            if not complete_breadth or not zero_opposing:
+                issues.append(AuditIssue(kind="unsupported_claim", claim=segment[:200], severity="high",
+                    action="remove_or_qualify", rationale="缺少完整、同日的上涨/下跌家数，不能断言全市场全部上涨或下跌；只能写无法确认"))
+        if _CAUSAL_RE.search(segment) or _FLOW_RE.search(segment):
+            # Separate price and news observations cannot establish the relationship.
+            relation = re.sub(r"\s+", "", segment)
+            claim_dates = set(_DATE_RE.findall(segment))
+            direct = any(
+                (stamp := _DATE_RE.search(str(_field(item, "timestamp", "") or "")))
+                and (not claim_dates or stamp.group() in claim_dates)
+                and relation in re.sub(r"\s+", "", str(_field(item, "value", "")))
+                for item in complete
+            )
+            if not direct:
+                issues.append(AuditIssue(kind="unsupported_claim", claim=segment[:200], severity="high",
+                    action="remove_or_qualify", rationale="缺少同日、同标的或板块的直接证据支撑因果或资金流向断言"))
     return issues
 
 
@@ -813,7 +907,7 @@ class CriticNode:
             # 阶段 4④：**代码级**校验结论并入 issues。这不是让 LLM 再判一次：
             # 报告引用了账本里不存在的 evidence id、或对无校验源实体断言"不存在"，
             # 都是代码已经确定的事实，必须变成 issue → 派生 revise → 不可能 pass。
-            code_issues = _code_level_issues(report)
+            code_issues = _code_level_issues(report) + _coverage_issues(report, evidence)
             if code_issues:
                 issues = issues + code_issues
                 logger.error(

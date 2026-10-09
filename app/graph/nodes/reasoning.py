@@ -19,6 +19,50 @@ from app.research.reasoning import ReasoningEngine, _get_evidence_key
 logger = logging.getLogger(__name__)
 
 
+def _field(item, key, default=None):
+    return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
+
+
+def _select_evidence(items: list, previous_report, *, total_limit: int = 500, per_tool: int = 80) -> tuple[list, dict]:
+    if len(items) <= total_limit:
+        return items, {"kept": len(items), "omitted": 0, "reason": "within_limit"}
+    referenced = {
+        str(eid)
+        for claim in (_field(previous_report, "claims", []) or [])
+        for eid in (_field(claim, "evidence_ids", []) or [])
+    }
+    referenced.update(str(_field(e, "id")) for e in (_field(previous_report, "evidence", []) or []))
+    selected: set[int] = set()
+    per_source: dict[str, int] = {}
+    reasons = {"report_reference": 0, "market_minimum": 0, "tool_quota": 0}
+
+    def take(index: int, reason: str, *, force: bool = False) -> None:
+        if index in selected or (len(selected) >= total_limit and not force):
+            return
+        tool = _get_evidence_key(items[index])
+        if not force and per_source.get(tool, 0) >= per_tool:
+            return
+        selected.add(index)
+        per_source[tool] = per_source.get(tool, 0) + 1
+        reasons[reason] += 1
+
+    for i, item in enumerate(items):
+        if str(_field(item, "id")) in referenced:
+            take(i, "report_reference", force=True)
+    for i, item in enumerate(items):
+        metric = str(_field(item, "metric", "") or "").lower()
+        tool = _get_evidence_key(item).lower()
+        if any(x in metric for x in ("up_count", "down_count", "涨跌", "涨停", "timestamp", "date")) or any(
+            x in tool for x in ("quote", "sentiment", "limit_up", "telegraph")
+        ) or _field(item, "partial") or _field(item, "note"):
+            take(i, "market_minimum")
+    for i in range(len(items) - 1, -1, -1):
+        take(i, "tool_quota")
+    selected_items = [item for i, item in enumerate(items) if i in selected]
+    return selected_items, {"kept": len(selected_items), "omitted": len(items) - len(selected_items),
+                            "reason": "total_and_per_tool_limit", "kept_reasons": reasons}
+
+
 class ReasoningNode:
     """LLM 推理节点：证据 -> 结构化市场情报报告。"""
 
@@ -70,24 +114,10 @@ class ReasoningNode:
 
             question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
 
-            # ── 证据截断 — 防止超大证据集超出 LLM 上下文窗口 ──
-            # Evidence 条目过多时，按工具分组，每组只保留最新 MAX_PER_TOOL 条
-            MAX_EVIDENCE_PER_TOOL = 80
-            MAX_TOTAL_EVIDENCE = 500
-            evidence_items = state.get("evidence", [])
-            if len(evidence_items) > MAX_TOTAL_EVIDENCE:
-                tool_groups: dict[str, list] = {}
-                for i, item in enumerate(evidence_items):
-                    key = _get_evidence_key(item)
-                    entry = {"idx": i, "item": item}
-                    tool_groups.setdefault(key, []).append(entry)
-                truncated = []
-                for entries in tool_groups.values():
-                    # 按 idx 倒序取最新条目
-                    entries.sort(key=lambda e: e["idx"], reverse=True)
-                    truncated.extend(e["item"] for e in entries[:MAX_EVIDENCE_PER_TOOL])
-                # 截到最大总数
-                evidence_items = truncated[:MAX_TOTAL_EVIDENCE]
+            evidence_items, truncation = _select_evidence(state.get("evidence", []), state.get("report"))
+            if truncation["omitted"]:
+                from app.graph import run_log
+                run_log.emit("reasoning_context", run_id=state.get("run_id"), context_truncation=truncation)
 
             results = state.get("results", [])
             # LangGraph reducer merge 将 ToolResult 序列化为 dict，需要转回

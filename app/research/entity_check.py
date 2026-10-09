@@ -42,6 +42,7 @@ _NAME_CHAR_RE = re.compile(r"[\u4e00-\u9fa5A-Za-z0-9]")
 _ENTITY_SEPARATORS = frozenset("与和及暨或在的、，。；：:;,.")
 #: 后缀往前最多回看的字数（"行云科技股份" 这类名字够用）。
 _MAX_NAME_TAIL = 6
+_LEADING_SYNTAX = ("包括", "例如", "涉及", "诸如", "以及", "其中", "还有", "比如")
 
 #: "这个实体不存在"一类断言的措辞。
 _NONEXISTENCE_RE = re.compile(r"(不存在|未上市|查无|没有这只股票|不是上市公司|已退市|无此公司)")
@@ -85,17 +86,27 @@ def local_entity_index() -> dict[str, str]:
 
 
 def evidence_entity_names(evidence: Any) -> set[str]:
-    """证据里出现过的实体名：``instrument`` + 证据文本中提到的任何已知名称。"""
+    """Names tied to an instrument or an actual quote, F10, or news datum."""
     names: set[str] = set()
     known = list(local_entity_index())
     for item in evidence or []:
         instrument = _field(item, "instrument")
+        source_tool = str(_field(item, "source_tool", "") or "").lower()
+        if not any(token in source_tool for token in ("quote", "f10", "finance", "news", "telegraph", "filing")):
+            continue
         if instrument:
-            names.add(str(instrument))
-        blob = json.dumps(_dump(item), ensure_ascii=False, default=str)
+            for candidate in re.split(r"[;,，、\s]+", str(instrument)):
+                if candidate:
+                    names.add(candidate)
+                    code = resolve_stock_code(candidate)
+                    if code:
+                        names.update(name for name in known if local_entity_index()[name] == code)
+        blob = json.dumps(_field(item, "value"), ensure_ascii=False, default=str)
         for name in known:
             if name in blob:
                 names.add(name)
+        for _, name in _entity_names_with_positions(blob):
+            names.add(name)
     return names
 
 
@@ -117,7 +128,14 @@ def _entity_names_with_positions(text: str) -> list[tuple[int, str]]:
             cursor -= 1
             taken += 1
         if taken >= 2:
-            found.append((cursor, text[cursor : match.end()]))
+            name = text[cursor : match.end()]
+            for lead in _LEADING_SYNTAX:
+                if name.startswith(lead):
+                    cursor += len(lead)
+                    name = name[len(lead):]
+                    break
+            if len(name) >= 3:
+                found.append((cursor, name))
     return found
 
 
@@ -145,8 +163,11 @@ def extract_entity_mentions(text: str, *, known_index: dict[str, str] | None = N
 
 
 def _is_evidenced(name: str, evidenced: set[str]) -> bool:
-    """证据是否支持这个名字（含"证据里的标的被报告写全称"这种包含关系）。"""
-    return any(name in entry or entry in name for entry in evidenced)
+    """Require an exact name or a stock-code match, never a substring guess."""
+    if name in evidenced:
+        return True
+    code = resolve_stock_code(name)
+    return bool(code and (code in evidenced or any(resolve_stock_code(entry) == code for entry in evidenced)))
 
 
 def check_report_entities(
