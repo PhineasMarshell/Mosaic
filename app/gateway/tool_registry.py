@@ -6,7 +6,7 @@
 - 新增市场域只需添加新 ToolMeta 条目并更新 DEFAULT_DOMAINS
 - 兼容旧版 resolve_tool(key) → ToolMeta 查询
 
-所有 47 个 Market Gateway Tool 均在此声明，按域分组。
+所有 48 个 Market Gateway Tool 均在此声明，按域分组。
 后续 Tool 名变化时，优先修改这里，而不是 Planner。
 """
 
@@ -266,7 +266,7 @@ _ASHARE_MICRO = [
     ToolMeta(
         "timeline",
         "list_stock_discussions",
-        "分时/时间线数据",
+        "雪球个股评论区讨论帖子（时间线）",
         domain="a_share",
         priority="low",
         http_method="GET",
@@ -635,16 +635,27 @@ _NEWS_TOOLS = [
 ]
 
 # ------------------------------------------------------------------ #
-# 舆情评论 — P4-5：评论爬取 MCP 就绪后启用（工具名以实际 MCP 为准）     #
+# 舆情评论 — A0：接入雪球 list_stock_discussions 做情感分析               #
 # ------------------------------------------------------------------ #
-# _SENTIMENT_TOOLS = [
-#     ToolMeta("xq_comments", "comments_xueqiu_get", "雪球个股评论区抓取",
-#              category="sentiment", domain="a_share", ...),
-#     ToolMeta("futu_comments", "comments_futu_get", "富途牛牛个股评论区",
-#              category="sentiment", domain="hk_stock", ...),
-#     ToolMeta("ths_comments", "comments_ths_get", "同花顺个股/板块评论区",
-#              category="sentiment", domain="a_share", ...),
-# ]
+
+_SENTIMENT_TOOLS = [
+    ToolMeta(
+        "xq_discussions",
+        "list_stock_discussions",
+        "雪球个股评论区讨论帖子（情感分析源数据）",
+        domain="a_share",
+        priority="high",
+        http_method="GET",
+        http_path="/market/discussions",
+        category="sentiment",
+        requires_symbol=True,
+    ),
+    # 后续 MCP 就绪后取消注释：
+    # ToolMeta("futu_comments", "comments_futu_get", "富途牛牛个股评论区",
+    #          category="sentiment", domain="hk_stock", ...),
+    # ToolMeta("ths_comments", "comments_ths_get", "同花顺个股/板块评论区",
+    #          category="sentiment", domain="a_share", ...),
+]
 
 # ------------------------------------------------------------------ #
 # 服务健康检查                                                        #
@@ -689,7 +700,7 @@ ALL_TOOLS: list[ToolMeta] = (
     + _CRYPTO_COINGLASS
     + _US_STOCK_PLACEHOLDERS
     + _NEWS_TOOLS
-    # + _SENTIMENT_TOOLS  # P4-5：评论 MCP 就绪后取消注释
+    + _SENTIMENT_TOOLS
     + _HEALTH_TOOLS
 )
 

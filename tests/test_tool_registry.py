@@ -28,5 +28,9 @@ def test_news_category_contains_four_news_tools():
     }
 
 
-def test_sentiment_category_not_present():
-    assert "sentiment" not in by_category
+def test_sentiment_category_has_xq_discussions():
+    """新增的 sentiment 类别应包含 xq_discussions 工具。"""
+    sentiment_tools = by_category.get("sentiment", [])
+    assert len(sentiment_tools) > 0
+    keys = {t.key for t in sentiment_tools}
+    assert "xq_discussions" in keys

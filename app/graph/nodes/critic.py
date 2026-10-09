@@ -197,6 +197,18 @@ _NEWS_RULES = (
 )
 
 
+# 舆情情绪证据纪律（Step 5.2，可选规则）：与新闻纪律同理是跨域规则 ——
+# sentiment_* 证据只可能来自雪球评论区（xq_discussions），与市场域无关，
+# 在 prompt 组装处无条件附加。
+_SENTIMENT_RULES = (
+    "[舆情情绪纪律]\n"
+    "- 舆情结论（如『散户情绪乐观』）如果仅依赖 xq_discussions 单源、没有与资金流 / "
+    "行情数据做关联验证，必须在 critique 中标注『单源、需与其他数据交叉确认』\n"
+    "- 单只股票的评论情绪不得外推为整体市场情绪\n"
+    "- 评论样本存在幸存者偏差，极端观点占比偏高，引用 sentiment_score 时应降低表述强度"
+)
+
+
 def _field(obj, key, default=None):
     """从 dict 或对象读取字段 —— LangGraph 可能传入任一形式。"""
     if isinstance(obj, dict):
@@ -719,6 +731,10 @@ class CriticNode:
                 prompt_pieces.extend(["\n=== 审查规则 ===\n", rules])
             # A7：新闻证据纪律跨域通用，无条件附加（不受 _DOMAIN_RULES 域组织限制）
             prompt_pieces.extend(["\n=== 新闻证据纪律 ===\n", _NEWS_RULES])
+            # Step 5.2：舆情情绪纪律（sentiment 分析师启用时才有 sentiment_* 证据；
+            # 规则本身无害，但仅在开关打开时注入，避免默认路径 prompt 膨胀与回归风险）
+            if getattr(self.settings, "sentiment_enabled", False):
+                prompt_pieces.extend(["\n=== 舆情情绪纪律 ===\n", _SENTIMENT_RULES])
             # 阶段 1：审计契约（issues + action 语义）
             prompt_pieces.extend(["\n=== 审计契约 ===\n", _ISSUE_RULES])
 

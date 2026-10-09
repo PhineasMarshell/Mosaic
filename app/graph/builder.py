@@ -26,6 +26,7 @@ from app.config import Settings
 from app.graph.nodes.analysts.fundamental import FundamentalAnalystNode
 from app.graph.nodes.analysts.moneyflow import MoneyflowAnalystNode
 from app.graph.nodes.analysts.news import NewsAnalystNode
+from app.graph.nodes.analysts.sentiment import SentimentAnalystNode
 from app.graph.nodes.analysts.technical import TechnicalAnalystNode
 from app.graph.nodes.critic import CriticNode
 from app.graph.nodes.finalize import FinalizeAuditNode
@@ -147,11 +148,6 @@ def build_graph(settings: Settings):
     """
     builder = StateGraph(ResearchState)
 
-    if settings.sentiment_enabled:
-        logger.warning(
-            "sentiment_enabled=true, but the sentiment node is not implemented; this setting will be ignored."
-        )
-
     # ── 注册节点 ────────────────────────────────────────────
     supervisor_node = SupervisorNode(settings)
     technical_node = TechnicalAnalystNode(settings)
@@ -168,6 +164,9 @@ def build_graph(settings: Settings):
     if settings.news_enabled:
         news_node = NewsAnalystNode(settings)
         builder.add_node("news", news_node)
+    if settings.sentiment_enabled:
+        sentiment_node = SentimentAnalystNode(settings)
+        builder.add_node("sentiment", sentiment_node)
     builder.add_node("gate", gate_node)
     builder.add_node("reasoning", reasoning_node)
     builder.add_node("critic", critic_node)
@@ -196,6 +195,8 @@ def build_graph(settings: Settings):
     }
     if settings.news_enabled:
         _fanout_map["news"] = "news"
+    if settings.sentiment_enabled:
+        _fanout_map["sentiment"] = "sentiment"
 
     builder.add_conditional_edges(
         "supervisor",
@@ -209,6 +210,8 @@ def build_graph(settings: Settings):
     builder.add_edge("moneyflow", "gate")
     if settings.news_enabled:
         builder.add_edge("news", "gate")
+    if settings.sentiment_enabled:
+        builder.add_edge("sentiment", "gate")
 
     # ── 线性路径：gate → reasoning → critic ─────────────────
     builder.add_edge("gate", "reasoning")

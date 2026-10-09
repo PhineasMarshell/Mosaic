@@ -127,6 +127,11 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
   "未验证 / 无法确认"。
 - 文本字段中绝对不能出现 [evidence-xxx] 格式的标签。这些引用只在 evidence 与 claims 列表中出现。
 - 明确区分事实、推断与单源消息：单源消息必须写明来源与时间，不得写成既定事实。
+- 舆情情绪类证据（source_tool=xq_discussions, metric=sentiment_bullish/bearish/neutral/sentiment_score）：
+  来自雪球个股评论区，代表散户/个人投资者的情绪倾向。注意：
+  - 评论样本可能存在幸存者偏差（极端情绪用户更倾向发言）
+  - 单只股票的评论情绪不能代表整体市场
+  - 结合龙虎榜资金流向做多空交叉验证
 - 明确区分事实、解释、假设和结论。
 - 必须考虑反证。
 - 如果证据不足，直接说"不足以判断"。

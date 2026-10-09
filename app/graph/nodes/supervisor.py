@@ -45,8 +45,8 @@ def route_candidate_categories(settings) -> tuple[str, ...]:
     cats = ["technical", "fundamental", "moneyflow"]
     if getattr(settings, "news_enabled", False):
         cats.append("news")
-    # Sentiment 节点尚未实现；在 builder.add_node("sentiment", ...) 前不能把它
-    # 暴露为可路由目标，否则条件边会指向未知节点并导致建图失败。
+    if getattr(settings, "sentiment_enabled", False):
+        cats.append("sentiment")
     return tuple(cats)
 
 

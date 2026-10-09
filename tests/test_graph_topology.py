@@ -226,7 +226,7 @@ def test_tool_categories_cover_all_39_tools():
     """所有注册工具的 category 应属于合法类别之一。"""
     from app.gateway.tool_registry import ALL_TOOLS
 
-    valid_categories = {"technical", "fundamental", "moneyflow", "shared", "news"}
+    valid_categories = {"technical", "fundamental", "moneyflow", "shared", "news", "sentiment"}
     for t in ALL_TOOLS:
         assert t.category in valid_categories, f"{t.key} 未标注合法 category={t.category!r}"
 
@@ -411,19 +411,16 @@ def test_news_node_absent_when_disabled():
     assert "sentiment" not in nodes
 
 
-def test_sentiment_enabled_warns_and_does_not_crash_graph(caplog):
-    """Sentiment 节点未实现时，开关打开应明确 warning，且不能映射到未知节点。"""
+def test_sentiment_enabled_registers_node_and_route():
+    """sentiment_enabled=True → 图注册 sentiment 节点、扇出含它、路由候选含它。"""
     settings = Settings(sentiment_enabled=True)
 
-    with caplog.at_level(logging.WARNING, logger="app.graph.builder"):
-        graph = build_graph(settings)
-
-    assert "sentiment node is not implemented" in caplog.text
+    graph = build_graph(settings)
     nodes = graph.get_graph().nodes
 
-    assert "sentiment" not in nodes
+    assert "sentiment" in nodes
     assert {"technical", "fundamental", "moneyflow"}.issubset(set(nodes))
-    assert route_candidate_categories(settings) == ("technical", "fundamental", "moneyflow")
+    assert route_candidate_categories(settings) == ("technical", "fundamental", "moneyflow", "sentiment")
 
 
 @pytest.mark.asyncio
