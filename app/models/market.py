@@ -26,6 +26,9 @@ class NormalizedDatum(BaseModel):
 
 class ToolResult(BaseModel):
     tool: str
+    #: Gateway operation id (normally equal to ``tool``; explicit for audit
+    #: records and boundary validation failures).
+    operation_id: str | None = None
     #: 阶段 2：本次调用**在计划里的 registry key**（analyst 从 route 写入）。
     #: 缺口判定必须读它——``tool`` 存的是 gateway operationId，而同一个
     #: operationId 会被多个 registry key 复用（quote/search、klines/snapshot/window），

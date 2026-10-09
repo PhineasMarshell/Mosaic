@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
+from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, semantic_signature
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ MARKET_TASKS: frozenset[str] = frozenset({"market_summary", "market_diagnosis"})
 MARKET_SUMMARY_MINIMUM: tuple[tuple[str, dict[str, Any], str], ...] = (
     (
         "quote",
-        {"symbol": A_SHARE_BENCHMARK_SYMBOL},
+        {"symbols": [A_SHARE_BENCHMARK_SYMBOL]},
         "A股大盘基准：沪深300 指数当日表现（点位与涨跌幅）",
     ),
     ("sentiment", {}, "A股市场情绪：风险偏好 / 涨跌家数"),
@@ -92,7 +93,7 @@ def unexecutable_steps(plan: ResearchPlan, question: str) -> list[str]:
         if not getattr(meta, "requires_symbol", True):
             continue
         arguments = step.arguments or {}
-        if arguments.get("symbol") or has_code_in_question:
+        if arguments.get("symbol") or arguments.get("symbols") or has_code_in_question:
             continue
         dropped.append(step.tool_key)
     return dropped
@@ -114,6 +115,25 @@ def apply_market_summary_prefix(
     """
     prefix_keys: list[str] = []
     dropped: list[str] = []
+
+    # Canonicalize planner output before any route/unexecutable decision.  This
+    # keeps plan logs, route construction and execution on the same arguments.
+    canonical_steps: list[ToolCallPlan] = []
+    seen: set[str] = set()
+    for step in plan.steps:
+        try:
+            from app.gateway.tool_registry import resolve_tool
+
+            operation_id = resolve_tool(step.tool_key).tool_name
+            args = canonicalize_tool_arguments(operation_id, step.arguments or {})
+        except (KeyError, ArgumentValidationError):
+            args = dict(step.arguments or {})
+        step.arguments = args
+        signature = semantic_signature(step.tool_key, args)
+        if signature not in seen:
+            seen.add(signature)
+            canonical_steps.append(step)
+    plan.steps = canonical_steps
 
     if not is_market_level_question(plan.intent, question):
         return prefix_keys, dropped
@@ -153,6 +173,10 @@ def apply_market_summary_prefix(
         return prefix_keys, dropped
 
     plan.steps = (prefix_steps + plan.steps)[:max_steps]
+    # A planner quote can be removed and replaced by the canonical prefix.  It
+    # is executable now, so it must not remain in unexecutable_keys telemetry.
+    present_keys = {step.tool_key for step in plan.steps}
+    dropped = [key for key in dropped if key not in present_keys]
     if dropped:
         # 旧行为：这些 step 留在计划里，执行层打一条 warning 后静默跳过 ——
         # 计划文本与实际执行不一致，报告却在"零数据"下撰写。现在如实剔除并记账。

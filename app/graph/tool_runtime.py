@@ -20,6 +20,7 @@ from contextvars import ContextVar
 
 from app.cache import _make_cache_key, _resolve_ttl, market_cache
 from app.config import Settings
+from app.gateway.arguments import canonicalize_tool_arguments, semantic_signature
 from app.gateway.http_client import MarketGatewayHttpClient
 from app.gateway.mcp_client import MarketGatewayClient
 from app.gateway.tool_registry import resolve_tool_by_name
@@ -310,8 +311,8 @@ class ToolRuntime:
 
     @staticmethod
     def _signature(tool_name: str, arguments: dict) -> str:
-        """同一次运行内的去重签名：tool_name + 排序后的参数。"""
-        return f"{tool_name}:{sorted(arguments.items())}"
+        """同一次运行内的稳定语义签名（支持嵌套参数）。"""
+        return semantic_signature(tool_name, arguments)
 
     async def execute(
         self,
@@ -332,6 +333,22 @@ class ToolRuntime:
         Returns:
             ToolResult — 包含 normalized 数据、状态、错误信息
         """
+        try:
+            arguments = canonicalize_tool_arguments(tool_name, arguments)
+        except Exception as exc:
+            try:
+                logical_key = resolve_tool_by_name(tool_name).key
+            except Exception:
+                logical_key = None
+            return ToolResult(
+                tool=tool_name,
+                operation_id=tool_name,
+                tool_key=logical_key,
+                arguments=dict(arguments or {}),
+                status=STATUS_ERROR,
+                normalized=[],
+                error=f"Invalid arguments: {exc}",
+            )
         signature = self._signature(tool_name, arguments)
 
         # T27：同一次运行里同签名已真实执行过 → 明确跳过（partial + note）。
@@ -341,6 +358,8 @@ class ToolRuntime:
             logger.info("Skipping duplicate call %s (already executed this run)", tool_name)
             return ToolResult(
                 tool=tool_name,
+                operation_id=tool_name,
+                tool_key=resolve_tool_by_name(tool_name).key,
                 arguments=arguments,
                 status=STATUS_PARTIAL,
                 partial=True,
@@ -352,10 +371,16 @@ class ToolRuntime:
         cached = self._check_cache(tool_name, arguments, called_signatures, signature)
         if cached is not None:
             logger.info("Cache hit for %s", tool_name)
+            cached.operation_id = cached.operation_id or tool_name
+            cached.arguments = arguments
             return cached
 
         # 执行真实调用
         result = await self._do_execute(tool_name, arguments, deadline=deadline)
+        # Keep trace fields present even when a Gateway/mock implementation
+        # constructs an older ToolResult shape.
+        result.operation_id = result.operation_id or tool_name
+        result.arguments = arguments
 
         # 只缓存成功/部分成功的结果。T5：缓存里存**深拷贝**，使后续 truncate
         # 对工作对象的原地改写不会污染缓存（旧实现存同一实例，truncate 会改到缓存）。
@@ -460,6 +485,7 @@ class ToolRuntime:
         if tool_name not in available:
             return ToolResult(
                 tool=tool_name,
+                operation_id=tool_name,
                 arguments=arguments,
                 status=STATUS_ERROR,
                 normalized=[],

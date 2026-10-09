@@ -30,6 +30,7 @@
 
 from typing import Any
 
+from app.gateway.arguments import canonicalize_tool_arguments
 from app.gateway.tool_registry import resolve_tool_by_name
 from app.models.market import NormalizedDatum, Status, ToolResult
 
@@ -769,6 +770,7 @@ def normalize_tool_result(
     raw: Any,
     *,
     error: str | None = None,
+    tool_key: str | None = None,
 ) -> ToolResult:
     """将 MCP/HTTP 返回的原始响应标准化。
 
@@ -778,9 +780,24 @@ def normalize_tool_result(
         raw: 原始响应数据
         error: 如果非空，表示调用失败
     """
+    try:
+        arguments = canonicalize_tool_arguments(tool, arguments)
+    except Exception:
+        # Boundary validation is performed by MCP/HTTP clients.  The
+        # normalizer remains tolerant for legacy/internal callers so an
+        # upstream error can still be represented with its original args.
+        arguments = dict(arguments or {})
+    if tool_key is None:
+        try:
+            tool_key = resolve_tool_by_name(tool).key
+        except KeyError:
+            tool_key = None
+
     if error:
         return ToolResult(
             tool=tool,
+            operation_id=tool,
+            tool_key=tool_key,
             arguments=arguments,
             raw=None,
             status="error",
@@ -798,6 +815,8 @@ def normalize_tool_result(
     if raw is None or raw == [] or (isinstance(raw, dict) and not raw):
         return ToolResult(
             tool=tool,
+            operation_id=tool,
+            tool_key=tool_key,
             arguments=arguments,
             raw=None,
             status="error",
@@ -811,6 +830,8 @@ def normalize_tool_result(
         snippet = str(raw)[:200]
         return ToolResult(
             tool=tool,
+            operation_id=tool,
+            tool_key=tool_key,
             arguments=arguments,
             raw=raw,
             status="error",
@@ -877,6 +898,8 @@ def normalize_tool_result(
     if not normalized:
         return ToolResult(
             tool=tool,
+            operation_id=tool,
+            tool_key=tool_key,
             arguments=arguments,
             raw=raw,
             status="error",
@@ -888,6 +911,8 @@ def normalize_tool_result(
 
     return ToolResult(
         tool=tool,
+        operation_id=tool,
+        tool_key=tool_key,
         arguments=arguments,
         raw=raw,
         status=status,

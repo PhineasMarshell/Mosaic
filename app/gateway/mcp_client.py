@@ -19,7 +19,9 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import get_default_environment, stdio_client
 
 from app.config import Settings
+from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments
 from app.gateway.normalizer import normalize_tool_result
+from app.gateway.tool_registry import resolve_tool_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +160,21 @@ class MarketGatewayClient:
     ):
         if not self.session:
             raise MCPToolCallError("MCP client is not connected")
+
+        try:
+            arguments = canonicalize_tool_arguments(tool_name, arguments)
+        except ArgumentValidationError as exc:
+            try:
+                logical_key = resolve_tool_by_name(tool_name).key
+            except KeyError:
+                logical_key = None
+            return normalize_tool_result(
+                tool_name,
+                dict(arguments or {}),
+                None,
+                error=f"Invalid arguments: {exc}",
+                tool_key=logical_key,
+            )
 
         last_error = None
         max_attempts = self.settings.max_retry_per_tool + 1

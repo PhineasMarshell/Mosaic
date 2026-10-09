@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.models.research import ToolCallPlan
+from app.gateway.arguments import canonicalize_tool_arguments, semantic_signature
 
 #: 视为"拿到过调用结果"的状态 —— error 不算，允许回环轮重试失败的工具
 _DONE_STATUSES = ("success", "partial")
@@ -108,11 +109,17 @@ def coverage_records(results: Any) -> list[ExecutionCoverage]:
     for r in results or []:
         status = str(_field(r, "status", "") or "")
         normalized = _field(r, "normalized", []) or []
+        tool_name = str(_field(r, "tool", "") or "")
+        args = dict(_field(r, "arguments", {}) or {})
+        try:
+            args = canonicalize_tool_arguments(tool_name, args)
+        except Exception:
+            pass
         records.append(
             ExecutionCoverage(
                 tool_key=_field(r, "tool_key") or None,
-                tool_name=str(_field(r, "tool", "") or ""),
-                arguments=dict(_field(r, "arguments", {}) or {}),
+                tool_name=tool_name,
+                arguments=args,
                 status=status,
                 partial=bool(_field(r, "partial", False)),
                 datum_count=len(normalized),
@@ -358,6 +365,10 @@ def executed_index(results: Any) -> dict[str, list[dict]]:
         if not name:
             continue
         args = _field(r, "arguments", {}) or {}
+        try:
+            args = canonicalize_tool_arguments(name, dict(args))
+        except Exception:
+            args = dict(args)
         index.setdefault(name, []).append(dict(args))
     return index
 
@@ -448,8 +459,16 @@ def is_repeat_step(step: ToolCallPlan, results: Any) -> bool:
         meta = resolve_tool(step.tool_key)
     except KeyError:
         return False
+    try:
+        planned = canonicalize_tool_arguments(meta.tool_name, dict(step.arguments or {}))
+    except Exception:
+        planned = dict(step.arguments or {})
     for args in executed_index(results).get(meta.tool_name, []):
-        if _args_subset(dict(step.arguments or {}), args):
+        try:
+            executed = canonicalize_tool_arguments(meta.tool_name, dict(args or {}))
+        except Exception:
+            executed = dict(args or {})
+        if _args_subset(planned, executed):
             return True
     return False
 
@@ -459,6 +478,11 @@ def drop_repeat_steps(steps: list[ToolCallPlan], results: Any) -> tuple[list[Too
     kept: list[ToolCallPlan] = []
     dropped: list[str] = []
     for step in steps:
+        try:
+            meta = resolve_tool(step.tool_key)
+            step.arguments = canonicalize_tool_arguments(meta.tool_name, dict(step.arguments or {}))
+        except Exception:
+            pass
         if is_repeat_step(step, results):
             dropped.append(step.tool_key)
         else:
@@ -638,6 +662,17 @@ def append_gap_steps(
                     continue
             if meta.tool_name.startswith(_QUERY_TOOL_PREFIXES):
                 arguments.setdefault("query", question)
+            try:
+                # Quote gap steps must use the canonical batch contract even
+                # when Critic only names the logical key.
+                if meta.tool_name == "get_market_quotes" and not arguments:
+                    arguments = {"symbols": ["000300"]}
+                arguments = canonicalize_tool_arguments(meta.tool_name, arguments)
+            except Exception:
+                continue
+            signature = semantic_signature(key, arguments)
+            if any(semantic_signature(s.tool_key, dict(s.arguments or {})) == signature for s in steps + forced):
+                continue
             forced.append(
                 ToolCallPlan(
                     tool_key=key,

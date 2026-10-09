@@ -168,19 +168,22 @@ def log_plan(
       step（旧行为是执行层静默跳过 → 假覆盖）。
     """
     from app.gateway.tool_registry import resolve_tool
+    from app.gateway.arguments import canonicalize_tool_arguments
 
     steps: list[dict] = []
     for step in _field(plan, "steps", []) or []:
         key = _field(step, "tool_key", "")
         try:
             operation_id = resolve_tool(key).tool_name
+            arguments = canonicalize_tool_arguments(operation_id, _field(step, "arguments", {}) or {})
         except Exception:
             operation_id = None
+            arguments = _field(step, "arguments", {}) or {}
         steps.append(
             {
                 "tool_key": key,
                 "operation_id": operation_id,
-                "arguments": clip_args(_field(step, "arguments", {})),
+                "arguments": clip_args(arguments),
                 "priority": _field(step, "priority"),
             }
         )
@@ -201,15 +204,24 @@ def log_plan(
 
 def log_executions(state: Any, results: Any, *, category: str | None = None) -> None:
     """实际跑了什么：status / partial / normalized 条数 / 缓存命中。"""
+    from app.gateway.arguments import canonicalize_tool_arguments
+
     rows: list[dict] = []
     for r in results or []:
         normalized = _field(r, "normalized", []) or []
         cache = getattr(r, "_cache_info", None) or {}
+        operation_id = _field(r, "operation_id") or _field(r, "tool")
+        arguments = _field(r, "arguments", {}) or {}
+        try:
+            arguments = canonicalize_tool_arguments(operation_id, arguments)
+        except Exception:
+            pass
         rows.append(
             {
                 "tool_key": _field(r, "tool_key"),
+                "operation_id": _field(r, "operation_id") or _field(r, "tool"),
                 "tool": _field(r, "tool"),
-                "arguments": clip_args(_field(r, "arguments", {})),
+                "arguments": clip_args(arguments),
                 "status": _field(r, "status"),
                 "partial": bool(_field(r, "partial", False)),
                 "datum_count": len(normalized),

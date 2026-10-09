@@ -240,6 +240,7 @@ class SupervisorNode:
 
     def _build_route(self, plan: ResearchPlan) -> list:
         """将 ResearchPlan.steps 按工具 category 分组为 AnalystAssignment 列表。"""
+        from app.gateway.arguments import canonicalize_tool_arguments
         from app.gateway.tool_registry import resolve_tool
 
         groups: dict[str, list] = {}
@@ -247,6 +248,7 @@ class SupervisorNode:
         for step in plan.steps:
             try:
                 meta = resolve_tool(step.tool_key)
+                step.arguments = canonicalize_tool_arguments(meta.tool_name, dict(step.arguments or {}))
                 cat = meta.category
             except Exception:
                 cat = "technical"  # 无法解析的工具键兜底给技术面

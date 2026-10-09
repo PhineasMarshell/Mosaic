@@ -47,7 +47,7 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
 
 2. "steps" —— 数组，每项包含：
    - tool_key: **工具的逻辑 key**（注册表文本中 `-` 左边的部分，如 `snapshot`, `klines`, `overview`，**不是右边的 operationId**）
-   - arguments: 参数对象。注意：**并非所有工具都能空参调用**。需要搜索词的查询类工具（如 `news_search`、`news_digest`）必须传 `query` 字段；市场域工具通常需传 `symbol`/`secid` 等标识符。不确定时保留 `{{}}` 但 purpose 要描述预期用途。
+   - arguments: 参数对象。注意：**并非所有工具都能空参调用**。需要搜索词的查询类工具（如 `news_search`、`news_digest`）必须传 `query` 字段；市场域工具通常需传 `symbols`/`symbol`/`secid` 等标识符。不确定时保留 `{{}}` 但 purpose 要描述预期用途。
    - purpose: 调用该工具的目的描述
    - priority: "high" | "medium" | "low"
 
@@ -67,14 +67,14 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
 - "CPI/GDP/美联储..." → domain=macro, task=market_summary
 - "帮我研究 XXX/研究贵州茅台/XXX最近怎么样..." → domain=a_share, task=company_research
   公司研究路径：
-    search(q=证券名) → quote(symbol=腾讯代码) → detail(symbol=6位代码)
+    search(q=证券名) → quote(symbols=[腾讯代码]) → detail(symbol=6位代码)
     → business(symbol=6位代码) → finance(symbol=6位代码) → shareholders(symbol=6位代码)
     → longhu(symbol=腾讯代码) → abnormal_reasons(symbol=腾讯代码)
-    ⚠️ 注意参数名必须与注册表一致：quote 用 symbol(单数字符串)，不是 symbols；
+    ⚠️ 注意参数名必须与注册表一致：quote 用 symbols(字符串数组)；旧 symbol 只在 Gateway 边界兼容；
        search 用 q，不是 keyword；eastmoney F10 系列用 symbol(纯数字如600519)，不是 code；
        klines/snapshot 查询 A 股时必须指定 exchange=tencent 或 exchange=xueqiu。
 
-A 股市场级（大盘/全市场问题）：sentiment → limit_up_count → limit_up_sectors → quote(symbol="000300") → telegraph
+A 股市场级（大盘/全市场问题）：quote(symbols=["000300"]) → sentiment → limit_up_count → limit_up_sectors → telegraph
   ⚠️ 市场级问题（问题里不含 6 位证券代码）的上述最低证据集由系统在代码层自动补入，
      你**不需要**重复规划它们；请把 steps 留给额外需要的东西（如题材深挖用 limit_up_pool、
      消息面用 news_digest/symbol_news）。
@@ -83,12 +83,12 @@ A 股市场级（大盘/全市场问题）：sentiment → limit_up_count → li
      否则它会被判为"计划了但无法执行"而从计划中剔除。
   个股问题（问题里含 6 位代码，或已确定标的）：overview → detail → finance → longhu → abnormal_reasons
 Crypto: snapshot(exchange=binance) → klines → derivatives_history → funding_rate → liquidation_today → top_position → liqmap
-港股：hk_northbound_daily → hk_index_snapshot → quote(symbol=HK代码) → search(q=股票名) → hk_quote
+港股：hk_northbound_daily → hk_index_snapshot → quote(symbols=[HK代码]) → search(q=股票名) → hk_quote
 商品（OKX 永续）：klines(symbol=XAU/USDT:USDT) → snapshot(symbol=XAG/USDT:USDT, XPT/USDT:USDT)
 商品路径中 PALL（钯金）、铜、原油暂无 OKX/Binance USDT 永续，暂不可用。
 
 参数格式规则（必须遵守）：
-- quote: symbol 为单数字符串，A股用 "000300" 或 "SH600519"，不可传数组
+- quote: symbols 为字符串数组，A股用 ["000300"] 或 ["SH600519"]；旧 symbol 仅 Gateway 边界兼容
 - search: 雪球搜索用 q 参数（不是 keyword）
 - abnormal_reasons: 用 symbol=腾讯代码（如 SH600519），start/end 可选
 - klines/snapshot: A 股 klines 需加 exchange="tencent"；snapshot 仅支持 Crypto/Commodities(Binance)，A 股实时行情用 quote 工具

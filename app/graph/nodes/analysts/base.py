@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.config import Settings
+from app.gateway.arguments import canonicalize_tool_arguments, semantic_signature
 from app.gateway.tool_registry import ALL_TOOLS
 from app.graph.state import AnalystName
 from app.graph.tool_runtime import ToolRuntime
@@ -150,7 +151,11 @@ class MarketAnalystNode:
             for assignment in route:
                 if isinstance(assignment, dict) and "tool_calls" in assignment:
                     for tc in assignment["tool_calls"]:
-                        sym = (tc.get("arguments") or {}).get("symbol")
+                        tc_args = tc.get("arguments") or {}
+                        sym = tc_args.get("symbol")
+                        if not sym:
+                            values = tc_args.get("symbols") or []
+                            sym = values[0] if isinstance(values, (list, tuple)) and values else None
                         if sym and isinstance(sym, str) and len(sym) >= 6 and sym[-6:].isdigit():
                             if sym[-6:] not in candidates:
                                 candidates.append(sym[-6:])
@@ -191,7 +196,7 @@ class MarketAnalystNode:
             budget = max_calls
         # T27：route 里重复的 (tool, arguments) 在这里真正跳过，
         # 不再依赖下游 execute 的签名集合（那只挡得住"已成功执行过"的）。
-        seen: set[tuple[str, tuple]] = set()
+        seen: set[str] = set()
         # T23：整次调查的预算按"剩余预算 ÷ 剩余工具数"均分给每个工具，
         # 下发到 gateway 客户端做重试预算感知（超预算返回 error ToolResult，不炸链）。
         # T23b：剩余预算以 state["budget_deadline"]（整次调查的截止时刻）为准——
@@ -227,17 +232,29 @@ class MarketAnalystNode:
                 continue
 
             arguments = dict(tc.get("arguments") or {})
+            # Convert legacy planner arguments before the symbol guard and
+            # before deduplication.  The execution layer only sees canonical
+            # Gateway arguments.
+            try:
+                arguments = canonicalize_tool_arguments(meta.tool_name, arguments)
+            except Exception as exc:
+                logger.warning("%s 跳过 %s（参数无效: %s）", self.category, tool_key, exc)
+                continue
             # symbol 守卫（阶段 3 ④）：是否需要 symbol 由注册表元数据声明，
             # planner 没给 → 用问题里抽到的代码补，仍无则跳过。
-            if meta.requires_symbol and not arguments.get("symbol"):
+            has_symbol = arguments.get("symbols") if meta.tool_name == "get_market_quotes" else arguments.get("symbol")
+            if meta.requires_symbol and not has_symbol:
                 if stocks:
-                    arguments["symbol"] = ";".join(stocks)
+                    if meta.tool_name == "get_market_quotes":
+                        arguments["symbols"] = sorted(set(stocks))
+                    else:
+                        arguments["symbol"] = ";".join(stocks)
                 else:
                     # T8：跳过必须可见（旧实现是 debug，功能没跑却看不出）。
                     logger.warning("%s 跳过 %s（缺少 symbol 且问题中无 6 位代码）", self.category, tool_key)
                     continue
 
-            dedup_key = (meta.tool_name, tuple(sorted(arguments.items())))
+            dedup_key = semantic_signature(meta.tool_name, arguments)
             if dedup_key in seen:
                 logger.warning("%s 跳过重复 tool_call %s（同签名已在本次 route 中出现）", self.category, tool_key)
                 continue
@@ -281,7 +298,10 @@ class MarketAnalystNode:
 
         # 对于需要 symbol 的工具（注册表声明 requires_symbol），若已知 stock codes → 全部传入。
         if getattr(meta, "requires_symbol", True) and stocks:
-            arguments["symbol"] = ";".join(stocks)
+            if tool_name == "get_market_quotes":
+                arguments["symbols"] = sorted(set(stocks))
+            else:
+                arguments["symbol"] = ";".join(stocks)
 
         # 特定工具的额外参数：
         if tool_name == "get_stock_longhu":

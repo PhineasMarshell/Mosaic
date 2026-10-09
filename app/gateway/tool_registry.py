@@ -216,7 +216,7 @@ _ASHARE_MICRO = [
     ToolMeta(
         "quote",
         "get_market_quotes",
-        "多市场实时行情与五档盘口（腾讯 API，支持 A 股 / 港股 / US Stock 代码）",
+        "批量多市场实时行情与五档盘口（腾讯 API，参数 symbols: list[str]）",
         domain="a_share",
         priority="medium",
         http_method="GET",
@@ -300,7 +300,7 @@ _HK_STOCK_PLACEHOLDERS = [
     ToolMeta(
         "hk_quote",
         "get_market_quotes",
-        "港股实时行情（腾讯 API，传入 HK 代码如 HK03400/00700）",
+        "港股批量实时行情（腾讯 API，参数 symbols: list[str]）",
         domain="hk_stock",
         priority="high",
         http_method="GET",

@@ -104,7 +104,7 @@ def test_market_question_injects_minimum_evidence_set_before_llm_steps():
     assert _keys(plan)[: len(_MIN_KEYS)] == _MIN_KEYS
     assert _keys(plan)[len(_MIN_KEYS) :] == ["detail"]
     # 大盘基准由代码给出 canonical 参数（沪深300），不许 LLM 猜口径
-    assert plan.steps[0].arguments == {"symbol": A_SHARE_BENCHMARK_SYMBOL}
+    assert plan.steps[0].arguments == {"symbols": [A_SHARE_BENCHMARK_SYMBOL]}
     assert plan.steps[0].priority == "high"
     # 涨停池明细刻意不在最低集里：只在需要点名个股/板块密度时才计划
     assert "limit_up_pool" not in prefix
@@ -118,7 +118,7 @@ def test_planner_quote_step_is_replaced_by_the_code_owned_benchmark_symbol():
 
     quotes = [step for step in plan.steps if step.tool_key == "quote"]
     assert len(quotes) == 1
-    assert quotes[0].arguments == {"symbol": A_SHARE_BENCHMARK_SYMBOL}
+    assert quotes[0].arguments == {"symbols": [A_SHARE_BENCHMARK_SYMBOL]}
 
 
 @pytest.mark.parametrize(

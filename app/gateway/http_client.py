@@ -14,7 +14,9 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments
 from app.gateway.normalizer import normalize_tool_result
+from app.gateway.tool_registry import resolve_tool_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,21 @@ class MarketGatewayHttpClient:
         if self.client is None:
             raise HTTPGatewayError("HTTP client is not connected")
 
+        try:
+            arguments = canonicalize_tool_arguments(tool_name, arguments)
+        except ArgumentValidationError as exc:
+            try:
+                logical_key = resolve_tool_by_name(tool_name).key
+            except KeyError:
+                logical_key = None
+            return normalize_tool_result(
+                tool_name,
+                dict(arguments or {}),
+                None,
+                error=f"Invalid arguments: {exc}",
+                tool_key=logical_key,
+            )
+
         meta = resolve_tool_by_name(tool_name)
         last_error = None
         max_attempts = self.settings.max_retry_per_tool + 1
@@ -119,11 +136,17 @@ class MarketGatewayHttpClient:
                 return _budget_exhausted()
 
             try:
+                request_arguments = dict(arguments)
+                if tool_name == "get_market_quotes":
+                    # allowed_openapi.json models the HTTP query field as a
+                    # comma separated string; keep list[str] canonical inside
+                    # Mosaic and encode only at this transport boundary.
+                    request_arguments["symbols"] = ",".join(arguments["symbols"])
                 response = await self.client.request(
                     meta.http_method,
                     meta.http_path,
-                    params=arguments if meta.http_method == "GET" else None,
-                    json=arguments if meta.http_method != "GET" else None,
+                    params=request_arguments if meta.http_method == "GET" else None,
+                    json=request_arguments if meta.http_method != "GET" else None,
                 )
 
                 # --------------------------------------------------

@@ -162,8 +162,13 @@ MACRO_TTL = 3600.0  # 宏观数据小时级（低频变化）
 
 def _make_cache_key(tool: str, arguments: dict) -> str:
     """生成缓存键。"""
-    sorted_args = "|".join(f"{k}={v}" for k, v in sorted(arguments.items()))
-    return f"{tool}:{sorted_args}"
+    from app.gateway.arguments import canonicalize_tool_arguments, semantic_signature
+
+    try:
+        arguments = canonicalize_tool_arguments(tool, arguments)
+    except Exception:
+        pass
+    return semantic_signature(tool, arguments)
 
 
 def _resolve_ttl(tool: str, settings=None, arguments: dict | None = None) -> float:
