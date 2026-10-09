@@ -102,6 +102,9 @@ class ResearchResponse(BaseModel):
     delivery_status: DeliveryStatus | None = None
     #: 阶段 5：非 verified 时的可读原因（前端 / CLI 直接展示）
     delivery_reason: str = ""
+    #: 持久化门控的实际结果。``None`` 表示调用方尚未执行持久化；
+    #: ``False`` 既包括门控拒绝，也包括写入失败或部分写入失败。
+    persisted: bool | None = None
     #: 本次图运行的 run_id。**内部字段**：用于把 run_start / plan / executions /
     #: critic / route / finalize / delivery 七条结构化日志串起来；对外 JSON 响应里
     #: 会被 exclude 掉（main.py 传 model_dump(exclude={"run_id"})），落库记录里保留。
@@ -152,7 +155,14 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
         delivery_status = derived_delivery
 
     report_out = report
-    if delivery_status != "verified" and report_out is not None:
+    if report_out is None and delivery_status == "verified":
+        # A passing Critic cannot make an absent reasoning report deliverable.
+        # Treat this as a failed run so API, SSE, and CLI do not report a false
+        # verified result with an empty body.
+        audit_status = "error"
+        delivery_status = "failed"
+        reason = "reasoning produced no report"
+    if delivery_status in ("blocked", "failed") and report_out is not None:
         # 未通过审计的正文不得作为结论返回（阶段 5）。
         report_out = None
 
@@ -226,6 +236,7 @@ def build_response_from_state(
         final_audit_status=final_audit_status,
         delivery_status=delivery_status,
         delivery_reason=delivery_reason,
+        persisted=state.get("persisted"),
         run_id=state.get("run_id"),
     )
 

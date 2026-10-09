@@ -15,6 +15,7 @@ import re
 import sys
 
 from app.agent.orchestrator import Orchestrator
+from app.agent.persistence import persist_research
 from app.config import get_settings
 from app.logging_config import setup_logging
 
@@ -171,16 +172,26 @@ async def main(question: str | None = None) -> None:
 
     try:
         result = await orchestrator.run(question)
+        # Keep CLI persistence and terminal interpretation aligned with API/SSE.
+        result.persisted = await persist_research(result, question, result.conversation_id)
 
         # 阶段 5：可信与否只看 delivery_status，绝不靠 errors 为空来推断。
-        if result.delivery_status != "verified":
-            print(f"研究未通过证据审计（delivery_status={result.delivery_status}）。", file=sys.stderr)
+        if result.delivery_status not in ("verified", "degraded"):
+            print(
+                f"研究未通过证据审计（final_audit_status={result.final_audit_status}, "
+                f"delivery_status={result.delivery_status}, persisted={result.persisted}）。",
+                file=sys.stderr,
+            )
             detail = result.delivery_reason
             if not detail and isinstance(result.critique, dict):
                 detail = str(result.critique.get("reason", "") or "")
             if detail:
                 print(f"原因: {detail}", file=sys.stderr)
-            if result.critique and result.critique.get("issues"):
+            if result.unresolved_issues:
+                print("未解决的问题:", file=sys.stderr)
+                for issue in result.unresolved_issues[:10]:
+                    print(f"  - {issue}", file=sys.stderr)
+            elif result.critique and result.critique.get("issues"):
                 print("未解决的问题:", file=sys.stderr)
                 for issue in result.critique["issues"][:10]:
                     print(
@@ -191,6 +202,14 @@ async def main(question: str | None = None) -> None:
             for line in result.errors:
                 print(f"运行错误: {line}", file=sys.stderr)
             sys.exit(2)
+
+        if result.delivery_status == "degraded":
+            print(
+                f"研究结果为降级交付（final_audit_status={result.final_audit_status}, persisted={result.persisted}）。",
+                file=sys.stderr,
+            )
+        elif result.persisted is not True:
+            print("研究已通过审计，但持久化未完成（persisted=False）。", file=sys.stderr)
 
         if result.report is None:
             # T9：推理失败（reasoning 写 report=None）时，把 result.errors 里真正的

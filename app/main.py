@@ -238,6 +238,7 @@ async def ask(request: dict):
                     "final_audit_status": result.final_audit_status,
                     "delivery_reason": result.delivery_reason
                     or "研究未通过证据审计，未返回可信结论，请重试或缩小问题范围",
+                    "persisted": False,
                     "retryable": True,
                 },
             )
@@ -252,26 +253,29 @@ async def ask(request: dict):
                  "unresolved_issues": result.unresolved_issues},
                 delivery_status=str(delivery), persisted=False, sink="sync"
             )
+            code = "no_report" if "reasoning produced no report" in result.errors else "failed"
+            result.persisted = False
             return JSONResponse(
                 status_code=502,
                 content={
                     "detail": "研究未能产出报告（推理环节失败），请重试",
-                    "code": "no_report",
+                    "code": code,
                     "errors": result.errors,
                     "delivery_status": delivery,
                     "final_audit_status": result.final_audit_status,
                     "delivery_reason": result.delivery_reason,
                     "critique": result.critique,
                     "unresolved_issues": result.unresolved_issues,
+                    "persisted": False,
                 },
             )
-
-        #: run_id 只在内部串联日志，不出现在对外 JSON 响应里
-        data = {k: v for k, v in result.model_dump().items() if k != "run_id"}
 
         # T3：同步与 SSE 共用同一持久化逻辑，避免双路径漂移（SSE 曾读错字段层级，
         # 把空摘要/空状态写入库）。阶段 5 起内部按 delivery_status 门控。
         persisted = await persist_research(result, question, conversation_id)
+        result.persisted = persisted
+        #: run_id 只在内部串联日志，不出现在对外 JSON 响应里
+        data = {k: v for k, v in result.model_dump().items() if k != "run_id"}
         run_log.log_delivery(
             {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
              "delivery_reason": result.delivery_reason, "critique": result.critique,
@@ -282,23 +286,53 @@ async def ask(request: dict):
         return JSONResponse(content=data)
     except TimeoutError as exc:
         logger.warning("Research exceeded %ds budget: %s", settings.research_budget_seconds, question[:50])
-        raise HTTPException(
+        return JSONResponse(
             status_code=504,
-            detail=f"Research timed out after {settings.research_budget_seconds}s",
-        ) from exc
+            content={
+                "detail": f"Research timed out after {settings.research_budget_seconds}s",
+                "code": "timeout",
+                "question": question,
+                "final_audit_status": "error",
+                "delivery_status": "failed",
+                "delivery_reason": "研究超出总预算",
+                "unresolved_issues": [],
+                "persisted": False,
+            },
+        )
     except LLMOutputError as exc:
         # 必须排在 ValueError 之前 —— LLMOutputError 是 ValueError 的子类
         logger.error("Upstream LLM output unusable: %s", str(exc)[:800])
-        raise HTTPException(
+        return JSONResponse(
             status_code=502,
-            detail="上游模型返回了无法解析的内容，请重试或更换模型",
-        ) from exc
+            content={
+                "detail": "上游模型返回了无法解析的内容，请重试或更换模型",
+                "code": "upstream",
+                "question": question,
+                "final_audit_status": "error",
+                "delivery_status": "failed",
+                "delivery_reason": "上游模型输出不可解析",
+                "unresolved_issues": [],
+                "persisted": False,
+            },
+        )
     except ValueError as exc:
         logger.warning("Invalid input: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Internal error during research")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": str(exc),
+                "code": "internal",
+                "question": question,
+                "final_audit_status": "error",
+                "delivery_status": "failed",
+                "delivery_reason": "研究流程发生内部异常",
+                "unresolved_issues": [],
+                "persisted": False,
+            },
+        )
 
 
 #: 节点名 → (progress step, 默认文案)
@@ -399,10 +433,19 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         delivery = result.delivery_status or "failed"
         # delivery 日志必须带上**本次图运行真实**的 run_id，与 run_start / plan /
         # executions / critic / route / finalize 对得上；绝不另生成一个 id。
-        final_state = {**final_state, "run_id": result.run_id or final_state.get("run_id")}
-        #: run_id 是内部字段，不出现在对外 SSE 载荷里
-        public_result = {k: v for k, v in result.model_dump().items() if k != "run_id"}
-
+        # The response builder is the source of truth for terminal fields.  In
+        # particular, the pass fast path derives ``final_audit_status`` from
+        # Critic and therefore the raw graph state may still contain ``None``.
+        # Copy the resolved fields back before emitting delivery telemetry so
+        # SSE and sync logs describe the same terminal result.
+        final_state = {
+            **final_state,
+            "run_id": result.run_id or final_state.get("run_id"),
+            "final_audit_status": result.final_audit_status,
+            "delivery_status": result.delivery_status,
+            "delivery_reason": result.delivery_reason,
+            "unresolved_issues": result.unresolved_issues,
+        }
         if result.report is None:
             if delivery == "blocked":
                 # 审计没通过：不是运行失败（errors 可以是空的），但也不能当作结论交付。
@@ -431,6 +474,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                         "critique": result.critique,
                         "unresolved_issues": result.unresolved_issues,
                         "errors": result.errors,
+                        "persisted": False,
                     },
                 )
                 run_log.log_delivery(final_state, delivery_status="blocked", persisted=False, sink="sse")
@@ -439,11 +483,13 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             # 既不落库，也不让前端拿空报告去渲染。
             logger.error("Stream research produced no report for %s (errors=%s)", question[:50], result.errors)
             yield json_event("progress", {"step": "error", "message": "研究未能产出报告（推理环节失败），请重试"})
+            code = "no_report" if "reasoning produced no report" in result.errors else "failed"
+            result.persisted = False
             yield json_event(
                 "result",
                 {
                     "error": "研究未能产出报告（推理环节失败），请重试",
-                    "code": "no_report",
+                    "code": code,
                     "question": question,
                     "errors": result.errors,
                     "delivery_status": delivery,
@@ -451,6 +497,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                     "delivery_reason": result.delivery_reason,
                     "critique": result.critique,
                     "unresolved_issues": result.unresolved_issues,
+                    "persisted": False,
                 },
             )
             run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=False, sink="sse")
@@ -458,20 +505,29 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
 
         yield json_event("progress", {"step": "done", "node": None, "message": "调查完成"})
 
-        save_result = public_result
         # T3：SSE 与同步共用同一持久化函数，内部从 result.report 读字段；
         # 旧实现读 model_dump() 顶层（字段嵌在 report 下），导致摘要恒空、当日状态
         # 被空值覆盖且漏写 market_state。阶段 5 起该函数内部还会按
         # delivery_status 门控——未验证结果不写对话轮次 / 当日状态 / 记忆。
         # 阶段 5：只有 verified 才可能真正落库（门控在 persist_research 内部）；
         # 这里记录的是"是否放行到持久化"，与门控条件保持同一表达式，避免日志说谎。
-        asyncio.create_task(persist_research(result, question, conversation_id))
-        run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=delivery == "verified", sink="sse")
+        # Await the shared persistence gate so delivery telemetry records the
+        # actual write decision rather than a predicted value.  The gate is
+        # synchronous SQLite work wrapped in an async function and must finish
+        # before the stream reports its terminal event.
+        persisted = await persist_research(result, question, conversation_id)
+        result.persisted = persisted
+        final_state["persisted"] = persisted
+        #: run_id 是内部字段，不出现在对外 SSE 载荷里
+        public_result = {k: v for k, v in result.model_dump().items() if k != "run_id"}
+        save_result = public_result
+        run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=persisted, sink="sse")
 
         yield json_event("result", save_result)
 
     except (UpstreamTimeoutError, TimeoutError):
         logger.warning("Stream research exceeded %ds budget for: %s", budget, question[:50])
+        run_log.log_delivery(initial_state, delivery_status="failed", persisted=False, sink="sse")
         yield json_event("progress", {"step": "error", "message": "研究超时，请重试"})
         yield json_event(
             "result",
@@ -479,10 +535,16 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 "error": f"Research timed out after {budget}s",
                 "code": "timeout",
                 "question": question,
+                "final_audit_status": "error",
+                "delivery_status": "failed",
+                "delivery_reason": "研究超出总预算",
+                "unresolved_issues": [],
+                "persisted": False,
             },
         )
     except LLMOutputError as exc:
         logger.error("Stream research got unusable LLM output for: %s — %s", question[:50], str(exc)[:800])
+        run_log.log_delivery(initial_state, delivery_status="failed", persisted=False, sink="sse")
         yield json_event("progress", {"step": "error", "message": "上游模型返回了无法解析的内容"})
         yield json_event(
             "result",
@@ -490,10 +552,16 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 "error": "上游模型返回了无法解析的内容，请重试或更换模型",
                 "code": "upstream",
                 "question": question,
+                "final_audit_status": "error",
+                "delivery_status": "failed",
+                "delivery_reason": "上游模型输出不可解析",
+                "unresolved_issues": [],
+                "persisted": False,
             },
         )
     except Exception as exc:
         logger.exception("Stream research failed for: %s", question[:50])
+        run_log.log_delivery(initial_state, delivery_status="failed", persisted=False, sink="sse")
         yield json_event(
             "progress",
             {
@@ -507,6 +575,11 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 "error": str(exc),
                 "code": "internal",
                 "question": question,
+                "final_audit_status": "error",
+                "delivery_status": "failed",
+                "delivery_reason": "研究流程发生内部异常",
+                "unresolved_issues": [],
+                "persisted": False,
             },
         )
     finally:

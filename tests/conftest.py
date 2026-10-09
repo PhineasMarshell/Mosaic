@@ -52,6 +52,41 @@ supervisor → ``"Supervisor routing failed: …"``
 """
 
 import os
+import tempfile
+import uuid
+from pathlib import Path
+
+import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-placeholder")
 os.environ.setdefault("MARKET_GATEWAY_API_KEY", "test-placeholder")
+
+
+_real_mkdtemp = tempfile.mkdtemp
+
+
+def _controlled_mkdtemp(suffix="", prefix="tmp", dir=None):
+    """Keep direct tempfile.mkdtemp users off the denied Windows temp root."""
+    if dir is not None:
+        return _real_mkdtemp(suffix=suffix, prefix=prefix, dir=dir)
+    root = Path(__file__).resolve().parents[1] / ".tmp" / "pytest-controlled"
+    path = root / f"{prefix}{uuid.uuid4().hex}{suffix}"
+    path.mkdir(parents=True, exist_ok=False)
+    return str(path)
+
+
+tempfile.mkdtemp = _controlled_mkdtemp
+
+
+@pytest.fixture
+def tmp_path(request) -> Path:
+    """Return a repository-controlled test directory on the Windows runner.
+
+    The managed runner denies directory enumeration during pytest's normal
+    temporary-root cleanup.  Keeping this fixture under the repository avoids
+    that infrastructure failure without changing ACLs or test behavior.
+    """
+    root = Path(__file__).resolve().parents[1] / ".tmp" / "pytest-controlled"
+    path = root / f"{request.node.name[:40]}-{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path

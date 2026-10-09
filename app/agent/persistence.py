@@ -67,9 +67,14 @@ async def persist_research(
         是否把结论写进了可复用的研究 / 记忆（完整 verified 审计才为 True）。
     """
     if memory is None:
-        from app.memory.storage import get_memory
+        try:
+            from app.memory.storage import get_memory
 
-        memory = get_memory()
+            memory = get_memory()
+        except Exception as exc:  # noqa: BLE001 — persistence must not fake success
+            result.persisted = False
+            logger.warning("Memory initialization failed (non-fatal): %s", exc)
+            return False
 
     delivery_status = result.delivery_status
     critique = result.critique or {}
@@ -82,6 +87,7 @@ async def persist_research(
     )
 
     if not verified:
+        result.persisted = False
         logger.warning(
             "persist_research: delivery_status=%s/final_audit_status=%s/verdict=%s，跳过 memory、对话轮次与当日状态"
             "（question=%s errors=%d）",
@@ -95,6 +101,7 @@ async def persist_research(
 
     report = result.report
     if report is None:
+        result.persisted = False
         logger.warning(
             "persist_research: report 为空，跳过对话轮次与当日状态 (question=%s errors=%s)",
             question[:50],
@@ -102,21 +109,27 @@ async def persist_research(
         )
         return False
 
+    persisted = True
+
     try:
         payload = result.model_dump()
         payload["unverified"] = False
         memory.save_research(question, payload)
     except Exception as exc:  # noqa: BLE001 — 落库失败不致命，但必须可见
         logger.warning("Research save failed (non-fatal): %s", exc)
+        persisted = False
 
     if conversation_id:
         try:
             memory.save_turn(conversation_id, question, _answer_summary(report))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Turn save failed (non-fatal): %s", exc)
+            persisted = False
 
     try:
         memory.save_daily_state(data=_daily_state_data(report))
     except Exception as exc:  # noqa: BLE001
         logger.warning("Daily state save failed (non-fatal): %s", exc)
-    return True
+        persisted = False
+    result.persisted = persisted
+    return persisted

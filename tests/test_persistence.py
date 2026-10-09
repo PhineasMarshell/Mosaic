@@ -37,6 +37,7 @@ def _make_good_response() -> ResearchResponse:
         question="今天市场怎么样",
         report=_make_report(),
         conversation_id=CONV_ID,
+        critique={"verdict": "pass", "reason": "证据充分"},
         final_audit_status="pass",
         delivery_status="verified",
     )
@@ -63,7 +64,7 @@ async def test_unverified_result_never_reaches_memory(mem):
     assert mem.get_daily_state() is None
     assert "今天 A 股发生了什么？" not in mem.get_conversation_history(CONV_ID, last_n=10)
     row = mem.conn.execute("SELECT response FROM research_records").fetchone()
-    assert '"unverified": true' in row[0].replace('"unverified":true', '"unverified": true')
+    assert row is None, "blocked 结果不得写入可复用研究记录"
 
 
 @pytest.fixture
@@ -109,9 +110,9 @@ async def test_none_report_does_not_clear_daily_state(mem):
     assert "第二次问题" not in history
     assert "今天市场怎么样" in history
 
-    # 但研究记录仍保存（便于排查）：两次都落库
+    # report=None 不写研究记录，避免空结果污染历史
     count = mem.conn.execute("SELECT COUNT(*) FROM research_records").fetchone()[0]
-    assert count == 2
+    assert count == 1
 
 
 def test_answer_summary_format():

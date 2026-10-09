@@ -739,7 +739,9 @@ async def test_critic_drops_key_that_meets_its_own_requirement():
     critique = out["critique"]
 
     assert critique.missing_tool_keys == []
-    assert critique.gap_key_decisions == [{"key": "limit_up_pool", "reason": "already_satisfied"}]
+    assert critique.gap_key_decisions == [
+        {"key": "limit_up_pool", "decision": "dropped", "reason": "already_satisfied"}
+    ]
     # 依旧判 research_more（这份 critique 说的是"缺"，即使代码发现已满足也不伪造 pass）
     assert critique.verdict == "research_more"
     assert out.get("errors", []) == []

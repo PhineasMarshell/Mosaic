@@ -219,6 +219,9 @@ def test_stream_timeout_emits_timeout_result(monkeypatch):
     final = [d for n, d in events if n == "result"][-1]
     assert final.get("code") == "timeout"
     assert final.get("question") == "今天A股发生了什么？"
+    assert final["final_audit_status"] == "error"
+    assert final["delivery_status"] == "failed"
+    assert final["persisted"] is False
 
     # 超时前应有 progress error 事件
     progress_steps = [d.get("step") for n, d in events if n == "progress"]

@@ -80,3 +80,33 @@ async def test_unverified_report_is_not_rendered_as_conclusion(monkeypatch, caps
     captured = capsys.readouterr()
     assert "市场走强" not in captured.out, "blocked 的正文不得作为结论输出"
     assert "未通过证据审计" in captured.err
+
+
+async def test_degraded_report_is_explicit_and_not_marked_persisted(monkeypatch, capsys):
+    report = MarketIntelligence(
+        market_state="震荡",
+        state_label="Neutral",
+        what_happened="仅展示已有证据支持的事实",
+        confidence="low",
+    )
+    result = ResearchResponse(
+        question="q",
+        report=report,
+        critique={"verdict": "revise", "reason": "仍有证据缺口"},
+        final_audit_status="revise_exhausted",
+        delivery_status="degraded",
+        delivery_reason="部分证据缺口未解决",
+        unresolved_issues=["missing_evidence | 量能 | action=research_more"],
+    )
+    _stub_run(monkeypatch, result)
+
+    async def no_persist(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(cli, "persist_research", no_persist)
+    await cli.main("q")
+
+    captured = capsys.readouterr()
+    assert "仅展示已有证据支持的事实" in captured.out
+    assert "降级交付" in captured.err
+    assert "persisted=False" in captured.err

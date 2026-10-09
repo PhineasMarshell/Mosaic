@@ -3,6 +3,7 @@
 公开签名：question/domain/conversation_id → ResearchResponse。
 """
 
+import asyncio
 import logging
 import time
 
@@ -57,13 +58,23 @@ class Orchestrator:
             budget_deadline=time.monotonic() + self.settings.research_budget_seconds,
         )
         run_log.log_run_start(state)
-        result_state = await graph.ainvoke(
-            state,
-            config={"recursion_limit": self.settings.graph_recursion_limit},
-        )
+        try:
+            result_state = await graph.ainvoke(
+                state,
+                config={"recursion_limit": self.settings.graph_recursion_limit},
+            )
 
-        # ── 从 state 组装 ResearchResponse（与 SSE 路径共用）────
-        result = build_response_from_state(result_state, question=question, conversation_id=conversation_id)
+            # ── 从 state 组装 ResearchResponse（与 SSE 路径共用）────
+            result = build_response_from_state(result_state, question=question, conversation_id=conversation_id)
+        except asyncio.CancelledError:
+            # 外层总预算通过 wait_for 取消这里；保留同一个 run_id，避免
+            # timeout 的 delivery 日志脱离 run_start 链路。
+            run_log.log_delivery(state, delivery_status="failed", persisted=False, sink="sync")
+            raise
+        except Exception:
+            # 上游/图组装异常也必须留下终态失败事件，不能只返回 HTTP 错误。
+            run_log.log_delivery(state, delivery_status="failed", persisted=False, sink="sync")
+            raise
 
         # 可信与否只看 delivery_status；errors 只是"运行有没有出错"。
         if result.delivery_status != "verified":
