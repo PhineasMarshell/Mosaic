@@ -27,6 +27,7 @@ from typing import Any, Literal
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError, model_validator
 
+from app.agent.evidence_gate import match_claims_to_evidence
 from app.config import Settings
 from app.errors import LLMOutputError
 from app.graph import run_log
@@ -159,6 +160,8 @@ _ISSUE_RULES = (
     "- status=partial、partial=true、缺日期锚点或 note 指明截断的证据不得支撑全市场或明确资金流向等强结论。\n"
     "- 没有完整同日上涨/下跌家数时，报告只能写无法确认，不能声称全市场全部上涨/下跌。\n"
     "- 因果、资金从一板块流向另一板块、跨市场带动，须有同日同标的/板块直接证据；否则要求改为可能/无法确认或删除。\n"
+    "- 报告中的当前事实、外部实体/政策/新闻必须能在当前 evidence 中逐条核实；没有对应 evidence 的事实必须标为 unsupported_claim 或 missing_evidence，并按需要补研究。\n"
+    "- partial、截断、无日期锚点或仅单一来源的 evidence 只能支持有限、带限定语的观察；不得据此放过全市场比较、绝对化或因果结论。\n"
     '- 非法输出会被安全终止：issues 必须是数组，元素必须是对象；'
     '显式写 "issues": null 会被判为非法 payload（要表达"没有 issue"请给空数组 []）。'
 )
@@ -414,6 +417,17 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
     }
     lines = ["=== 成功工具 ==="]
     if gate:
+        for key in ("successful_tool_count", "valid_evidence_count", "invalid_evidence_count"):
+            value = _field(gate, key, None)
+            if value is not None:
+                lines.append(f"  {key}={value}")
+        for key in ("reason_codes", "stale_evidence", "unmatched_instruments", "partial_only"):
+            value = _field(gate, key, []) or []
+            if value:
+                lines.append(f"  {key}={value}")
+        for quality in _field(gate, "evidence_quality", []) or []:
+            lines.append(f"  QUALITY evidence_id={quality.get('evidence_id', '?')} tool_key={quality.get('tool_key', '?')} source={quality.get('source', 'unknown')} as_of_date={quality.get('as_of_date', 'unknown')} retrieved_at={quality.get('retrieved_at', 'unknown')} completeness={quality.get('completeness', 'unknown')} coverage={quality.get('coverage', 'unknown')} reasons={quality.get('reason_codes', [])}")
+    if gate:
         for t in _field(gate, "successful_tools", []) or []:
             lines.append(f"  OK {t}")
         for t in _field(gate, "partial_tools", []) or []:
@@ -606,6 +620,28 @@ def _code_level_issues(report) -> list["AuditIssue"]:
     return issues
 
 
+def _claim_evidence_issues(report, evidence, expected_date: str | None = None) -> list["AuditIssue"]:
+    """Apply the post-Reasoning claim to datum gate without weakening the LLM audit."""
+    issues: list[AuditIssue] = []
+    for row in match_claims_to_evidence(report, evidence, expected_date=expected_date):
+        reasons = row["reason_codes"]
+        if not reasons:
+            continue
+        action = "research_more" if any(x in reasons for x in ("missing_reference", "unknown_date", "unknown_source", "stale_date", "invalid_evidence", "instrument_name_unknown", "conflicting_evidence")) else "remove_or_qualify"
+        if "invalid_reference" in reasons:
+            action = "remove_or_qualify"
+        issues.append(
+            AuditIssue(
+                kind="missing_evidence" if action == "research_more" else "unsupported_claim",
+                claim=row["claim"][:200],
+                severity="high" if any(x in reasons for x in ("invalid_reference", "invalid_evidence", "news_mention_not_price")) else "medium",
+                action=action,
+                rationale=f"逐条 claim to evidence 校验失败；evidence_ids={','.join(row['evidence_ids']) or 'none'}；reason_codes={','.join(reasons)}",
+            )
+        )
+    return issues
+
+
 _DATE_RE = re.compile(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}")
 _BREADTH_RE = re.compile(r"(?:全市场|所有(?:股票|个股)|全部(?:股票|个股)).{0,12}(?:全部)?(?:上涨|下跌)|(?:全部|全线)(?:上涨|下跌)")
 _CAUSAL_RE = re.compile(r"(?:导致|带动|引发|造成)")
@@ -622,6 +658,20 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
     up = [item for item in complete if re.search(r"up_count|advancing|上涨家数", str(_field(item, "metric", "")), re.I)]
     down = [item for item in complete if re.search(r"down_count|declining|下跌家数", str(_field(item, "metric", "")), re.I)]
     issues: list[AuditIssue] = []
+    for claim in _field(report, "claims", []) or []:
+        claim_text = str(_field(claim, "claim", "") or "").strip()
+        claim_type = str(_field(claim, "claim_type", "other") or "other")
+        ids = list(_field(claim, "evidence_ids", []) or [])
+        if claim_text and claim_type in {"fact", "comparison", "causation", "structure"} and not ids:
+            issues.append(
+                AuditIssue(
+                    kind="unsupported_claim",
+                    claim=claim_text[:200],
+                    severity="high",
+                    action="remove_or_qualify",
+                    rationale="当前事实/比较/因果论断没有绑定真实 evidence id",
+                )
+            )
     for segment in segments:
         if _QUALIFIED_RE.search(segment):
             continue
@@ -952,7 +1002,11 @@ class CriticNode:
             # 阶段 4④：**代码级**校验结论并入 issues。这不是让 LLM 再判一次：
             # 报告引用了账本里不存在的 evidence id、或对无校验源实体断言"不存在"，
             # 都是代码已经确定的事实，必须变成 issue → 派生 revise → 不可能 pass。
-            code_issues = _code_level_issues(report) + _coverage_issues(report, evidence)
+            expected_date = state.get("as_of_date") or state.get("requested_date")
+            if not expected_date:
+                requested_match = _DATE_RE.search(str(state.get("question", "")))
+                expected_date = requested_match.group().replace("/", "-") if requested_match else None
+            code_issues = _code_level_issues(report) + _coverage_issues(report, evidence) + _claim_evidence_issues(report, evidence, expected_date=expected_date)
             if code_issues:
                 issues = issues + code_issues
                 logger.error(

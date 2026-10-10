@@ -54,8 +54,8 @@ def test_candle_summary_domain_prefers_datum_domain():
     assert summary.domain == "a_share"
 
 
-def test_snapshot_summary_fallback_domain_not_crypto():
-    """快照摘要兜底分支（normalized 空、从 raw 提取）同样不得硬编码 crypto。"""
+def test_empty_normalized_does_not_create_raw_fallback_evidence():
+    """未经 normalizer 验证的 raw 不能绕过 datum gate。"""
     result = ToolResult(
         tool="get_market_snapshot",
         arguments={"symbol": "XAU/USDT:USDT"},
@@ -64,9 +64,7 @@ def test_snapshot_summary_fallback_domain_not_crypto():
         raw={"price": 84000.0, "high": 85000.0, "low": 83000.0, "open": 83500.0, "source": "test"},
     )
     evidence = build_evidence([result])
-    assert evidence, "raw 快照摘要必须产出证据"
-    assert all(e.domain != "crypto" for e in evidence)
-    assert all(e.domain for e in evidence)
+    assert evidence == []
 
 
 def test_evidence_domain_never_none_or_empty():

@@ -1,6 +1,6 @@
 # 证据真实性与审计可用性修复方案
 
-- **状态：** P0-A 已完成并验收；P0-B、P0-C 待实现
+- **状态：** P0-A 已完成并验收；P0-B 已实现；P0-C 待实现
 - **实现对象：** 子 agent
 - **验收对象：** 主 agent
 - **适用范围：** A 股市场综述、个股研究，以及 Reasoning → Critic → FinalizeAudit 交付链路
@@ -235,6 +235,13 @@ Critic 路由规则：
    - partial_only
    - reason_codes
 5. Gate 仍然允许 Reasoning 继续生成带 caveat 的草稿，但 Critic 必须看到这些代码级限制。
+
+本次 P0-B 实现补充了两个可复用的代码步骤：
+
+- `run_evidence_gate()` 只统计实际 normalized datum。空 success、请求参数、`tool_status` 和 error 不计入有效证据；同时分别记录成功工具数、有效/无效 datum、来源、标的、`as_of_date`、`retrieved_at`、完整性、partial 和原因代码。未知时间/来源保持 `unknown`。
+- `match_claims_to_evidence()` 在 Reasoning 之后逐条检查真实 evidence ID、日期、来源、partial 范围、市场级/个股范围和新闻提及与价格论断的边界。Critic 将其结果转成 `research_more` 或 `remove_or_qualify` issue，并把 evidence ID 和代码原因放入审计上下文。
+
+涨停池只有 name/code 而没有可核实日期或行情状态时，会因 `unknown_date`/缺少相应 datum 而无法直接支持“今日涨停”。
 
 ### P0-C：加入交易日和 as-of 语义
 

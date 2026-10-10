@@ -12,7 +12,13 @@ class Evidence(BaseModel):
     metric: str
     value: Any = None
     timestamp: str | None = None
+    as_of_date: str | None = None
+    retrieved_at: str | None = None
     source: str | None = None
+    authority: str | None = None
+    completeness: str = "unknown"
+    coverage: str = "unknown"
+    instrument_name: str | None = None
     status: str = "success"
     partial: bool = False
     note: str | None = None

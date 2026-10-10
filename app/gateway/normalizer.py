@@ -572,7 +572,7 @@ def _extract_metrics(
             if value is None:
                 continue
 
-            if key in _METADATA_KEYS:
+            if key in _METADATA_KEYS and not (key == "status" and parent_path and value in ("涨停", "跌停")):
                 continue
 
             # T2：value/val 的同级 unit 合并进该 value datum（在下方附加），
@@ -885,6 +885,29 @@ def normalize_tool_result(
             )
         ]
     )
+
+    # Flat metric paths retain the original list row index. Propagate each
+    # row's returned code/name to its sibling datums so a batched quote cannot
+    # attribute one security's price to another requested security.
+    row_identity: dict[str, dict[str, str]] = {}
+    for datum in normalized:
+        if "." not in datum.metric:
+            continue
+        parent, field_name = datum.metric.rsplit(".", 1)
+        key = field_name.lower()
+        if key in {"symbol", "code", "stock_code", "security_code", "ticker"} and datum.value:
+            row_identity.setdefault(parent, {})["instrument"] = str(datum.value)
+        elif key in {"name", "stock_name", "company_name", "security_name"} and datum.value:
+            row_identity.setdefault(parent, {})["instrument_name"] = str(datum.value)
+    for datum in normalized:
+        if "." not in datum.metric:
+            continue
+        parent = datum.metric.rsplit(".", 1)[0]
+        identity = row_identity.get(parent, {})
+        if not datum.instrument and identity.get("instrument"):
+            datum.instrument = identity["instrument"]
+        if not datum.instrument_name and identity.get("instrument_name"):
+            datum.instrument_name = identity["instrument_name"]
 
     # 阶段 3 ⑤：市场级工具的数据点必须能说清"这是哪一天的市场"。
     # 上游没给时间戳时逐条标注，避免报告拿无日期的旧数据声称"今日"。

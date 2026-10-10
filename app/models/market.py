@@ -17,6 +17,12 @@ class NormalizedDatum(BaseModel):
     value: Any
     unit: str | None = None
     timestamp: str | None = None
+    as_of_date: str | None = None
+    authority: str | None = None
+    retrieved_at: str | None = None
+    completeness: str = "unknown"
+    instrument_scope: str = "unknown"
+    instrument_name: str | None = None
     source: str | None = None
     tool: str
     status: Status = "success"
@@ -40,11 +46,18 @@ class ToolResult(BaseModel):
     status: Status
     partial: bool = False
     error: str | None = None
+    retrieved_at: str | None = None
+    as_of_date: str | None = None
+    authority: str | None = None
+    completeness: str = "unknown"
     #: 数据不完整的原因（上游自己的 note，或本地截断说明）。
     #: gateway 的契约是 partial=true 时"另有 note 说明"，以前这个字段被
     #: _METADATA_KEYS 直接丢掉了，用户和 LLM 都看不到数据为什么不全。
     note: str | None = None
     normalized: list[NormalizedDatum] = Field(default_factory=list)
+    #: 本地为提示词截断展示数据时保留上游覆盖度；None 表示未截断。
+    source_datum_count: int | None = None
+    source_partial: bool | None = None
     #: 阶段 6：本次执行的墙钟耗时（毫秒）。``None`` = 没有计时点（旧构造点 /
     #: 反序列化的历史结果），与"耗时 0ms"不同 —— 指标聚合要能区分两者。
     duration_ms: float | None = None

@@ -16,6 +16,7 @@ import json
 import re
 from typing import Any
 
+from app.agent.evidence_gate import is_usable_datum
 from app.gateway.normalizer import _is_eastmoney_f10_tool, infer_domain_from_tool
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
@@ -73,6 +74,8 @@ _FILTERED_PARAM_KEYS = {
 def _is_tool_param(metric: str) -> bool:
     """判断 metric 是否是工具参数（应被过滤）。"""
     metric_lower = metric.lower()
+    if metric_lower.endswith(".status") and not metric_lower.endswith(".tool_status"):
+        return False
     if metric_lower in _FILTERED_PARAM_KEYS:
         return True
     if "." in metric_lower:
@@ -274,7 +277,11 @@ def _instrument_of(result: ToolResult) -> str | None:
     raw = arguments.get("symbol") or arguments.get("symbols")
     if raw is None:
         return None
-    text = ";".join(str(item).strip() for item in raw) if isinstance(raw, list) else str(raw).strip()
+    if isinstance(raw, list):
+        if len(raw) != 1:
+            return None
+        raw = raw[0]
+    text = str(raw).strip()
     return text or None
 
 
@@ -330,7 +337,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
             candle_metrics: list[tuple[str, Any]] = []
 
             for datum in result.normalized:
-                if _is_tool_param(datum.metric):
+                if not is_usable_datum(datum) or _is_tool_param(datum.metric):
                     continue
 
                 # 检测是否是 K 线数据（路径格式：candles[N].field 或 candles?[N].field）
@@ -358,6 +365,10 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
                             partial=result.partial,
                             note=f"聚合了 {summary['count']} 条 K 线数据",
                             instrument=instrument,
+                            as_of_date=getattr(result, "as_of_date", None),
+                            retrieved_at=getattr(result, "retrieved_at", None),
+                            authority=getattr(result, "authority", None),
+                            completeness=getattr(result, "completeness", "unknown"),
                         )
                     )
                     counter += 1
@@ -392,32 +403,15 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
                         partial=datum.partial or result.partial,
                         note=datum.note or getattr(result, "note", None),
                         instrument=datum.instrument or instrument,
+                        instrument_name=getattr(datum, "instrument_name", None),
+                        as_of_date=getattr(datum, "as_of_date", None),
+                        retrieved_at=getattr(datum, "retrieved_at", None),
+                        authority=getattr(datum, "authority", None),
+                        completeness=getattr(datum, "completeness", "unknown"),
+                        coverage=getattr(datum, "instrument_scope", "unknown"),
                     )
                 )
                 counter += 1
-
-            # 如果 normalized 全被过滤了，尝试从 raw 提取快照摘要
-            if not result.normalized or all(_is_tool_param(d.metric) for d in result.normalized):
-                if result.raw and isinstance(result.raw, dict):
-                    snapshot_summary = _extract_snapshot_summary(result.raw, result.tool)
-                    snapshot_summary.pop("source", None)
-                    for metric, value in snapshot_summary.items():
-                        evidence.append(
-                            Evidence(
-                                id=f"{id_prefix}-{counter:03d}",
-                                source_tool=_operation_id(result),
-                                domain=_evidence_domain(result),
-                                metric=metric,
-                                value=value,
-                                timestamp=None,
-                                source=result.raw.get("source_used") or result.raw.get("source"),
-                                status=result.status,
-                                partial=result.partial,
-                                note="",
-                                instrument=instrument,
-                            )
-                        )
-                        counter += 1
 
         # T1：normalized 为空的 success/partial 结果，绝不能再伪造一条
         # metric="tool_status"、value="success" 的"证据"——那会让零数据点的结果
@@ -430,6 +424,23 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
             item.tool_key = getattr(result, "tool_key", None)
             item.operation_id = _operation_id(result)
             item.source_tool = _operation_id(result)
+            # Keep provenance separate from the observation timestamp.  In
+            # particular, never fill an unknown market date with today's
+            # retrieval date.
+            item.source = item.source or getattr(result, "authority", None) or "unknown"
+            item.authority = item.authority or getattr(result, "authority", None) or item.source or "unknown"
+            item.retrieved_at = item.retrieved_at or getattr(result, "retrieved_at", None) or "unknown"
+            item.as_of_date = (
+                item.as_of_date
+                or getattr(result, "as_of_date", None)
+                or (item.timestamp[:10] if item.timestamp and re.match(r"^20\d{2}[-/]\d{1,2}[-/]\d{1,2}", item.timestamp) else None)
+                or "unknown"
+            )
+            item.completeness = "partial" if item.partial or result.status == "partial" else (
+                item.completeness if item.completeness not in (None, "", "unknown") else getattr(result, "completeness", None) or "unknown"
+            )
+            if item.coverage in (None, "", "unknown"):
+                item.coverage = getattr(result, "instrument_scope", None) or ("instrument" if item.instrument else "market")
             result_note = getattr(result, "note", None)
             if result_note and result_note not in (item.note or ""):
                 item.note = f"{item.note}；{result_note}" if item.note else result_note

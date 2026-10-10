@@ -16,7 +16,7 @@ def test_has_evidence_true_with_success():
         ),
     ]
     gate = run_evidence_gate(results)
-    assert gate.has_evidence is True
+    assert gate.has_evidence is False  # success without a datum is not evidence
     assert "sentiment" in gate.successful_tools
     assert gate.partial_tools == []
     assert gate.error_tools == []
@@ -49,8 +49,8 @@ def test_partial_detected():
         ),
     ]
     gate = run_evidence_gate(results)
-    # partial 也计入 has_evidence
-    assert gate.has_evidence is True
+    # partial without a datum also cannot support a claim
+    assert gate.has_evidence is False
     assert "klines" in gate.partial_tools
 
 
@@ -61,7 +61,7 @@ def test_mixed_status():
         ToolResult(tool="partial_data", arguments={}, status="partial", normalized=[], partial=True),
     ]
     gate = run_evidence_gate(results)
-    assert gate.has_evidence is True
+    assert gate.has_evidence is False
     assert len(gate.successful_tools) == 1
     assert len(gate.partial_tools) == 1
     assert len(gate.error_tools) == 1
