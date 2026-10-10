@@ -312,6 +312,9 @@ python -m app.cli "今天A股为什么这么弱？"
 curl http://127.0.0.1:8000/health
 ```
 
+`/health` 同时返回 `research_budget_seconds`、`graph_recursion_limit`、
+`sqlite_busy_timeout_ms`、`persistence_max_retries` 和 `persistence_retry_backoff_ms`，用于核对进程实际加载的生产配置。
+
 > 本地 `python -m app.main` 默认只绑 `127.0.0.1:8000`；要用环境变量覆盖绑地址/端口：
 > `HOST=0.0.0.0 PORT=8080 python -m app.main`（容器里必须绑 `0.0.0.0`，否则端口映射打不通）。
 
@@ -363,6 +366,9 @@ MAX_RESEARCH_ROUNDS=1            # research_more → Supervisor 补研究轮次�
 RESEARCH_ROUND_MIN_REMAINING_SECONDS=60  # 剩余预算低于此值不再启动 research_more 回环
 # CRITIC_MAX_REVISIONS=2         # 旧配置名：仍可写，但只能把上面两个上限收得更紧
 GRAPH_RECURSION_LIMIT=25         # LangGraph 递归上限（防无限回环）
+SQLITE_BUSY_TIMEOUT_MS=5000      # SQLite BEGIN IMMEDIATE 等待写锁的毫秒数（0..30000）
+PERSISTENCE_MAX_RETRIES=2        # 仅 database locked/busy 时的额外重试次数（0..5）
+PERSISTENCE_RETRY_BACKOFF_MS=25  # 持久化重试初始退避毫秒数（0..1000，指数递增）
 SENTIMENT_ENABLED=false          # 舆情分析员总开关（评论 MCP 就绪后启用）
 SENTIMENT_MAX_COMMENTS=500       # 单次拉取评论上限
 NEWS_ENABLED=false               # 新闻分析员总开关
@@ -377,7 +383,11 @@ NEWS_MAX_TEXT_CHARS=800          # 单条新闻正文进 datum 的截断长度
 NEWS_SOURCE_TIMEOUT_SECONDS=15   # 单个新闻源抓取超时
 ```
 
-都是 `.env` 中的配置项，不是硬编码。
+都是 `.env` 中的配置项，不是硬编码。持久化把研究记录、对话轮次和每日状态放在同一个
+`BEGIN IMMEDIATE` 事务中；锁冲突会在回滚后按上面的有限次数重试，普通写入错误立即返回
+`persisted=false`。内部 `run_id` 作为研究记录幂等键，重复持久化同一结果不会追加新的记录或对话轮次；
+它不会出现在对外成功 JSON、SSE 结果或 CLI 输出中。旧库迁移会保留历史行并补加唯一索引，
+空 `persistence_key` 作为未设置处理。
 
 ### 两层超时的关系（重要）
 

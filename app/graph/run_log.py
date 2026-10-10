@@ -10,7 +10,7 @@
 
 事件命名（稳定契约，调用方/日志检索可依赖）：
 ``run_start`` / ``plan`` / ``executions`` / ``critic`` / ``route`` / ``finalize`` /
-``delivery``。
+``persistence`` / ``delivery``。
 
 关于 ``errors``：本模块刻意**不提供**任何"errors 为空即报告可信"的判据。
 运行是否可信只看 ``delivery_status``（见 app/models/response.py）。
@@ -52,6 +52,48 @@ def clip(value: Any, limit: int = MAX_TEXT) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}...(+{len(text) - limit})"
+
+
+def redact_text(value: Any) -> str:
+    """Record text length without exposing text or a guessable digest."""
+    text = "" if value is None else str(value)
+    return f"<redacted len={len(text)}>"
+
+
+_SENSITIVE_FIELDS = {
+    "question",
+    "conversation_id",
+    "user_id",
+    "answer_summary",
+    "error",
+    "errors",
+    "delivery_reason",
+    "blocked_reason",
+    "note",
+    "claim",
+    "missing_points",
+    "unsupported_claims",
+    "intent_task",
+    "unresolved_issues",
+    "query",
+    "text",
+    "content",
+    "prompt",
+    "keywords",
+}
+
+
+def _redact_sensitive(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, (list, tuple)):
+        out = [redact_text(item) if isinstance(item, str) else _redact_sensitive(item) for item in value[:MAX_ITEMS]]
+        if len(value) > MAX_ITEMS:
+            out.append(f"...(+{len(value) - MAX_ITEMS} more redacted)")
+        return out
+    if isinstance(value, dict):
+        return {str(key): _redact_sensitive(item) for key, item in list(value.items())[:MAX_ARGS]}
+    return redact_text(value)
 
 
 def clip_list(values: Any, limit: int = MAX_ITEMS) -> list:
@@ -102,8 +144,14 @@ def sanitize(value: Any, _depth: int = 0) -> Any:
         # datum_count / duration_ms / partial），否则普通字典的键数截断会让
         # 回放误判工具没有返回数据。
         if "tool_key" in value and "status" in value:
-            return {k: sanitize(v, _depth + 1) for k, v in value.items()}
-        return {k: sanitize(v, _depth + 1) for k, v in clip_args(value).items()}
+            return {
+                k: _redact_sensitive(v) if str(k) in _SENSITIVE_FIELDS else sanitize(v, _depth + 1)
+                for k, v in value.items()
+            }
+        return {
+            k: _redact_sensitive(v) if str(k) in _SENSITIVE_FIELDS else sanitize(v, _depth + 1)
+            for k, v in clip_args(value).items()
+        }
     return value
 
 
@@ -113,7 +161,7 @@ def emit(event: str, *, run_id: str | None = None, level: int = logging.INFO, **
     所有字段先过 ``sanitize``：调用点忘了截断也不会泄漏大文本 / 完整会话史。
     """
     payload = {"ts": round(time.time(), 3), "event": event, "run_id": run_id}
-    payload.update({k: sanitize(v) for k, v in fields.items()})
+    payload.update({k: _redact_sensitive(v) if k in _SENSITIVE_FIELDS else sanitize(v) for k, v in fields.items()})
     logger.log(level, json.dumps(payload, ensure_ascii=False, default=str))
     return payload
 
@@ -267,7 +315,7 @@ def log_critic(
         "critic",
         run_id=_run_id_of(state),
         verdict=_verdict_of(critique),
-        reason=clip(_field(critique, "reason", "")),
+        reason=redact_text(_field(critique, "reason", "")),
         missing_points=clip_list(_field(critique, "missing_points", [])),
         missing_tool_keys=clip_list(_field(critique, "missing_tool_keys", [])),
         unsupported_claims=clip_list(_field(critique, "unsupported_claims", [])),
@@ -394,7 +442,7 @@ def log_finalize(
         run_id=_run_id_of(state),
         final_audit_status=final_audit_status,
         delivery_status=delivery_status,
-        reason=clip(reason),
+        reason=redact_text(reason),
         unresolved_issues=clip_list(unresolved_issues),
         blocked_reason=clip(blocked_reason),
         research_round_count=research_round_count,
@@ -425,4 +473,27 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
         gap_key_decisions=_field(state, "gap_key_decisions", []) or [],
         executable_gap_steps=_field(state, "executable_gap_steps", []) or [],
         blocked_reason=clip(_field(state, "blocked_reason", "")),
+    )
+
+
+def log_persistence(
+    state: Any,
+    *,
+    attempt: int,
+    max_attempts: int,
+    outcome: str,
+    retryable: bool = False,
+    idempotent: bool = False,
+    error: str = "",
+) -> None:
+    """Record each persistence attempt without exposing response payloads."""
+    emit(
+        "persistence",
+        run_id=_run_id_of(state),
+        attempt=attempt,
+        max_attempts=max_attempts,
+        outcome=outcome,
+        retryable=retryable,
+        idempotent=idempotent,
+        error=clip(error),
     )

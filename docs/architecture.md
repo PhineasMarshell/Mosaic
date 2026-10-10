@@ -106,7 +106,7 @@ iiix plugin serve market-gateway
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `RESEARCH_BUDGET_SECONDS` | 300 | 一次完整调查的总预算 |
+| `RESEARCH_BUDGET_SECONDS` | 300 | 一次完整调查的总预算；`1..86400` |
 | `RESEARCH_TIMEOUT_SECONDS` | 30 | 单次工具调用 / MCP 握手超时 |
 | `STREAM_HEARTBEAT_SECONDS` | 15 | SSE 静默期心跳间隔 |
 | `LLM_TIMEOUT_SECONDS` | 90 | 单次 LLM 调用超时 |
@@ -122,7 +122,10 @@ iiix plugin serve market-gateway
 | `RESEARCH_ROUND_MIN_REMAINING_SECONDS` | 60 | 剩余预算低于此值不再启动 `research_more` 回环，直接落安全终态 |
 | `CRITIC_MAX_REVISIONS` | 未设置 | **旧配置名**：显式设置时作为上面两个上限的共同上限，只能收紧、不能放宽 |
 | `GAP_MAX_STEPS` | 3 | research_more 回环轮最多代码级补齐几个 Critic 点名的缺口工具 |
-| `GRAPH_RECURSION_LIMIT` | 25 | LangGraph 递归上限（防无限回环） |
+| `GRAPH_RECURSION_LIMIT` | 25 | LangGraph 递归上限（`1..1000`，防无限回环） |
+| `SQLITE_BUSY_TIMEOUT_MS` | 5000 | SQLite 写锁等待时间（`0..30000` ms）；用于 `BEGIN IMMEDIATE` 的并发冲突 |
+| `PERSISTENCE_MAX_RETRIES` | 2 | 仅锁冲突时的额外持久化重试次数（`0..5`），事务失败会先回滚 |
+| `PERSISTENCE_RETRY_BACKOFF_MS` | 25 | 持久化重试的初始退避时间（`0..1000` ms），按指数递增 |
 
 ### 可选分析员
 
@@ -207,26 +210,27 @@ iiix plugin serve market-gateway
     → error（仅节点内部产生，T11）: 审计自身失败 / verdict 无法识别 → 写 errors 并安全终止
     → 轮次耗尽（非 pass）: finalize_audit → blocked/failed → END（清空正文、不落库）
   → anomalies: 代码用 detect_anomalies 覆盖 report["anomalies"]（D3，不依赖模型输出）
-  → 落库：仅 delivery_status=verified 才写 daily_state / 对话轮次；其余只留 research 痕迹（unverified=true）
+  → 落库：仅 delivery_status=verified 且最终审计为 pass 才写研究记录、daily_state / 对话轮次；其余不写入可复用记忆
 ```
 
 ### 5.1 结构化运行摘要日志
 
 `app/graph/run_log.py` 为每次调查（`state.run_id`，短 12 位 hex）打**单行 JSON**，事件序列：
 
-`run_start` → `plan` → `executions`（每个 analyst 各一条）→ `critic` → `route` → `finalize` → `delivery`
+`run_start` → `plan` → `executions`（每个 analyst 各一条）→ `critic` → `route` → `finalize`（非 pass 路径）→ `persistence`（触发持久化时）→ `delivery`
 
 一次运行因此可以完整回答："计划了什么 / 实际跑了什么（status、partial、数据条数、缓存）/
 缺口为什么没被补上（gap_key_decisions）/ 路由到哪 / 最终为什么交付或没交付"。
 
-所有字段在 `emit()` 一层统一脱敏：长文本、长数组、长字典值一律截断并标注省略量，
-不记录 API key、原始大 payload 与完整会话历史。
+所有字段在 `emit()` 一层统一脱敏：问题、会话标识、错误、审计自由文本和工具查询只保留
+长度，其他长文本、长数组、长字典值截断并标注省略量；不记录
+API key、原始大 payload 与完整会话历史。
 
 ## 6. 存储
 
 | 数据 | 位置 | 格式 |
 |------|------|------|
-| Market Memory | `memory/memory.db` | SQLite，四张表：`daily_states` / `anomalies` / `research_records` / `conversations` |
+| Market Memory | `memory/memory.db` | SQLite，四张表：`daily_states` / `anomalies` / `research_records` / `conversations`；研究记录按 `run_id` 幂等 |
 | 晨间简报 | `memory/morning/YYYY-MM-DD.json` | JSON |
 | 晚间简报 | `memory/evening/YYYY-MM-DD.json` | JSON |
 | 工具缓存 | 内存（TTL + LRU，上限 512 条） | `market_cache` |
@@ -235,6 +239,13 @@ iiix plugin serve market-gateway
 > **P5 已迁到项目内单个 SQLite 文件**；代码与本文档均以 `memory/memory.db` 为准。
 > 注意区分两个 anomalies：报告响应里的 `anomalies` 字段是 `detect_anomalies` 每次现算的
 > （D3，代码填充），`anomalies` 表才是被 `record_anomaly` 持久化的历史异常事件。
+
+持久化批次用 `BEGIN IMMEDIATE` 串行化同一 SQLite 文件上的写入，锁等待由
+`SQLITE_BUSY_TIMEOUT_MS` 控制。超时后的重试只针对 `locked` / `busy`，每次尝试都会产生
+结构化 `persistence` 日志；最终 `delivery` 日志的 `persisted` 是实际提交结果。`verified`
+才允许写入可复用研究、对话轮次和每日状态，`blocked` / `failed` 始终为 `persisted=false`。
+旧库在启动时补加 `persistence_key` 列和唯一索引，历史行保留；空键会归一为 NULL，
+历史上重复的非空键保留最早一条的键。迁移可重复执行，多进程启动由 SQLite 锁序列化。
 
 ## 7. MCP 与 HTTP API
 

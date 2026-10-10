@@ -17,6 +17,7 @@ import sys
 from app.agent.orchestrator import Orchestrator
 from app.agent.persistence import persist_research
 from app.config import get_settings
+from app.graph import run_log
 from app.logging_config import setup_logging
 
 
@@ -174,6 +175,25 @@ async def main(question: str | None = None) -> None:
         result = await orchestrator.run(question)
         # Keep CLI persistence and terminal interpretation aligned with API/SSE.
         result.persisted = await persist_research(result, question, result.conversation_id)
+        run_log.log_delivery(
+            {
+                "run_id": result.run_id,
+                "final_audit_status": result.final_audit_status,
+                "delivery_reason": result.delivery_reason,
+                "errors": result.errors,
+                "research_round_count": 0,
+                "rewrite_count": 0,
+            },
+            delivery_status=str(result.delivery_status or "failed"),
+            persisted=bool(result.persisted),
+            sink="cli",
+        )
+        print(
+            f"delivery_status={result.delivery_status or 'failed'} "
+            f"final_audit_status={result.final_audit_status or 'error'} "
+            f"persisted={bool(result.persisted)}",
+            file=sys.stderr,
+        )
 
         # 阶段 5：可信与否只看 delivery_status，绝不靠 errors 为空来推断。
         if result.delivery_status not in ("verified", "degraded"):

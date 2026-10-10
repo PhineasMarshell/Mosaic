@@ -896,7 +896,7 @@ class CriticNode:
                 # 传哨兵而不是 data.get("issues")：缺字段合法，显式 null 非法（见 parse_issues）。
                 issues = parse_issues(data.get("issues", _MISSING_FIELD))
             except ValidationError as exc:
-                logger.error("Critic issues 校验失败，安全终止: %s", str(exc)[:300])
+                logger.error("Critic issues 校验失败，安全终止: %s", type(exc).__name__)
                 critique = Critique(verdict="error", reason=f"Invalid critic payload: {exc}")
                 run_log.log_critic(state, critique)
                 return {
@@ -951,7 +951,7 @@ class CriticNode:
             try:
                 critique = Critique.model_validate(data)
             except ValidationError as exc:
-                logger.error("Critic 输出校验失败，安全终止: %s", str(exc)[:300])
+                logger.error("Critic 输出校验失败，安全终止: %s", type(exc).__name__)
                 critique = Critique(verdict="error", reason=f"Invalid critic payload: {exc}")
                 run_log.log_critic(state, critique)
                 return {
@@ -962,7 +962,7 @@ class CriticNode:
             # 阶段 1：verdict 由 issue action 派生（保守方向优先）
             conflicts = resolve_conflicts(critique)
 
-            logger.info("Critic verdict: %s (reason: %s)", critique.verdict, critique.reason)
+            logger.info("Critic verdict: %s (reason: %s)", critique.verdict, run_log.redact_text(critique.reason))
 
             # 落库前过滤：与 prompt 里「可补充的工具」小节用**同一份**可见集合，
             # 保证喂回 Supervisor 的 key 一定可被 resolve。判定依据是**逐条 issue 的
@@ -1003,7 +1003,7 @@ class CriticNode:
             # T11：审计自身失败（LLM 超时 / JSON 坏）不再返回 research_more——
             # 那会触发一到两轮完整工具 + LLM（烧钱）且伪造 missing_points。
             # 改为内部 error verdict 安全终止，只保留 errors。
-            logger.error("Critic LLM 输出不可用，安全终止: %s", exc)
+            logger.error("Critic LLM 输出不可用，安全终止: %s", type(exc).__name__)
             return {
                 "critique": Critique(verdict="error", reason=f"Critic audit failed: {exc}"),
                 "errors": [f"Critic audit failed: {exc}"],

@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.net_env import install_proxy_env_normalization
@@ -60,7 +61,7 @@ class Settings(BaseSettings):
     #: 必须显著大于 research_timeout_seconds —— 否则 HTTP 层的 wait_for 会在
     #: 研究跑完之前掐断它，然后把同样的活从头再跑一遍（历史上就是这么雪崩的）。
     #: 经验值：≥ llm_timeout_seconds * 2 + max_tool_calls * 单次工具均时。
-    research_budget_seconds: int = 300
+    research_budget_seconds: int = Field(default=300, gt=0, le=86_400)
 
     #: SSE 心跳间隔。调查期间没有新事件时，每隔这么久推一条 progress，
     #: 防止浏览器/代理把静默连接当成死连接掐掉。
@@ -77,6 +78,13 @@ class Settings(BaseSettings):
     #: 运行期数据目录（定时简报 JSON 等）。留空 = 默认"项目根/memory"。
     #: 容器部署时用 `MOSAIC_DATA_DIR=/data`，否则非 root 进程写不进 site-packages 之外。
     mosaic_data_dir: str = ""
+
+    #: SQLite 等待其它写事务释放锁的时间。只覆盖锁等待，不改变事务语义。
+    sqlite_busy_timeout_ms: int = Field(default=5000, ge=0, le=30_000)
+    #: 持久化遇到 transient SQLite busy/locked 时的额外重试次数。
+    persistence_max_retries: int = Field(default=2, ge=0, le=5)
+    #: 持久化重试的初始退避时间；后续尝试按 2^n 递增。
+    persistence_retry_backoff_ms: int = Field(default=25, ge=0, le=1_000)
 
     # ── LangGraph 图配置（P2+） ────────────────────
     #: 阶段 6：两条回环路径的**独立**上限，不再共用一个"总轮次"数字。
@@ -102,7 +110,7 @@ class Settings(BaseSettings):
     #: research_more 回环轮最多代码级补齐几个 Critic 点名的缺口工具
     gap_max_steps: int = 3
     #: LangGraph recursion limit（防止无限循环）
-    graph_recursion_limit: int = 25
+    graph_recursion_limit: int = Field(default=25, ge=1, le=1_000)
 
     # ── P4：舆情 / 新闻 ────────────────────
     #: 舆情分析员总开关（评论 MCP 就绪后置 true）

@@ -190,7 +190,7 @@ class ReasoningNode:
                 out["errors"] = gate_errors
             return out
         except LLMOutputError as exc:
-            logger.warning("Reasoning LLM output error: %s", exc)
+            logger.warning("Reasoning LLM output error: %s", type(exc).__name__)
             return {
                 "report": None,
                 "errors": [f"Reasoning engine failed: {exc}"],

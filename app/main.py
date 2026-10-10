@@ -115,6 +115,10 @@ async def health():
         "model": _s.openai_model,
         "max_tool_calls": _s.max_tool_calls,
         "research_budget_seconds": _s.research_budget_seconds,
+        "graph_recursion_limit": _s.graph_recursion_limit,
+        "sqlite_busy_timeout_ms": _s.sqlite_busy_timeout_ms,
+        "persistence_max_retries": _s.persistence_max_retries,
+        "persistence_retry_backoff_ms": _s.persistence_retry_backoff_ms,
         "brief_scheduler": "running" if scheduler_running() else "stopped",
         #: 非空 = 本进程启动时归一化过 NO_PROXY（否则 httpx 连 client 都构造不出来）
         "proxy_env_warnings": proxy_env_warnings(),
@@ -166,9 +170,9 @@ def _parse_ask_payload(request: dict, endpoint: str) -> tuple[str, str | None, s
     question = raw_question.strip() if isinstance(raw_question, str) else ""
     if not question:
         logger.warning(
-            "%s rejected: empty or non-string question (got %r, keys=%s)",
+            "%s rejected: empty or non-string question (type=%s, keys=%s)",
             endpoint,
-            raw_question,
+            type(raw_question).__name__,
             sorted(request.keys()),
         )
         raise HTTPException(status_code=400, detail="question cannot be empty")
@@ -181,7 +185,12 @@ def _parse_ask_payload(request: dict, endpoint: str) -> tuple[str, str | None, s
 
         supported_domains = get_enabled_domains()
         if domain not in supported_domains:
-            logger.warning("%s rejected: unsupported domain=%r (supported=%s)", endpoint, domain, supported_domains)
+            logger.warning(
+                "%s rejected: unsupported domain=%s (supported=%s)",
+                endpoint,
+                run_log.redact_text(domain),
+                supported_domains,
+            )
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported domain: {domain}. Supported: {supported_domains}",
@@ -200,7 +209,11 @@ async def ask(request: dict):
 
     try:
         logger.info(
-            "Received question: %s (len=%d) domain=%s conv_id=%s", question[:50], len(question), domain, conversation_id
+            "Received question=%s (len=%d) domain=%s conv_id=%s",
+            run_log.redact_text(question),
+            len(question),
+            domain,
+            run_log.redact_text(conversation_id),
         )
         # 同步端点以前没有任何总超时：调查可以一直跑到把每个工具的
         # 30s 超时逐个耗尽（max_tool_calls=12 → 最坏几分钟），浏览器只能干等。
@@ -218,7 +231,7 @@ async def ask(request: dict):
         if result.report is None and delivery == "blocked":
             logger.warning(
                 "Research blocked for %s (final_audit_status=%s)",
-                question[:50],
+                run_log.redact_text(question),
                 result.final_audit_status,
             )
             run_log.log_delivery(
@@ -248,7 +261,7 @@ async def ask(request: dict):
         if result.report is None:
             # 推理环节失败：给出明确的失败原因，而不是 200 + 一份空报告。
             # detail 必须是字符串 —— 前端 askSync 直接把它塞进 Error.message。
-            logger.error("Research produced no report for %s (errors=%s)", question[:50], result.errors)
+            logger.error("Research produced no report for %s (error_count=%d)", run_log.redact_text(question), len(result.errors))
             run_log.log_delivery(
                 {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
                  "delivery_reason": result.delivery_reason, "critique": result.critique,
@@ -287,7 +300,7 @@ async def ask(request: dict):
 
         return JSONResponse(content=data)
     except TimeoutError as exc:
-        logger.warning("Research exceeded %ds budget: %s", settings.research_budget_seconds, question[:50])
+        logger.warning("Research exceeded %ds budget: %s", settings.research_budget_seconds, run_log.redact_text(question))
         return JSONResponse(
             status_code=504,
             content={
@@ -303,7 +316,7 @@ async def ask(request: dict):
         )
     except LLMOutputError as exc:
         # 必须排在 ValueError 之前 —— LLMOutputError 是 ValueError 的子类
-        logger.error("Upstream LLM output unusable: %s", str(exc)[:800])
+        logger.error("Upstream LLM output unusable: %s", type(exc).__name__)
         return JSONResponse(
             status_code=502,
             content={
@@ -318,7 +331,7 @@ async def ask(request: dict):
             },
         )
     except ValueError as exc:
-        logger.warning("Invalid input: %s", exc)
+        logger.warning("Invalid input: %s", type(exc).__name__)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         if not orchestrator_ready:
@@ -330,7 +343,7 @@ async def ask(request: dict):
             }
             run_log.log_run_start(fallback)
             run_log.log_delivery(fallback, delivery_status="failed", persisted=False, sink="sync")
-        logger.exception("Internal error during research")
+        logger.error("Internal error during research: %s", type(exc).__name__)
         return JSONResponse(
             status_code=500,
             content={
@@ -399,7 +412,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         orchestrator = _get_orchestrator()
         graph = orchestrator._ensure_graph()
     except Exception as exc:
-        logger.exception("Stream graph initialization failed for: %s", question[:50])
+        logger.error("Stream graph initialization failed for: %s (%s)", run_log.redact_text(question), type(exc).__name__)
         run_log.log_delivery(
             _terminal_state(reason="研究流程发生内部异常"),
             delivery_status="failed", persisted=False, sink="sse",
@@ -494,7 +507,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 # 审计没通过：不是运行失败（errors 可以是空的），但也不能当作结论交付。
                 logger.warning(
                     "Stream research blocked for %s (final_audit_status=%s)",
-                    question[:50],
+                    run_log.redact_text(question),
                     result.final_audit_status,
                 )
                 yield json_event(
@@ -524,7 +537,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 return
             # 推理环节失败：与超时/上游错误保持一致，发一个带 error 的 result 事件，
             # 既不落库，也不让前端拿空报告去渲染。
-            logger.error("Stream research produced no report for %s (errors=%s)", question[:50], result.errors)
+            logger.error("Stream research produced no report for %s (error_count=%d)", run_log.redact_text(question), len(result.errors))
             yield json_event("progress", {"step": "error", "message": "研究未能产出报告（推理环节失败），请重试"})
             code = "no_report" if "reasoning produced no report" in result.errors else "failed"
             result.persisted = False
@@ -577,7 +590,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         )
         raise
     except (UpstreamTimeoutError, TimeoutError):
-        logger.warning("Stream research exceeded %ds budget for: %s", budget, question[:50])
+        logger.warning("Stream research exceeded %ds budget for: %s", budget, run_log.redact_text(question))
         run_log.log_delivery(
             _terminal_state(reason="研究超出总预算"),
             delivery_status="failed", persisted=False, sink="sse",
@@ -597,7 +610,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             },
         )
     except LLMOutputError as exc:
-        logger.error("Stream research got unusable LLM output for: %s — %s", question[:50], str(exc)[:800])
+        logger.error("Stream research got unusable LLM output for: %s — %s", run_log.redact_text(question), type(exc).__name__)
         run_log.log_delivery(
             _terminal_state(reason="上游模型输出不可解析"),
             delivery_status="failed", persisted=False, sink="sse",
@@ -617,7 +630,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             },
         )
     except Exception as exc:
-        logger.exception("Stream research failed for: %s", question[:50])
+        logger.error("Stream research failed for: %s (%s)", run_log.redact_text(question), type(exc).__name__)
         run_log.log_delivery(
             _terminal_state(reason="研究流程发生内部异常"),
             delivery_status="failed", persisted=False, sink="sse",
@@ -672,7 +685,12 @@ async def ask_stream(request: dict):
     request_run_id = run_log.new_run_id()
 
     try:
-        logger.info("Streaming question: %s domain=%s conv_id=%s", question[:50], domain, conversation_id)
+        logger.info(
+            "Streaming question=%s domain=%s conv_id=%s",
+            run_log.redact_text(question),
+            domain,
+            run_log.redact_text(conversation_id),
+        )
         # T26：把会失败的工作**提前**到返回 StreamingResponse 之前。以前 try 里
         # 只有 return StreamingResponse(...)，async generator 体要到响应开始后
         # 才执行，except 分支永远不可达——图构建失败表现为 200 + SSE error 事件，
@@ -693,7 +711,7 @@ async def ask_stream(request: dict):
         }
         run_log.log_run_start(fallback)
         run_log.log_delivery(fallback, delivery_status="failed", persisted=False, sink="sse")
-        logger.exception("Internal error during streaming research")
+        logger.error("Internal error during streaming research: %s", type(exc).__name__)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

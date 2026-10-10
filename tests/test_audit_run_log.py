@@ -328,7 +328,8 @@ def test_run_log_payloads_explain_a_blocked_run(blocked_case, caplog):
         "delivery",
     }
     # 1) 计划：显式问题 + 域 + run_id 可追
-    assert by_event["run_start"]["question"] == blocked_case["question"]
+    assert by_event["run_start"]["question"].startswith("<redacted len=")
+    assert blocked_case["question"] not in json.dumps(by_event["run_start"], ensure_ascii=False)
     assert by_event["run_start"]["run_id"] == blocked_case["run_id"]
     # 2) 计划：域守卫过滤掉了什么，一目了然
     assert by_event["plan"]["filtered_keys"] == ["hallucinated_key"]

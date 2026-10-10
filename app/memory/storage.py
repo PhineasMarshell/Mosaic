@@ -13,6 +13,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,12 @@ from typing import Any, final
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_log_text(value: Any) -> str:
+    """Keep storage logs useful without copying user questions."""
+    text = "" if value is None else str(value)
+    return f"<redacted len={len(text)}>"
 
 
 def _sqlite_connection_factory(path: Path) -> SQLite3Connection:
@@ -38,14 +45,31 @@ def _sqlite_connection_factory(path: Path) -> SQLite3Connection:
     实测：迁移到 SQLite 之后 ~/.mosaic/memory.db 四张表长期 0 行，
     而 235 个单元测试全绿（它们只用同一条连接读写，能看见自己未提交的数据）。
 
-    autocommit 的代价是 save_daily_state 的 SELECT→merge→UPSERT 不再是单个
-    事务。当前所有调用方都跑在单线程事件循环上、方法内没有 await 点，
-    所以构造不出交错；如果将来改用 asyncio.to_thread 或多 worker，
-    需要把这段改成单条 UPSERT 或显式 BEGIN IMMEDIATE。
+    autocommit 的代价是单独调用 save_daily_state 的 SELECT→merge→UPSERT 不再是
+    单个事务；研究批次由 ``MarketMemory.transaction()`` 用 BEGIN IMMEDIATE 包住，
+    因此生产持久化不会暴露这个读改写窗口。
     """
+    from app.config import get_settings
+
+    timeout_ms = get_settings().sqlite_busy_timeout_ms
     conn = SQLite3Connection(str(path), isolation_level=None)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    try:
+        conn.execute(f"PRAGMA busy_timeout={timeout_ms}")
+        deadline = time.monotonic() + timeout_ms / 1000
+        while True:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError as exc:
+                if not any(word in str(exc).lower() for word in ("locked", "busy")):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(0.025, remaining))
+    except Exception:
+        conn.close()
+        raise
     # SQLite 3.38+ 内置 json() 函数；旧版本需要加载扩展（极少见）
     return conn
 
@@ -108,7 +132,8 @@ CREATE TABLE IF NOT EXISTS research_records (
     question    TEXT NOT NULL,
     response    TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    user_id     TEXT DEFAULT 'anonymous'
+    user_id     TEXT DEFAULT 'anonymous',
+    persistence_key TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversations (
@@ -188,8 +213,46 @@ class MarketMemory:
 
     def _ensure_schema(self) -> None:
         """初始化数据库 schema（幂等）。"""
-        with self.conn as c:
-            c.executescript(_INIT_SQL)
+        self.conn.executescript(_INIT_SQL)
+        with self.transaction() as c:
+            # Existing deployments predate persistence_key.  Keep their rows
+            # readable and add the idempotency column/index in place.
+            columns = {row[1] for row in c.execute("PRAGMA table_info(research_records)")}
+            if "persistence_key" not in columns:
+                try:
+                    c.execute("ALTER TABLE research_records ADD COLUMN persistence_key TEXT")
+                except sqlite3.OperationalError as exc:
+                    # Another worker may have completed the same idempotent
+                    # migration between PRAGMA and ALTER TABLE.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+            # Empty keys are legacy/invalid values, not an idempotency key.
+            # Normalise them before creating the partial unique index so a
+            # repeated migration cannot turn all empty-key writes into one key.
+            c.execute(
+                """UPDATE research_records
+                   SET persistence_key = NULL
+                   WHERE persistence_key IS NOT NULL
+                     AND trim(persistence_key) = ''"""
+            )
+            # If an interrupted/experimental deployment already wrote the same
+            # key more than once, preserve the earliest row and make later rows
+            # ordinary historical records before adding the unique index.
+            c.execute(
+                """UPDATE research_records
+                   SET persistence_key = NULL
+                   WHERE rowid NOT IN (
+                       SELECT MIN(rowid)
+                       FROM research_records
+                       WHERE persistence_key IS NOT NULL
+                       GROUP BY persistence_key
+                   )
+                   AND persistence_key IS NOT NULL"""
+            )
+            c.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_research_persistence_key
+                   ON research_records(persistence_key) WHERE persistence_key IS NOT NULL"""
+            )
 
     @contextmanager
     def transaction(self):
@@ -204,7 +267,11 @@ class MarketMemory:
             conn.rollback()
             raise
         else:
-            conn.commit()
+            try:
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
     # ── Helpers ─────────────────────────────────
 
@@ -346,13 +413,33 @@ class MarketMemory:
         record_id = str(uuid4())
         ts = datetime.now(UTC).isoformat()
         uid = (user_id or "anonymous").replace("/", "_")
+        raw_key = response.get("run_id") if isinstance(response, dict) else None
+        persistence_key = str(raw_key).strip() or None if raw_key is not None else None
         self.conn.execute(
-            """INSERT INTO research_records (id, question, response, created_at, user_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (record_id, question, json.dumps(response, ensure_ascii=False, default=str), ts, uid),
+            """INSERT INTO research_records
+                   (id, question, response, created_at, user_id, persistence_key)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                record_id,
+                question,
+                json.dumps(response, ensure_ascii=False, default=str),
+                ts,
+                uid,
+                persistence_key,
+            ),
         )
-        logger.info("Saved research '%s' → %s", question[:40], record_id[:8])
+        logger.info("Saved research question=%s → %s", _redact_log_text(question), record_id[:8])
         return record_id
+
+    def has_persisted_run(self, run_id: str) -> bool:
+        """Return whether a research result with this run id was committed."""
+        run_id = str(run_id or "").strip()
+        if not run_id:
+            return False
+        row = self.conn.execute(
+            "SELECT 1 FROM research_records WHERE persistence_key = ? LIMIT 1", (run_id,)
+        ).fetchone()
+        return row is not None
 
     # ── Conversation History ──────────────────
 
