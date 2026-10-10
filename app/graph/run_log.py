@@ -473,6 +473,7 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
         gap_key_decisions=_field(state, "gap_key_decisions", []) or [],
         executable_gap_steps=_field(state, "executable_gap_steps", []) or [],
         blocked_reason=clip(_field(state, "blocked_reason", "")),
+        error_category=_field(state, "error_category"),
     )
 
 
@@ -485,6 +486,7 @@ def log_persistence(
     retryable: bool = False,
     idempotent: bool = False,
     error: str = "",
+    error_category: str | None = None,
 ) -> None:
     """Record each persistence attempt without exposing response payloads."""
     emit(
@@ -496,4 +498,5 @@ def log_persistence(
         retryable=retryable,
         idempotent=idempotent,
         error=clip(error),
+        error_category=error_category,
     )

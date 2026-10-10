@@ -49,7 +49,12 @@ def parse_lines(lines: Iterable[str]) -> list[dict]:
             obj = json.loads(text)
         except (ValueError, TypeError):
             continue
-        if isinstance(obj, dict):
+        if isinstance(obj, dict) and obj.get("logger") == "app.graph.run_log" and isinstance(obj.get("msg"), str):
+            try:
+                obj = json.loads(obj["msg"])
+            except ValueError:
+                continue
+        if isinstance(obj, dict) and isinstance(obj.get("event"), str):
             events.append(obj)
     return events
 
@@ -132,6 +137,7 @@ def summarize_run(events: list[dict], *, run_id: str | None = None) -> dict:
     routes = _all(ordered, "route")
     executions = _all(ordered, "executions")
     llm_calls = _all(ordered, "llm")
+    persistence = _all(ordered, "persistence")
     finalize = _last(ordered, "finalize")
     delivery = _last(ordered, "delivery")
 
@@ -172,6 +178,11 @@ def summarize_run(events: list[dict], *, run_id: str | None = None) -> dict:
         "gap_backfilled_keys": backfilled,
         "gap_unresolved_keys": sorted(forced & missing_at_end),
         "error_count": int((delivery or {}).get("error_count") or 0),
+        "error_category": (delivery or {}).get("error_category"),
+        "persisted": (delivery or {}).get("persisted"),
+        "persistence_retries": sum(1 for event in persistence if event.get("outcome") == "retry"),
+        "persistence_outcome": persistence[-1].get("outcome") if persistence else None,
+        "persistence_errors": [str(event["error_category"]) for event in persistence if event.get("error_category")],
     }
 
 
@@ -188,6 +199,9 @@ def aggregate_runs(runs: list[dict], *, unassigned: int = 0) -> dict:
     verdict_dist = Counter(str(r.get("verdict") or "unknown") for r in runs)
     delivery_dist = Counter(str(r.get("delivery_status") or "unknown") for r in runs)
     status_dist = Counter(str(r.get("final_audit_status") or "none") for r in runs)
+    error_categories = Counter(str(r["error_category"]) for r in runs if r.get("error_category"))
+    persistence_outcomes = Counter(str(r["persistence_outcome"]) for r in runs if r.get("persistence_outcome"))
+    persistence_errors = Counter(str(error) for r in runs for error in r.get("persistence_errors") or [])
 
     by_key: dict[str, dict[str, int]] = defaultdict(lambda: {"attempted": 0, "resolved": 0})
     attempted = resolved = 0
@@ -220,6 +234,11 @@ def aggregate_runs(runs: list[dict], *, unassigned: int = 0) -> dict:
         "verdict_distribution": dict(verdict_dist),
         "final_audit_status_distribution": dict(status_dist),
         "delivery_distribution": dict(delivery_dist),
+        "error_category_distribution": dict(error_categories),
+        "persistence_outcome_distribution": dict(persistence_outcomes),
+        "persistence_error_distribution": dict(persistence_errors),
+        "persistence_retries": sum(int(r.get("persistence_retries") or 0) for r in runs),
+        "persisted_runs": sum(r.get("persisted") is True for r in runs),
         "exhaustion_rate": _rate(exhausted, total),
         "degraded_or_blocked_rate": _rate(degraded_or_blocked, total),
         "failed_rate": _rate(delivery_dist.get("failed", 0), total),
@@ -279,6 +298,8 @@ def render_report(summary: dict) -> str:
         f"verdict 分布: {summary.get('verdict_distribution')}",
         f"终态分布: {summary.get('final_audit_status_distribution')}",
         f"交付分布: {summary.get('delivery_distribution')}",
+        f"持久化: 成功运行数 {summary.get('persisted_runs')}，重试 {summary.get('persistence_retries')}，终态 {summary.get('persistence_outcome_distribution')}",
+        f"错误类别: {summary.get('error_category_distribution')}，持久化错误: {summary.get('persistence_error_distribution')}",
         f"耗尽率: {pct(summary.get('exhaustion_rate'))}",
         f"降级/阻断率: {pct(summary.get('degraded_or_blocked_rate'))}  "
         f"failed: {pct(summary.get('failed_rate'))}",

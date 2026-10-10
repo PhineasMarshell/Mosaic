@@ -70,14 +70,15 @@ class Orchestrator:
             # 外层总预算通过 wait_for 取消这里；保留同一个 run_id，避免
             # timeout 的 delivery 日志脱离 run_start 链路。
             run_log.log_delivery(
-                {**state, "final_audit_status": "error", "delivery_reason": "研究任务已取消"},
+                {**state, "final_audit_status": "error", "delivery_reason": "研究任务已取消", "error_category": "timeout"},
                 delivery_status="failed", persisted=False, sink="sync",
             )
             raise
         except Exception as exc:
             # 上游/图组装异常也必须留下终态失败事件，不能只返回 HTTP 错误。
             run_log.log_delivery(
-                {**state, "final_audit_status": "error", "delivery_reason": type(exc).__name__},
+                {**state, "final_audit_status": "error", "delivery_reason": type(exc).__name__,
+                 "error_category": type(exc).__name__},
                 delivery_status="failed", persisted=False, sink="sync",
             )
             raise

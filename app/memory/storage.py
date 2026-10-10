@@ -11,6 +11,7 @@
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -253,6 +254,22 @@ class MarketMemory:
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_research_persistence_key
                    ON research_records(persistence_key) WHERE persistence_key IS NOT NULL"""
             )
+            index = next(
+                (row for row in c.execute("PRAGMA index_list(research_records)") if row[1] == "idx_research_persistence_key"),
+                None,
+            )
+            indexed_columns = [row[2] for row in c.execute("PRAGMA index_info(idx_research_persistence_key)")]
+            index_sql = c.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_research_persistence_key'"
+            ).fetchone()
+            normalized_sql = re.sub(r"\s+", "", index_sql[0]).lower() if index_sql and index_sql[0] else ""
+            expected_sql = (
+                "createuniqueindexidx_research_persistence_key"
+                "onresearch_records(persistence_key)wherepersistence_keyisnotnull"
+            )
+            if (index is None or index[2] != 1 or index[4] != 1
+                    or indexed_columns != ["persistence_key"] or normalized_sql != expected_sql):
+                raise RuntimeError("incompatible idx_research_persistence_key; restore backup and repair index")
 
     @contextmanager
     def transaction(self):

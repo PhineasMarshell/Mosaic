@@ -192,7 +192,9 @@ async def persist_research(
             )
             run_log.log_persistence(
                 result, attempt=attempt, max_attempts=max_attempts,
-                outcome="retry" if retryable else "failed", retryable=retryable, error=type(exc).__name__,
+                outcome="retry" if retryable else "failed",
+                retryable=retryable,
+                error_category=type(exc).__name__,
             )
             if not retryable:
                 # A transaction-capable store has already rolled back all

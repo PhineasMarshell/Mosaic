@@ -320,6 +320,9 @@ curl http://127.0.0.1:8000/health
 
 ### 部署（Docker）
 
+生产发布、SQLite 在线备份、旧库迁移验证、故障恢复和镜像回滚步骤见
+[发布运行手册](docs/release-runbook.md)。先在副本上完成演练，再切换生产数据卷。
+
 仓库自带 [Dockerfile](Dockerfile)（多阶段、非 root 运行、带 `/health` HEALTHCHECK）与
 [docker-compose.yml](docker-compose.yml)：
 
