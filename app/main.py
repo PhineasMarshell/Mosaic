@@ -18,6 +18,7 @@ from app.errors import LLMOutputError, UpstreamTimeoutError
 from app.graph import run_log
 from app.logging_config import setup_logging
 from app.models.response import build_response_from_state
+from app.research.trading_calendar import requested_date_from_question, resolve_trading_date_semantics
 
 setup_logging(level="INFO")
 logger = logging.getLogger(__name__)
@@ -400,6 +401,16 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         # T23b：SSE 路径同样把整次调查的预算截止时刻写进 state（与 Orchestrator.run 对齐）
         "budget_deadline": time.monotonic() + budget,
     }
+    requested_date, _ = requested_date_from_question(question)
+    date_semantics = resolve_trading_date_semantics(question) if domain == "a_share" else None
+    initial_state.update(
+        {
+            "requested_date": requested_date,
+            "planned_as_of_date": date_semantics.as_of_date if date_semantics else None,
+            "market_closed": date_semantics.market_closed if date_semantics else None,
+            "date_reason": date_semantics.reason if date_semantics else None,
+        }
+    )
     run_log.log_run_start(initial_state)
 
     def _terminal_state(*, reason: str, audit: str = "error", error_category: str | None = None) -> dict:

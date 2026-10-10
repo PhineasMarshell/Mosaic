@@ -50,6 +50,8 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 用户问题：
 {question}
 
+日期语义由代码提供并优先于“今天/今日”措辞：Evidence 的 as_of_date 是实际行情日期，retrieved_at 只是检索时间。若请求日期休市，必须在标题、what_happened 和 data_caveats 明确休市，并区分计划使用的最近交易日与实际取得的证据日期；无对应证据时写明缺口，不能把旧行情写成“今日发生”。
+
 以下是经过 Normalize 的市场数据：
 {data}
 

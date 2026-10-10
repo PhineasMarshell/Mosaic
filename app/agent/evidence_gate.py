@@ -2,10 +2,13 @@
 
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from typing import Any
 
+from app.gateway.tool_registry import resolve_tool, resolve_tool_by_name
 from app.models.market import ToolResult
 from app.research.entity_check import extract_entity_mentions
+from app.research.trading_calendar import normalize_date
 
 _REQUEST_METRICS = {
     "symbol",
@@ -30,6 +33,13 @@ _REQUEST_METRICS = {
     "detail",
     "ok",
     "date",
+    "trade_date",
+    "trading_date",
+    "日期",
+    "交易日期",
+    "交易日",
+    "时间",
+    "更新时间",
     "time",
     "timestamp",
     "datetime",
@@ -86,6 +96,29 @@ def _same_instrument(left: str, right: str) -> bool:
     return bool(left_code and right_code and left_code.group() == right_code.group())
 
 
+def evidence_date_scope(tool_key: str | None, operation_id: str | None) -> str:
+    """Separate trading observations from dated events and reference data."""
+    meta = None
+    for resolver, value in ((resolve_tool, tool_key), (resolve_tool_by_name, operation_id)):
+        if not value:
+            continue
+        try:
+            meta = resolver(str(value))
+            break
+        except KeyError:
+            continue
+    if meta is not None:
+        if meta.category == "news" or meta.key == "timeline":
+            return "event"
+        if meta.category in {"technical", "moneyflow"} and meta.key not in {"search", "hk_search"}:
+            return "market"
+        return "other"
+    name = f"{tool_key or ''} {operation_id or ''}".lower()
+    if any(token in name for token in ("news", "telegraph", "announcement", "disclosure", "discussion")):
+        return "event"
+    return "other"
+
+
 @dataclass
 class EvidenceGateResult:
     has_evidence: bool = False
@@ -106,11 +139,18 @@ class EvidenceGateResult:
         return asdict(self)
 
 
-def run_evidence_gate(results: list[ToolResult], requested_date: str | None = None) -> EvidenceGateResult:
+def run_evidence_gate(
+    results: list[ToolResult], requested_date: str | None = None, *, event_date: str | None = None,
+) -> EvidenceGateResult:
     gate = EvidenceGateResult()
+    market_expected_date = normalize_date(requested_date)
+    event_expected_date = normalize_date(event_date) or market_expected_date
     for result in results:
         raw_tool_key = _field(result, "tool_key")
         tool = str(raw_tool_key or _field(result, "tool") or "unknown")
+        operation_id = _field(result, "operation_id") or _field(result, "tool")
+        date_scope = evidence_date_scope(raw_tool_key, operation_id)
+        expected_date = event_expected_date if date_scope == "event" else market_expected_date
         status = _field(result, "status")
         raw_normalized = list(_field(result, "normalized", []) or [])
         datums = _result_datums(result)
@@ -138,15 +178,21 @@ def run_evidence_gate(results: list[ToolResult], requested_date: str | None = No
             gate.evidence_quality.append({"tool_key": tool, "operation_id": _field(result, "operation_id") or _field(result, "tool"), "valid": False, "reason_codes": reasons, "evidence_ids": []})
             continue
         for index, datum in enumerate(datums):
-            timestamp = _field(datum, "timestamp") or _field(datum, "as_of_date") or _field(result, "as_of_date")
+            # as_of_date is the observation date.  A timestamp may be a
+            # retrieval/event timestamp, and retrieved_at is never eligible.
+            timestamp = (
+                normalize_date(_field(datum, "as_of_date"))
+                or normalize_date(_field(datum, "timestamp"))
+                or normalize_date(_field(result, "as_of_date"))
+            )
             reasons: list[str] = []
             if not timestamp:
                 # Unknown is retained as metadata; it is not silently filled
                 # with retrieval time and does not erase an otherwise real datum.
                 reasons.append("unknown_date")
-            if requested_date and timestamp and str(timestamp)[:10] != requested_date:
+            if expected_date and timestamp and timestamp != expected_date:
                 reasons.append("stale_date")
-                gate.stale_evidence.append({"tool_key": tool, "datum_index": index, "as_of_date": str(timestamp)[:10], "expected": requested_date})
+                gate.stale_evidence.append({"tool_key": tool, "datum_index": index, "as_of_date": timestamp, "expected": expected_date})
             arguments = _field(result, "arguments", {}) or {}
             returned_instrument = _field(datum, "instrument")
             expected_instruments = _instrument_values(arguments.get("symbol") or arguments.get("symbols"))
@@ -169,7 +215,7 @@ def run_evidence_gate(results: list[ToolResult], requested_date: str | None = No
             if not (_field(datum, "source") or _field(datum, "authority") or _field(result, "authority")):
                 reasons.append("unknown_source")
             metric = str(_field(datum, "metric", "") or "")
-            row = {"tool_key": tool, "operation_id": _field(result, "operation_id") or _field(result, "tool"), "datum_index": index, "metric": metric, "datum_value": _field(datum, "value"), "evidence_id": f"{tool}-{index}", "source": source, "requested_instruments": expected_instruments, "returned_instrument": returned_instrument or "unknown", "instrument": instrument or "unknown", "as_of_date": str(timestamp)[:10] if timestamp else "unknown", "retrieved_at": _field(datum, "retrieved_at") or _field(result, "retrieved_at") or "unknown", "completeness": "partial" if partial else (_field(datum, "completeness") or _field(result, "completeness") or "unknown"), "coverage": coverage, "valid": not hard_reasons, "reason_codes": reasons}
+            row = {"tool_key": tool, "operation_id": operation_id, "datum_index": index, "metric": metric, "datum_value": _field(datum, "value"), "evidence_id": f"{tool}-{index}", "source": source, "requested_instruments": expected_instruments, "returned_instrument": returned_instrument or "unknown", "instrument": instrument or "unknown", "as_of_date": timestamp or "unknown", "date_scope": date_scope, "retrieved_at": _field(datum, "retrieved_at") or _field(result, "retrieved_at") or "unknown", "completeness": "partial" if partial else (_field(datum, "completeness") or _field(result, "completeness") or "unknown"), "coverage": coverage, "valid": not hard_reasons, "reason_codes": reasons}
             gate.evidence_quality.append(row)
             hard_reasons = [reason for reason in reasons if reason not in _NON_BLOCKING_REASONS]
             gate.reason_codes.extend(reasons)
@@ -201,7 +247,26 @@ def _claim_codes(claim: str) -> set[str]:
 
 
 def _claim_needs_date(claim: str) -> bool:
-    return bool(re.search(r"今日|今天|当日|当天|截至|日期|交易日|\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}", claim))
+    return bool(re.search(r"今日|今天|当日|当天|截至|日期|交易日|\d{1,2}月\d{1,2}日", claim) or normalize_date(claim))
+
+
+def _claim_explicit_dates(text: str, reference_date: str | None) -> set[str]:
+    dates = {
+        normalized
+        for value in re.findall(r"20\d{2}年\d{1,2}月\d{1,2}日?|(?<!\d)20\d{2}[-/]?\d{1,2}[-/]?\d{1,2}(?!\d)", text)
+        if (normalized := normalize_date(value))
+    }
+    if reference_date:
+        reference = date.fromisoformat(reference_date)
+        for match in re.finditer(r"(?<!年)(?<!\d)(\d{1,2})月(\d{1,2})日", text):
+            try:
+                candidate = date(reference.year, int(match.group(1)), int(match.group(2)))
+                if candidate > reference:
+                    candidate = candidate.replace(year=candidate.year - 1)
+                dates.add(candidate.isoformat())
+            except ValueError:
+                continue
+    return dates
 
 
 _GENERIC_CLAIM_WORDS = {
@@ -298,9 +363,18 @@ def _numeric_claim_reason(claim: str, item: Any) -> str | None:
     return None if abs(abs(actual) - abs(expected)) <= tolerance else "numeric_mismatch"
 
 
-def match_claims_to_evidence(report: Any, evidence: list[Any], expected_date: str | None = None) -> list[dict[str, Any]]:
+def match_claims_to_evidence(
+    report: Any,
+    evidence: list[Any],
+    expected_date: str | None = None,
+    *,
+    requested_date: str | None = None,
+    market_closed: bool | None = None,
+) -> list[dict[str, Any]]:
     """Check every claim's cited IDs and observable scope after Reasoning."""
     by_id = {str(_field(item, "id")): item for item in evidence or [] if _field(item, "id")}
+    planned_date = normalize_date(expected_date)
+    request_date = normalize_date(requested_date)
     rows: list[dict[str, Any]] = []
     for claim in _field(report, "claims", []) or []:
         text = str(_field(claim, "claim", "") or "")
@@ -332,17 +406,26 @@ def match_claims_to_evidence(report: Any, evidence: list[Any], expected_date: st
             )
             if is_partial and not re.search(r"部分|样本|观察|截至|限定|可能|无法确认", text):
                 local_reasons.append("partial_only")
-            date = _field(item, "as_of_date") or _field(item, "timestamp")
-            if _claim_needs_date(text) and (not date or str(date).lower() == "unknown"):
+            date = normalize_date(_field(item, "as_of_date")) or normalize_date(_field(item, "timestamp"))
+            if _claim_needs_date(text) and not date:
                 local_reasons.append("unknown_date")
-            claim_dates = {
-                value.replace("/", "-")
-                for value in re.findall(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}", text)
-            }
-            evidence_date = str(date)[:10].replace("/", "-") if date else ""
+            claim_dates = _claim_explicit_dates(text, request_date or planned_date)
+            evidence_date = date or ""
+            current_wording = bool(re.search(r"今日|今天|当日|当天", text))
+            market_claim = _claim_needs_price(text)
+            if current_wording and market_claim and (
+                market_closed is True or (request_date and planned_date and request_date != planned_date)
+            ):
+                local_reasons.append("closed_day_current_market_claim")
             if claim_dates and evidence_date and evidence_date not in claim_dates:
                 local_reasons.append("stale_date")
-            elif expected_date and _claim_needs_date(text) and evidence_date and evidence_date != expected_date[:10].replace("/", "-"):
+            elif (
+                planned_date
+                and _claim_needs_date(text)
+                and evidence_date
+                and (not claim_dates or current_wording)
+                and evidence_date != (request_date if current_wording and not market_claim and request_date else planned_date)
+            ):
                 local_reasons.append("stale_date")
             source = _field(item, "source") or _field(item, "authority")
             if re.search(r"新闻|消息|公告|报道", text) and (not source or str(source).lower() == "unknown"):

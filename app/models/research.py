@@ -51,6 +51,11 @@ class ResearchIntent(BaseModel):
     question: str = ""
     needs_comparison: bool = True
     needs_evidence: bool = True
+    #: User-requested semantic date (for "今天/今日", this is the local calendar date).
+    requested_date: str | None = None
+    #: Planned/observed evidence date.  It is never inferred from retrieved_at.
+    as_of_date: str | None = None
+    market_closed: bool | None = None
 
 
 class ToolCallPlan(BaseModel):
@@ -64,6 +69,10 @@ class ResearchPlan(BaseModel):
     intent: ResearchIntent = Field(default_factory=ResearchIntent)
     steps: list[ToolCallPlan] = Field(default_factory=list)
     early_stop: bool = False
+    #: Date semantics are kept on the plan so they survive planner/route boundaries.
+    requested_date: str | None = None
+    as_of_date: str | None = None
+    market_closed: bool | None = None
 
 
 class AnalystAssignment(BaseModel):

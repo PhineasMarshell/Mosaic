@@ -306,6 +306,10 @@ class ReasoningEngine:
         history_context: str = "",
         findings: list | None = None,
         domain: str = "a_share",
+        requested_date: str | None = None,
+        as_of_date: str | None = None,
+        planned_as_of_date: str | None = None,
+        market_closed: bool | None = None,
     ) -> MarketIntelligence:
         normalized_data = [datum.model_dump() for result in results for datum in result.normalized]
 
@@ -324,6 +328,15 @@ class ReasoningEngine:
             parts.append("\n".join(lines))
         if history_context:
             parts.append(history_context)
+        date_lines = [
+            "DATE SEMANTICS (代码生成，必须服从):",
+            f"  requested_date={requested_date or 'unknown'} (用户请求日期)",
+            f"  planned_as_of_date={planned_as_of_date or 'unknown'} (计划核验的交易日)",
+            f"  as_of_date={as_of_date or 'unknown'} (证据实际覆盖日期；不得用 retrieved_at 代替)",
+            f"  market_closed={market_closed if market_closed is not None else 'unknown'}",
+            "  若 market_closed=true，报告必须明确写休市，并说明使用的最近交易日或无可用交易日。",
+        ]
+        parts.append("\n".join(date_lines))
         combined_context = "\n\n".join(parts)
 
         prompt = REASONING_PROMPT.format(
@@ -378,6 +391,62 @@ class ReasoningEngine:
                     payload[key] = ""
                     data_caveats.append(f"模型未给出 {key}，已置空")
             payload["data_caveats"] = data_caveats
+
+            # Date semantics are code-owned report metadata.  The model may
+            # phrase the explanation, but cannot silently call previous-day
+            # evidence "today".
+            payload["requested_date"] = requested_date
+            payload["as_of_date"] = as_of_date
+            payload["market_closed"] = market_closed
+            date_label = requested_date or "unknown"
+            as_of_label = as_of_date or "unknown"
+            if market_closed is True:
+                title = str(payload.get("title") or "A股市场情报")
+                if as_of_date:
+                    title_suffix = f"请求日 {date_label}，休市；数据截至 {as_of_label}"
+                elif planned_as_of_date:
+                    title_suffix = f"请求日 {date_label}，休市；最近交易日 {planned_as_of_date} 行情未核实"
+                else:
+                    title_suffix = f"请求日 {date_label}，休市；暂无可用交易日数据"
+                payload["title"] = f"{title}（{title_suffix}）"
+                what = str(payload.get("what_happened") or "")
+                closure = f"请求日 {date_label} A股休市"
+                if planned_as_of_date and as_of_date == planned_as_of_date:
+                    closure += f"，以下使用最近交易日 {as_of_label} 数据"
+                elif planned_as_of_date and as_of_date:
+                    closure += (
+                        f"，最近交易日 {planned_as_of_date} 的行情尚无可核验证据；"
+                        f"现有证据截至 {as_of_label}，仅作历史参考"
+                    )
+                elif planned_as_of_date:
+                    closure += f"，最近交易日 {planned_as_of_date} 暂无可核验行情数据"
+                else:
+                    closure += "，暂无可用交易日数据"
+                if closure not in what:
+                    payload["what_happened"] = f"{closure}。{what}" if what else closure + "。"
+                data_caveats.append(
+                    f"requested_date={date_label}; planned_as_of_date={planned_as_of_date or 'unknown'}; "
+                    f"as_of_date={as_of_label}; market_closed=true；休市日不代表有行情发生"
+                )
+            elif market_closed is False and (requested_date or as_of_date):
+                title = str(payload.get("title") or "市场情报")
+                suffix = (
+                    f"（请求日 {date_label}；数据截至 {as_of_label}）"
+                    if as_of_date
+                    else f"（请求日 {date_label}；目标交易日行情未核实）"
+                )
+                if suffix not in title:
+                    payload["title"] = title + suffix
+                if planned_as_of_date and as_of_date != planned_as_of_date:
+                    what = str(payload.get("what_happened") or "")
+                    gap = f"目标交易日 {planned_as_of_date} 的行情尚无可核验证据；现有证据截至 {as_of_label}"
+                    payload["what_happened"] = f"{gap}。{what}" if what else gap + "。"
+                data_caveats.append(f"requested_date={date_label}; as_of_date={as_of_label}; market_closed=false")
+            elif requested_date or as_of_date:
+                data_caveats.append(f"requested_date={date_label}; as_of_date={as_of_label}; market_closed=unknown")
+            else:
+                data_caveats.append("requested_date=unknown; as_of_date=unknown; market_closed=unknown")
+            payload["data_caveats"] = list(dict.fromkeys(data_caveats))
 
             # Ensure arrays are actually lists
             for key in ("why", "strong_areas", "what_changed", "what_matters", "risks"):

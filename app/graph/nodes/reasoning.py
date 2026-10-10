@@ -135,6 +135,12 @@ class ReasoningNode:
                 history_context=self._build_revision_context(unsupported_claims, structured_issues),
                 findings=state.get("findings", []),
                 domain=state.get("domain") or _field(state.get("intent"), "domain") or "a_share",
+                requested_date=state.get("requested_date") or _field(state.get("intent"), "requested_date"),
+                as_of_date=state.get("as_of_date"),
+                planned_as_of_date=state.get("planned_as_of_date") or _field(state.get("intent"), "as_of_date"),
+                market_closed=state.get("market_closed")
+                if state.get("market_closed") is not None
+                else _field(state.get("intent"), "market_closed"),
             )
             # 阶段 6：把这次推理的 LLM 用量/耗时写进运行日志（指标的数据源）。
             from app.graph import run_log

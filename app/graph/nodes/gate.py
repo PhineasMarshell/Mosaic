@@ -10,6 +10,16 @@ import re
 from app.agent.evidence_gate import EvidenceGateResult, run_evidence_gate
 from app.config import Settings
 from app.models.market import ToolResult
+from app.research.trading_calendar import normalize_date
+
+
+def _observed_date_is_eligible(quality: dict) -> bool:
+    if quality.get("valid"):
+        return True
+    reasons = set(quality.get("reason_codes") or [])
+    return "stale_date" in reasons and reasons <= {
+        "stale_date", "unknown_source", "unknown_tool_key", "request_scoped_instrument",
+    }
 
 
 class GateNode:
@@ -27,11 +37,24 @@ class GateNode:
             results = state.get("results", [])
             # Convert plain dicts back to ToolResult if needed
             tool_results: list[ToolResult] = [ToolResult(**r) if isinstance(r, dict) else r for r in results]
-            requested_date = state.get("requested_date")
+            requested_date = state.get("planned_as_of_date") or state.get("requested_date")
             if not requested_date:
                 match = re.search(r"(20\d{2}[-/]\d{1,2}[-/]\d{1,2})", str(state.get("question", "")))
                 requested_date = match.group(1).replace("/", "-") if match else None
-            gate: EvidenceGateResult = run_evidence_gate(tool_results, requested_date=requested_date)
+            gate: EvidenceGateResult = run_evidence_gate(
+                tool_results, requested_date=requested_date, event_date=state.get("requested_date"),
+            )
+            observed_dates = {
+                observed
+                for quality in gate.evidence_quality
+                if quality.get("date_scope") == "market"
+                if _observed_date_is_eligible(quality)
+                if (observed := normalize_date(quality.get("as_of_date")))
+            }
+            # Preserve a real stale observation date for disclosure; the gate
+            # and Critic still compare it against the planned trading day.
+            # Mixed observation dates remain unknown at the run level.
+            as_of_date = next(iter(observed_dates)) if len(observed_dates) == 1 else None
             # The gate runs before Reasoning, but the analyst evidence ledger is
             # already available. Attach durable IDs so Critic can trace each
             # quality limitation back to the exact evidence item.
@@ -70,6 +93,7 @@ class GateNode:
                     quality["evidence_id"] = quality["evidence_ids"][0]
             return {
                 "gate": gate,
+                "as_of_date": as_of_date,
             }
         except Exception as exc:
             # 门控失败降级：继续流程（report 会标注数据不足）

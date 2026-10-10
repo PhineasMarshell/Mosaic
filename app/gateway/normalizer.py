@@ -33,6 +33,7 @@ from typing import Any
 from app.gateway.arguments import canonicalize_tool_arguments
 from app.gateway.tool_registry import resolve_tool_by_name
 from app.models.market import NormalizedDatum, Status, ToolResult
+from app.research.trading_calendar import normalize_date
 
 # ------------------------------------------------------------------ #
 # 域名推断规则                                                         #
@@ -899,6 +900,9 @@ def normalize_tool_result(
             row_identity.setdefault(parent, {})["instrument"] = str(datum.value)
         elif key in {"name", "stock_name", "company_name", "security_name"} and datum.value:
             row_identity.setdefault(parent, {})["instrument_name"] = str(datum.value)
+        elif key in {"date", "trade_date", "trading_date", "as_of_date", "日期", "交易日期", "交易日"}:
+            if observed_date := normalize_date(datum.value):
+                row_identity.setdefault(parent, {})["as_of_date"] = observed_date
     for datum in normalized:
         if "." not in datum.metric:
             continue
@@ -908,6 +912,8 @@ def normalize_tool_result(
             datum.instrument = identity["instrument"]
         if not datum.instrument_name and identity.get("instrument_name"):
             datum.instrument_name = identity["instrument_name"]
+        if not datum.as_of_date and identity.get("as_of_date"):
+            datum.as_of_date = identity["as_of_date"]
 
     # 阶段 3 ⑤：市场级工具的数据点必须能说清"这是哪一天的市场"。
     # 上游没给时间戳时逐条标注，避免报告拿无日期的旧数据声称"今日"。

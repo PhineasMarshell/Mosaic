@@ -108,6 +108,14 @@ class ResearchState(BaseModel):
     question: str
     conversation_id: str | None = None
     domain: str | None = None
+    #: Date semantics: requested_date is user language; as_of_date is the
+    #: actual evidence date and remains None until a tool result supplies it.
+    requested_date: str | None = None
+    as_of_date: str | None = None
+    #: Target date used to parameterize date-aware tools before evidence arrives.
+    planned_as_of_date: str | None = None
+    market_closed: bool | None = None
+    date_reason: str | None = None
     #: 阶段 0：一次调查的短 id，跨节点传递并落到每条结构化运行摘要日志上。
     #: 由 Orchestrator.run / SSE 路径生成；缺失时日志里 run_id=None（不猜、不补造）。
     run_id: str | None = None

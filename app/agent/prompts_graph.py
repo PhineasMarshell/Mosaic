@@ -13,6 +13,8 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
 用户问题：
 {question}
 
+日期语义：用户说“今天/今日”时，代码会保留 requested_date（用户请求日），并为 A 股休市日选择最近交易日 as_of_date。只有工具 schema 声明了日期参数时才能传入计划日期；无日期参数的工具不得自行添加。retrieved_at 不是行情日期。最终报告必须区分 requested_date、计划交易日、证据实际 as_of_date 和 market_closed。
+
 当前启用的市场域：{enabled_domains}
 
 可用的工具注册表（按域分组）：
@@ -44,6 +46,7 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
    - question: 原始问题原文
    - needs_comparison: true 或 false
    - needs_evidence: true 或 false
+   - requested_date / as_of_date / market_closed 由代码计算；不要自行用检索时间填充行情日期
 
 2. "steps" —— 数组，每项包含：
    - tool_key: **工具的逻辑 key**（注册表文本中 `-` 左边的部分，如 `snapshot`, `klines`, `overview`，**不是右边的 operationId**）

@@ -620,10 +620,20 @@ def _code_level_issues(report) -> list["AuditIssue"]:
     return issues
 
 
-def _claim_evidence_issues(report, evidence, expected_date: str | None = None) -> list["AuditIssue"]:
-    """Apply the post-Reasoning claim to datum gate without weakening the LLM audit."""
+def _claim_evidence_issues(
+    report,
+    evidence,
+    expected_date: str | None = None,
+    *,
+    requested_date: str | None = None,
+    market_closed: bool | None = None,
+) -> list["AuditIssue"]:
+    """Apply the post-Reasoning claim→datum gate without weakening the LLM audit."""
     issues: list[AuditIssue] = []
-    for row in match_claims_to_evidence(report, evidence, expected_date=expected_date):
+    for row in match_claims_to_evidence(
+        report, evidence, expected_date=expected_date,
+        requested_date=requested_date, market_closed=market_closed,
+    ):
         reasons = row["reason_codes"]
         if not reasons:
             continue
@@ -677,8 +687,16 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
             continue
         if _BREADTH_RE.search(segment):
             opposing = down if "上涨" in segment else up
-            up_dates = {match.group() for i in up if (match := _DATE_RE.search(str(_field(i, "timestamp", "") or "")))}
-            down_dates = {match.group() for i in down if (match := _DATE_RE.search(str(_field(i, "timestamp", "") or "")))}
+            up_dates = {
+                match.group()
+                for i in up
+                if (match := _DATE_RE.search(str(_field(i, "as_of_date", "") or _field(i, "timestamp", "") or "")))
+            }
+            down_dates = {
+                match.group()
+                for i in down
+                if (match := _DATE_RE.search(str(_field(i, "as_of_date", "") or _field(i, "timestamp", "") or "")))
+            }
             complete_breadth = bool(up_dates & down_dates)
             zero_opposing = all(str(_field(i, "value", "")).strip() in ("0", "0.0") for i in opposing)
             if not complete_breadth or not zero_opposing:
@@ -689,7 +707,7 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
             relation = re.sub(r"\s+", "", segment)
             claim_dates = set(_DATE_RE.findall(segment))
             direct = any(
-                (stamp := _DATE_RE.search(str(_field(item, "timestamp", "") or "")))
+                (stamp := _DATE_RE.search(str(_field(item, "as_of_date", "") or _field(item, "timestamp", "") or "")))
                 and (not claim_dates or stamp.group() in claim_dates)
                 and relation in re.sub(r"\s+", "", str(_field(item, "value", "")))
                 for item in complete
@@ -892,6 +910,12 @@ class CriticNode:
             prompt_pieces = [
                 f"用户问题: {state.get('question', '')}\n",
                 f"目标域: {domain}\n\n",
+                "=== 日期语义（代码事实）===\n",
+                f"requested_date={state.get('requested_date') or 'unknown'}；"
+                f"planned_as_of_date={state.get('planned_as_of_date') or 'unknown'}；"
+                f"as_of_date={state.get('as_of_date') or 'unknown'}；"
+                f"market_closed={state.get('market_closed') if state.get('market_closed') is not None else 'unknown'}\n"
+                "同日覆盖只能按 evidence 的 as_of_date 判断；retrieved_at 不能证明行情发生在请求日。\n\n",
                 "=== 待审查的报告 ===\n",
                 report_review,
                 "\n\n=== 实际证据 ===\n",
@@ -1002,11 +1026,16 @@ class CriticNode:
             # 阶段 4④：**代码级**校验结论并入 issues。这不是让 LLM 再判一次：
             # 报告引用了账本里不存在的 evidence id、或对无校验源实体断言"不存在"，
             # 都是代码已经确定的事实，必须变成 issue → 派生 revise → 不可能 pass。
-            expected_date = state.get("as_of_date") or state.get("requested_date")
+            # Same-day coverage is judged against the evidence date.  A
+            # weekend requested_date is user language, not a trading date.
+            expected_date = state.get("planned_as_of_date") or state.get("as_of_date")
             if not expected_date:
                 requested_match = _DATE_RE.search(str(state.get("question", "")))
                 expected_date = requested_match.group().replace("/", "-") if requested_match else None
-            code_issues = _code_level_issues(report) + _coverage_issues(report, evidence) + _claim_evidence_issues(report, evidence, expected_date=expected_date)
+            code_issues = _code_level_issues(report) + _coverage_issues(report, evidence) + _claim_evidence_issues(
+                report, evidence, expected_date=expected_date,
+                requested_date=state.get("requested_date"), market_closed=state.get("market_closed"),
+            )
             if code_issues:
                 issues = issues + code_issues
                 logger.error(

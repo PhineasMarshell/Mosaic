@@ -246,6 +246,11 @@ def log_plan(
     emit(
         "plan",
         run_id=_run_id_of(state),
+        requested_date=_field(plan, "requested_date") or _field(state, "requested_date"),
+        as_of_date=_field(plan, "as_of_date") or _field(state, "planned_as_of_date"),
+        market_closed=_field(plan, "market_closed")
+        if _field(plan, "market_closed") is not None
+        else _field(state, "market_closed"),
         intent_domain=_field(intent, "domain"),
         intent_task=_field(intent, "task"),
         steps=steps,
@@ -281,6 +286,8 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
                 "arguments": clip_args(arguments),
                 "status": _field(r, "status"),
                 "partial": bool(_field(r, "partial", False)),
+                "as_of_date": _field(r, "as_of_date"),
+                "retrieved_at": _field(r, "retrieved_at"),
                 "datum_count": len(normalized),
                 "note": clip(_field(r, "note"), 80),
                 "cache": cache or None,

@@ -19,9 +19,10 @@ from app.graph.gap_loop import (
     gap_key_decision,
     render_gap_context,
 )
-from app.graph.market_plan import apply_market_summary_prefix
+from app.graph.market_plan import apply_as_of_date_to_plan, apply_market_summary_prefix
 from app.llm_json import parse_json_object
 from app.models.research import DEFAULT_DOMAINS, ResearchPlan
+from app.research.trading_calendar import TradingDateSemantics, resolve_trading_date_semantics
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +78,29 @@ class SupervisorNode:
             if not s.get("run_id"):
                 run_log.log_run_start(s)
             plan, filtered_keys, plan_adjustments = await self._plan(s)
+            if s.get("date_reason") is not None:
+                date_reason = s["date_reason"]
+            elif plan.intent.domain != "a_share":
+                date_reason = None
+            elif plan.requested_date is None:
+                date_reason = "requested_date_unknown"
+            elif plan.market_closed is None:
+                date_reason = "calendar_unknown"
+            elif plan.as_of_date is None:
+                date_reason = "no_available_trading_day"
+            elif plan.market_closed:
+                date_reason = "market_closed_using_previous_trading_day"
+            elif plan.as_of_date != plan.requested_date:
+                date_reason = "evidence_as_of_differs_from_requested_date"
+            else:
+                date_reason = "requested_date_is_trading_day"
             result: dict = {
                 "intent": plan.intent,
                 "route": self._build_route(plan),
+                "requested_date": plan.requested_date,
+                "planned_as_of_date": plan.as_of_date,
+                "market_closed": plan.market_closed,
+                "date_reason": date_reason,
             }
             result.update(getattr(self, "_gap_state", {}))
             # 阶段 6：本节点是 `research_more → supervisor` 回环的落点，只在这里增
@@ -157,6 +178,9 @@ class SupervisorNode:
                 intent = ResearchIntent.model_validate(intent)
             if intent is None:
                 intent = ResearchIntent(domain=explicit_domain or "a_share", question=question)
+            intent.requested_date = state.get("requested_date")
+            intent.as_of_date = state.get("planned_as_of_date")
+            intent.market_closed = state.get("market_closed")
             self._last_forced_gap = []
             self._gap_state = {
                 "gap_key_decisions": preflight.as_state(),
@@ -164,7 +188,13 @@ class SupervisorNode:
                 "finalize_after_gap": True,
                 "blocked_reason": "no_executable_gap_steps",
             }
-            return ResearchPlan(intent=intent, steps=[]), [], ([], [])
+            return ResearchPlan(
+                intent=intent,
+                steps=[],
+                requested_date=state.get("requested_date"),
+                as_of_date=state.get("planned_as_of_date"),
+                market_closed=state.get("market_closed"),
+            ), [], ([], [])
 
         # research_more 回环：Critic 的缺口与上一轮已执行的工具都不在回环边上，
         # 必须由本节点从 state 读出后渲染进 planner prompt（信息闭环）。
@@ -217,6 +247,35 @@ class SupervisorNode:
         if explicit_domain is not None:
             plan.intent.domain = explicit_domain
 
+        # A research_more round can cross midnight.  Once a run has resolved
+        # "today", reuse that date instead of consulting the clock again.
+        date_semantics = (
+            TradingDateSemantics(
+                requested_date=state.get("requested_date"),
+                as_of_date=state.get("planned_as_of_date"),
+                market_closed=state.get("market_closed"),
+                reason=state.get("date_reason") or "",
+            )
+            if state.get("date_reason") is not None
+            else resolve_trading_date_semantics(question)
+        )
+        # The calendar is A-share specific.  Keep non-A-share market closure
+        # unknown rather than treating a weekend as a crypto/US closure.
+        if plan.intent.domain == "a_share":
+            plan.intent.requested_date = date_semantics.requested_date
+            plan.intent.as_of_date = date_semantics.as_of_date
+            plan.intent.market_closed = date_semantics.market_closed
+            plan.requested_date = date_semantics.requested_date
+            plan.as_of_date = date_semantics.as_of_date
+            plan.market_closed = date_semantics.market_closed
+        else:
+            plan.intent.requested_date = state.get("requested_date")
+            plan.intent.as_of_date = None
+            plan.intent.market_closed = None
+            plan.requested_date = state.get("requested_date")
+            plan.as_of_date = None
+            plan.market_closed = None
+
         # 截断步骤数
         plan.steps = plan.steps[: self.settings.max_research_steps]
 
@@ -238,6 +297,7 @@ class SupervisorNode:
             registry=registry,
             max_steps=self.settings.max_research_steps,
         )
+        apply_as_of_date_to_plan(plan, plan.as_of_date)
 
         # 回环轮（research_more）的代码级闭环：先丢掉已拿到数据的重复步骤，
         # 再把 Critic 点名、LLM 没覆盖、且在本次注册表文本里的缺口工具补到最前面
@@ -274,6 +334,9 @@ class SupervisorNode:
             requirements=coverage_requirements(critique),
             results=results,
         )
+        # Gap steps are appended after the initial plan pass.  Apply the same
+        # transport contract to those steps before routing them to Gateway.
+        apply_as_of_date_to_plan(plan, plan.as_of_date)
         if forced_gap:
             logger.info("Supervisor: 代码级补齐 Critic 缺口工具: %s", forced_gap)
         self._last_forced_gap = list(forced_gap)

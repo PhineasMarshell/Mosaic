@@ -59,6 +59,9 @@ class EvidenceItem(BaseModel):
 
 class MarketIntelligence(BaseModel):
     title: str = "今日市场情报"
+    requested_date: str | None = None
+    as_of_date: str | None = None
+    market_closed: bool | None = None
     #: T20：允许为空（旧实现必填）——模型少写一个字段就把整份报告（连同此前
     #: 所有已付费的工具调用）变成 ValidationError → report=None。缺失时由
     #: reasoning 归一化写入 data_caveats 说明降级，不允许静默变成正常报告。
@@ -94,6 +97,9 @@ class MarketIntelligence(BaseModel):
 
 class ResearchResponse(BaseModel):
     question: str
+    requested_date: str | None = None
+    as_of_date: str | None = None
+    market_closed: bool | None = None
     #: reasoning 环节失败时为空。此前该字段是必填的，导致"没产出报告"这种最需要
     #: 被解释的失败反而在组装响应时就抛 ValidationError，调用方只能拿到 500 和
     #: 一段 pydantic 校验文本，state.errors 里真正的原因永远传不出去。
@@ -237,6 +243,9 @@ def build_response_from_state(
 
     return ResearchResponse(
         question=question,
+        requested_date=state.get("requested_date"),
+        as_of_date=state.get("as_of_date"),
+        market_closed=state.get("market_closed"),
         report=report,
         tool_results=tool_results,
         cache_stats=dict(state.get("cache_stats") or {}),

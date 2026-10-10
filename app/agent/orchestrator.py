@@ -13,6 +13,7 @@ from app.graph.builder import build_graph
 from app.graph.state import ResearchState
 from app.models.research import MarketDomain
 from app.models.response import ResearchResponse, build_response_from_state
+from app.research.trading_calendar import requested_date_from_question, resolve_trading_date_semantics
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,19 @@ class Orchestrator:
 
         # ── LangGraph 图调用 ────────────────────────────────
         run_id = run_log.new_run_id()
+        requested_date, _ = requested_date_from_question(question)
+        date_semantics = resolve_trading_date_semantics(question) if domain == "a_share" else None
         state = ResearchState(
             question=question,
             domain=str(domain) if domain else None,
             conversation_id=conversation_id,
             run_id=run_id,
+            requested_date=requested_date,
+            # This is a planning target only.  GateNode replaces as_of_date
+            # with the date actually returned by evidence, or leaves it None.
+            planned_as_of_date=date_semantics.as_of_date if date_semantics else None,
+            market_closed=date_semantics.market_closed if date_semantics else None,
+            date_reason=date_semantics.reason if date_semantics else None,
             # T23b：预算按"整次调查"起算——research_more 回环的第二轮 analyst
             # 读到的是同一个截止时刻，不会重新获得一整份 research_budget_seconds
             budget_deadline=time.monotonic() + self.settings.research_budget_seconds,

@@ -51,6 +51,20 @@ MARKET_SUMMARY_MINIMUM: tuple[tuple[str, dict[str, Any], str], ...] = (
     ("telegraph", {}, "全市场盘面快讯（消息面 / 事件维度）"),
 )
 
+# The allowed Gateway contract lists no query parameters for these endpoints.
+# A planned observation date is an audit target, not a supported transport arg.
+UNPARAMETERIZED_LIMIT_UP_TOOLS: frozenset[str] = frozenset({"limit_up_count", "limit_up_sectors", "limit_up_pool"})
+
+
+def apply_as_of_date_to_plan(plan: ResearchPlan, as_of_date: str | None) -> ResearchPlan:
+    """Keep the date target on the plan without inventing Gateway parameters."""
+    plan.as_of_date = as_of_date
+    plan.intent.as_of_date = as_of_date
+    for step in plan.steps:
+        if step.tool_key in UNPARAMETERIZED_LIMIT_UP_TOOLS:
+            step.arguments = {}
+    return plan
+
 
 def is_market_level_question(intent: ResearchIntent | Any, question: str) -> bool:
     """是否需要注入 A 股市场级最低证据集。
