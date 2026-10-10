@@ -134,6 +134,7 @@ class ReasoningNode:
                 evidence=evidence,
                 history_context=self._build_revision_context(unsupported_claims, structured_issues),
                 findings=state.get("findings", []),
+                domain=state.get("domain") or _field(state.get("intent"), "domain") or "a_share",
             )
             # 阶段 6：把这次推理的 LLM 用量/耗时写进运行日志（指标的数据源）。
             from app.graph import run_log

@@ -68,9 +68,14 @@ class MarketIntelligence(BaseModel):
     #: 非空即表示报告里出现过无法核实的引用；Critic 节点会据此在代码层强制
     #: 至少产出一条 ``unsupported_claim`` issue，因此这种情况**不可能 pass**。
     evidence_violations: list[str] = Field(default_factory=list)
-    #: 阶段 4（实体校验）：报告提到、但既不在本地 code/name 映射、也无法由证据
-    #: 支撑的实体名。无校验源时只能表达为"未验证"，不得断言其"不存在/未上市"。
+    #: 报告提到但缺少成功返回数据或全 A 股名录确认的实体名。
+    #: 常见股票静态表不构成验证；未验证不代表不存在。
     unverified_entities: list[str] = Field(default_factory=list)
+    #: Code-generated provenance only; Reasoning overwrites model-supplied values.
+    entity_registry_source: str | None = None
+    entity_registry_as_of: str | None = None
+    entity_conflicts: list[dict[str, str]] = Field(default_factory=list)
+    entities_without_market_evidence: list[str] = Field(default_factory=list)
     strong_areas: list[str] = Field(default_factory=list)  # What's Moving — PRD §26
     what_changed: list[str] = Field(default_factory=list)  # 与之前相比的变化 — PRD §10
     what_matters: list[str] = Field(default_factory=list)

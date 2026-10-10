@@ -22,7 +22,8 @@ from app.llm_json import parse_json_object
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
 from app.models.response import ClaimEvidence, ClaimType, EvidenceItem, MarketIntelligence
-from app.research.entity_check import check_report_entities, report_text
+from app.research.entity_check import assess_report_entities, report_text
+from app.research.entity_registry import get_full_a_share_registry
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +293,7 @@ class ReasoningEngine:
         evidence: list[Evidence],
         history_context: str = "",
         findings: list | None = None,
+        domain: str = "a_share",
     ) -> MarketIntelligence:
         normalized_data = [datum.model_dump() for result in results for datum in result.normalized]
 
@@ -398,10 +400,35 @@ class ReasoningEngine:
                 payload["data_caveats"] = data_caveats
                 logger.warning("Reasoning 报告存在 %d 条无效 evidence 引用: %s", len(violations), violations[:3])
 
-            # 阶段 4（实体校验）：报告提到的实体必须有校验源。没有的记进
-            # unverified_entities —— Critic 据此禁止"某公司不存在/未上市"一类断言
-            # （无校验源时只能表达为"未验证"）。
-            payload["unverified_entities"] = check_report_entities(report_text(payload), evidence)[0]
+            # P0-A：全 A 股名录与实际返回 datum 分别记录身份、名称代码及行情证据。
+            # 名录不可用时保持未验证；下游不得据此推断证券不存在。
+            payload["unverified_entities"] = []
+            payload["entity_registry_source"] = None
+            payload["entity_registry_as_of"] = None
+            payload["entity_conflicts"] = []
+            payload["entities_without_market_evidence"] = []
+            if domain == "a_share":
+                registry = await get_full_a_share_registry()
+                assessments = assess_report_entities(report_text(payload), [*results, *evidence], registry=registry)
+                payload["unverified_entities"] = [
+                    a.name for a in assessments if a.existence in ("unverified", "mentioned_only")
+                ]
+                payload["entity_registry_source"] = registry.source
+                payload["entity_registry_as_of"] = registry.as_of
+                payload["entity_conflicts"] = [
+                    {
+                        "name": a.name,
+                        "code": a.code or "",
+                        "conflict": a.conflict or "",
+                        "source": registry.source,
+                        "as_of": registry.as_of or "",
+                        "authority": registry.authority,
+                    }
+                    for a in assessments if a.conflict
+                ]
+                payload["entities_without_market_evidence"] = [
+                    a.name for a in assessments if not a.market_evidence
+                ]
 
             # Ensure confidence is valid
             conf = payload.get("confidence")

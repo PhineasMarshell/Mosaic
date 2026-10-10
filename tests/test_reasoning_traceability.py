@@ -27,6 +27,8 @@ import json
 import logging
 import types
 
+import pytest
+
 from app.config import Settings
 from app.graph.nodes.critic import (
     _MAX_REVIEW_FIELD_CHARS,
@@ -35,8 +37,10 @@ from app.graph.nodes.critic import (
     _format_evidence_for_review,
     _format_report_for_review,
 )
+from app.graph.nodes.reasoning import ReasoningNode
 from app.models.evidence import Evidence
 from app.models.market import NormalizedDatum, ToolResult
+from app.models.response import MarketIntelligence
 from app.research.entity_check import check_report_entities, extract_entity_mentions, nonexistence_assertions
 from app.research.reasoning import ReasoningEngine
 
@@ -260,6 +264,15 @@ def _base_payload(**overrides) -> dict:
 
 
 class TestEntityVerification:
+    @pytest.fixture(autouse=True)
+    def unavailable_registry(self, monkeypatch):
+        from app.research.entity_registry import RegistrySnapshot
+
+        async def unavailable(*, timeout=15.0, ttl=86400.0):
+            return RegistrySnapshot(source="akshare.stock_info_a_code_name", available=False)
+
+        monkeypatch.setattr("app.research.reasoning.get_full_a_share_registry", unavailable)
+
     async def test_unknown_entity_is_recorded_as_unverified(self):
         report = await _reasoning_engine(_base_payload(what_happened="行云科技今日领涨")).reason(
             "今天A股发生了什么？", [], []
@@ -267,19 +280,50 @@ class TestEntityVerification:
 
         assert "行云科技" in report.unverified_entities
 
-    async def test_locally_known_entity_is_not_flagged(self):
+    async def test_locally_known_entity_stays_unverified_without_registry_or_returned_data(self):
         report = await _reasoning_engine(_base_payload(what_happened="宁德时代今日领涨")).reason(
             "今天A股发生了什么？", [], []
         )
 
-        assert "宁德时代" not in report.unverified_entities
+        assert "宁德时代" in report.unverified_entities
 
-    async def test_entity_backed_by_evidence_instrument_is_not_flagged(self):
+    async def test_request_instrument_alone_does_not_verify_entity(self):
         report = await _reasoning_engine(_base_payload(what_happened="行云科技今日领涨")).reason(
             "今天A股发生了什么？", [], [_ledger(instrument="行云科技")]
         )
 
-        assert "行云科技" not in report.unverified_entities
+        assert "行云科技" in report.unverified_entities
+
+    async def test_other_market_skips_a_share_registry_and_entity_issues(self, monkeypatch):
+        async def should_not_load(*args, **kwargs):
+            raise AssertionError("non-A-share reasoning loaded the A-share registry")
+
+        monkeypatch.setattr("app.research.reasoning.get_full_a_share_registry", should_not_load)
+        report = await _reasoning_engine(_base_payload(what_happened="比特币今日上涨。")).reason(
+            "比特币今日上涨了吗？", [],
+            [Evidence(id="crypto-001", source_tool="get_crypto_quotes", metric="price", value=100,
+                      instrument="BTCUSDT", domain="crypto")],
+            domain="crypto",
+        )
+
+        assert report.unverified_entities == []
+        assert report.entities_without_market_evidence == []
+        assert report.entity_registry_source is None
+        assert _code_level_issues(report) == []
+
+    async def test_graph_reasoning_passes_intent_domain_to_engine(self):
+        node = ReasoningNode(Settings())
+        seen: list[str] = []
+
+        async def reason(**kwargs):
+            seen.append(kwargs["domain"])
+            return MarketIntelligence(what_happened="比特币今日上涨。")
+
+        node._engine = types.SimpleNamespace(reason=reason, last_llm_usage=None, last_llm_duration_ms=None)
+        output = await node({"question": "比特币今日上涨了吗？", "intent": {"domain": "crypto"}})
+
+        assert output["report"] is not None
+        assert seen == ["crypto"]
 
     def test_two_entities_in_one_sentence_are_both_extracted(self):
         """修掉的历史缺陷：贪婪正则会把"宁德时代与行云科技"吞成一个假实体。"""
@@ -293,9 +337,9 @@ class TestEntityVerification:
         unverified, lines = check_report_entities("宁德时代与行云科技同时上涨", [])
 
         assert "行云科技" in unverified
-        assert "宁德时代" not in unverified
+        assert "宁德时代" in unverified
         assert any("无校验源" in line for line in lines)
-        assert any("本地映射" in line for line in lines)
+        assert all("无校验源" in line for line in lines)
 
     def test_nonexistence_assertion_is_detected_next_to_the_entity(self):
         assert nonexistence_assertions("行云科技不存在，市场上没有这只股票。", ["行云科技"]) == ["行云科技"]
@@ -422,7 +466,7 @@ class TestCodeLevelIssues:
 
         issues = _code_level_issues(report)
 
-        assert [i.kind for i in issues] == ["invalid_entity"]
+        assert [i.kind for i in issues] == ["unsupported_claim"]
         assert issues[0].action == "remove_or_qualify"
         assert "行云科技" in issues[0].claim
 

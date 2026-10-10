@@ -130,7 +130,7 @@ def test_entity_leads_removed_and_news_link_required():
     assert unknown == ["行云科技"]
     unknown, _ = check_report_entities("包括行云科技", [Evidence(id="b", source_tool="internal_news_digest",
                                                     metric="news_1", value={"title": "行云科技发布公告"})])
-    assert unknown == []
+    assert unknown == ["行云科技"]
 
 
 def test_quote_symbols_keep_entity_code_link():
@@ -140,7 +140,7 @@ def test_quote_symbols_keep_entity_code_link():
     evidence = build_evidence([result], id_prefix="technical", stable_ids=True)
     assert evidence[0].instrument == "600519"
     unknown, _ = check_report_entities("贵州茅台上涨", evidence)
-    assert "贵州茅台" not in unknown
+    assert "贵州茅台" in unknown
 
 
 def test_internal_tool_identity_consistent_in_plan_execution_and_evidence(monkeypatch):

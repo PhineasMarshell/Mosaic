@@ -137,7 +137,10 @@ class Critique(BaseModel):
 _ISSUE_RULES = (
     "[审计契约]\n"
     "- 逐条列出问题到 issues[]，不要只给结论。每个 issue 必须写清 kind / action / rationale。\n"
-    "- kind=missing_evidence 或 invalid_entity 且需要工具核查时，action 必须是 research_more；\n"
+    "- 未验证实体本身不构成 invalid_entity；具体行情缺标的证据时用 missing_evidence/research_more。\n"
+    "- 只有可追溯的权威证券主数据与成功返回的名称/代码冲突，才用 invalid_entity。\n"
+    "- 无据断言股票不存在/未上市时要求改成未验证，不得凭静态常见表推断。\n"
+    "- kind=missing_evidence 且需要工具核查时，action 必须是 research_more；\n"
     "  只有'删除该句 / 降低措辞强度 / 补一句风险提示'就能修好的，才允许 action=remove_or_qualify。\n"
     "- format 类问题（结构没写全、字段错位）用 action=repair_format。\n"
     "- 你不需要自己决定 verdict：系统会从 issues 的 action 派生 verdict。\n"
@@ -316,11 +319,14 @@ def _format_report_for_review(report) -> tuple[str, list[dict]]:
             + "\n".join(f"  ! {v}" for v in violations)
         )
     unverified = [str(x) for x in (_field(report, "unverified_entities", []) or [])]
+    missing_market = [str(x) for x in (_field(report, "entities_without_market_evidence", []) or [])]
     if unverified:
         parts.append(
             "【无校验源的实体 — 不得断言其「不存在/未上市」，只能写「未验证」】\n"
             + "\n".join(f"  ? {name}" for name in unverified)
         )
+    if missing_market:
+        parts.append("【缺少本次行情 datum 的实体】\n" + "\n".join(f"  ? {name}" for name in missing_market))
 
     # ── 阶段 4③：claim—evidence 映射（逐条论断 → 支撑它的 evidence id）──
     claims = list(_field(report, "claims", []) or [])
@@ -543,21 +549,60 @@ def _code_level_issues(report) -> list["AuditIssue"]:
             )
         )
     unverified = [str(x) for x in (_field(report, "unverified_entities", []) or [])]
-    if unverified:
+    missing_market = [str(x) for x in (_field(report, "entities_without_market_evidence", []) or [])]
+    if unverified or missing_market:
         text = entity_report_text(report)
-        for name in nonexistence_assertions(text, unverified):
+        nonexistence = set(nonexistence_assertions(text, unverified))
+        for name in nonexistence:
             issues.append(
                 AuditIssue(
-                    kind="invalid_entity",
+                    kind="unsupported_claim",
                     claim=f"报告断言实体「{name}」不存在/未上市",
                     severity="high",
                     action="remove_or_qualify",
                     rationale=(
-                        f"实体「{name}」无校验源（不在本地 code/name 映射，证据中也没有）；"
-                        "无校验源时只能表达为「未验证」，不得断言其不存在"
+                        f"实体「{name}」当前未验证；没有权威来源证明其不存在或未上市，"
+                        "应改为「未验证」"
                     ),
                 )
             )
+        for name in dict.fromkeys([*unverified, *missing_market]):
+            if name in nonexistence:
+                continue
+            for sentence in re.split(r"[。！？；，,\n]|(?:但|然而)", text):
+                if name not in sentence or re.search(r"未验证|无法确认|尚不能确认|未能确认|有待确认", sentence):
+                    continue
+                market_claim = re.search(r"领涨|上涨|下跌|涨停|跌停|收涨|收跌", sentence)
+                event_claim = name in unverified and re.search(r"盈利|亏损|发布|宣布", sentence)
+                if market_claim or event_claim:
+                    issues.append(
+                        AuditIssue(
+                            kind="missing_evidence",
+                            claim=sentence.strip()[:200],
+                            severity="high",
+                            action="research_more",
+                            rationale=f"实体「{name}」及该句行情/事件缺少对应的实际返回数据，需要补充标的证据",
+                            required_tool_keys=["quote"] if market_claim else [],
+                        )
+                    )
+                    break
+    for conflict in _field(report, "entity_conflicts", []) or []:
+        source = str(_field(conflict, "source", "") or "")
+        as_of = str(_field(conflict, "as_of", "") or "")
+        detail = str(_field(conflict, "conflict", "") or "")
+        name = str(_field(conflict, "name", "") or "")
+        authority = str(_field(conflict, "authority", "") or "")
+        if not (source and as_of and detail and name and authority == "authoritative"):
+            continue
+        issues.append(
+            AuditIssue(
+                kind="invalid_entity",
+                claim=f"{name}: {detail}",
+                severity="high",
+                action="remove_or_qualify",
+                rationale=f"权威证券主数据与成功返回的名称/代码冲突：{detail}; source={source}; as_of={as_of}",
+            )
+        )
     return issues
 
 
