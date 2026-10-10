@@ -14,6 +14,7 @@ T3 背景：此前两条路径各写一份持久化逻辑。SSE 侧把
 """
 
 import logging
+from contextlib import nullcontext
 
 from app.models.response import MarketIntelligence, ResearchResponse
 
@@ -110,26 +111,34 @@ async def persist_research(
         return False
 
     persisted = True
-
+    transaction = getattr(memory, "transaction", None)
+    tx = transaction() if callable(transaction) else nullcontext()
     try:
-        payload = result.model_dump()
-        payload["unverified"] = False
-        memory.save_research(question, payload)
-    except Exception as exc:  # noqa: BLE001 — 落库失败不致命，但必须可见
-        logger.warning("Research save failed (non-fatal): %s", exc)
-        persisted = False
+        with tx:
+            try:
+                payload = result.model_dump()
+                payload["unverified"] = False
+                memory.save_research(question, payload)
+            except Exception as exc:  # noqa: BLE001 — keep operation-specific diagnostics
+                logger.warning("Research save failed (non-fatal): %s", exc)
+                raise
 
-    if conversation_id:
-        try:
-            memory.save_turn(conversation_id, question, _answer_summary(report))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Turn save failed (non-fatal): %s", exc)
-            persisted = False
+            if conversation_id:
+                try:
+                    memory.save_turn(conversation_id, question, _answer_summary(report))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Turn save failed (non-fatal): %s", exc)
+                    raise
 
-    try:
-        memory.save_daily_state(data=_daily_state_data(report))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Daily state save failed (non-fatal): %s", exc)
+            try:
+                memory.save_daily_state(data=_daily_state_data(report))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Daily state save failed (non-fatal): %s", exc)
+                raise
+    except Exception:
+        # A transaction-capable store rolls back all preceding writes.  Stores
+        # used by lightweight callers may not expose transactions; they still
+        # receive the historical persisted=False signal.
         persisted = False
     result.persisted = persisted
     return persisted

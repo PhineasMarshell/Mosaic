@@ -13,6 +13,7 @@ import json
 import logging
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection as SQLite3Connection
@@ -189,6 +190,21 @@ class MarketMemory:
         """初始化数据库 schema（幂等）。"""
         with self.conn as c:
             c.executescript(_INIT_SQL)
+
+    @contextmanager
+    def transaction(self):
+        """Run a group of writes atomically on the current thread connection."""
+        conn = self.conn
+        # IMMEDIATE serializes concurrent persistence batches before their
+        # read/merge/write sequence can observe the same snapshot.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
 
     # ── Helpers ─────────────────────────────────
 

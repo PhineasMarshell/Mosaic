@@ -408,8 +408,7 @@ def log_finalize(
 def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str) -> None:
     """最终交付决策：是否持久化、走的哪条路径（SSE / sync）。
 
-    ``persisted`` 必须与 ``delivery_status == "verified"`` 一致（app/agent/persistence.py
-    的门控保证），这里只是把该事实写进日志，供事后核对。
+    verified 结果也可能因存储故障而 persisted=False；记录实际写入结果。
     """
     emit(
         "delivery",

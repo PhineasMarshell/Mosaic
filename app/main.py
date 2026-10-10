@@ -75,11 +75,7 @@ _settings: dict | None = None
 _orchestrator: object | None = None
 _settings_lock = __import__("threading").Lock()
 
-# 初始化 Market Memory（轻量，文件缓存，模块级安全）
 from app.memory.storage import get_memory
-
-memory = get_memory()
-
 
 def _get_settings():
     global _settings
@@ -131,6 +127,7 @@ async def morning_brief_endpoint():
     try:
         from app.scheduler.briefs import generate_morning_brief
 
+        memory = get_memory()
         brief = await generate_morning_brief(settings=_get_settings(), memory=memory)
         memory.save_daily_state(data={"type": "morning_brief", **brief})
         return JSONResponse(content=brief)
@@ -145,6 +142,7 @@ async def evening_brief_endpoint():
     try:
         from app.scheduler.briefs import generate_evening_brief
 
+        memory = get_memory()
         brief = await generate_evening_brief(settings=_get_settings(), memory=memory)
         memory.save_daily_state(data={"type": "evening_brief", **brief})
         return JSONResponse(content=brief)
@@ -197,6 +195,8 @@ async def ask(request: dict):
     """Ask endpoint — accepts dict to match frontend payload."""
     question, domain, conversation_id = _parse_ask_payload(request, "POST /api/ask")
     settings = _get_settings()
+    request_run_id = run_log.new_run_id()
+    orchestrator_ready = False
 
     try:
         logger.info(
@@ -204,8 +204,10 @@ async def ask(request: dict):
         )
         # 同步端点以前没有任何总超时：调查可以一直跑到把每个工具的
         # 30s 超时逐个耗尽（max_tool_calls=12 → 最坏几分钟），浏览器只能干等。
+        orchestrator = _get_orchestrator()
+        orchestrator_ready = True
         result = await asyncio.wait_for(
-            _get_orchestrator().run(question, domain=domain, conversation_id=conversation_id),
+            orchestrator.run(question, domain=domain, conversation_id=conversation_id),
             timeout=settings.research_budget_seconds,
         )
 
@@ -319,6 +321,15 @@ async def ask(request: dict):
         logger.warning("Invalid input: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        if not orchestrator_ready:
+            fallback = {
+                "question": question,
+                "run_id": request_run_id,
+                "final_audit_status": "error",
+                "delivery_reason": "研究初始化失败",
+            }
+            run_log.log_run_start(fallback)
+            run_log.log_delivery(fallback, delivery_status="failed", persisted=False, sink="sync")
         logger.exception("Internal error during research")
         return JSONResponse(
             status_code=500,
@@ -364,8 +375,6 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
     def json_event(event: str, data: dict):
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
-    orchestrator = _get_orchestrator()
-    graph = orchestrator._ensure_graph()
     initial_state = {
         "question": question,
         "domain": domain,
@@ -376,6 +385,40 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         "budget_deadline": time.monotonic() + budget,
     }
     run_log.log_run_start(initial_state)
+
+    def _terminal_state(*, reason: str, audit: str = "error") -> dict:
+        return {
+            **initial_state,
+            "final_audit_status": audit,
+            "delivery_reason": reason,
+        }
+
+    # The endpoint preflights graph construction, but retain a run-correlated
+    # SSE error if lazy construction fails or changes between requests.
+    try:
+        orchestrator = _get_orchestrator()
+        graph = orchestrator._ensure_graph()
+    except Exception as exc:
+        logger.exception("Stream graph initialization failed for: %s", question[:50])
+        run_log.log_delivery(
+            _terminal_state(reason="研究流程发生内部异常"),
+            delivery_status="failed", persisted=False, sink="sse",
+        )
+        yield json_event("progress", {"step": "error", "message": "研究初始化失败，请重试"})
+        yield json_event(
+            "result",
+            {
+                "error": str(exc),
+                "code": "internal",
+                "question": question,
+                "final_audit_status": "error",
+                "delivery_status": "failed",
+                "delivery_reason": "研究流程发生内部异常",
+                "unresolved_issues": [],
+                "persisted": False,
+            },
+        )
+        return
 
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -525,9 +568,20 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
 
         yield json_event("result", save_result)
 
+    except asyncio.CancelledError:
+        # Starlette closes the generator when an SSE client disconnects.  Keep
+        # the original run_id and record the cancellation as a terminal event.
+        run_log.log_delivery(
+            _terminal_state(reason="SSE 客户端断开连接"),
+            delivery_status="failed", persisted=False, sink="sse",
+        )
+        raise
     except (UpstreamTimeoutError, TimeoutError):
         logger.warning("Stream research exceeded %ds budget for: %s", budget, question[:50])
-        run_log.log_delivery(initial_state, delivery_status="failed", persisted=False, sink="sse")
+        run_log.log_delivery(
+            _terminal_state(reason="研究超出总预算"),
+            delivery_status="failed", persisted=False, sink="sse",
+        )
         yield json_event("progress", {"step": "error", "message": "研究超时，请重试"})
         yield json_event(
             "result",
@@ -544,7 +598,10 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         )
     except LLMOutputError as exc:
         logger.error("Stream research got unusable LLM output for: %s — %s", question[:50], str(exc)[:800])
-        run_log.log_delivery(initial_state, delivery_status="failed", persisted=False, sink="sse")
+        run_log.log_delivery(
+            _terminal_state(reason="上游模型输出不可解析"),
+            delivery_status="failed", persisted=False, sink="sse",
+        )
         yield json_event("progress", {"step": "error", "message": "上游模型返回了无法解析的内容"})
         yield json_event(
             "result",
@@ -561,7 +618,10 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         )
     except Exception as exc:
         logger.exception("Stream research failed for: %s", question[:50])
-        run_log.log_delivery(initial_state, delivery_status="failed", persisted=False, sink="sse")
+        run_log.log_delivery(
+            _terminal_state(reason="研究流程发生内部异常"),
+            delivery_status="failed", persisted=False, sink="sse",
+        )
         yield json_event(
             "progress",
             {
@@ -609,6 +669,7 @@ async def ask_stream(request: dict):
     # T26：_parse_ask_payload 留在 try 外——它抛的是 HTTPException(400)，
     # 放进 try 会被下面的 except Exception 改写成 500。
     question, domain, conversation_id = _parse_ask_payload(request, "POST /api/ask/stream")
+    request_run_id = run_log.new_run_id()
 
     try:
         logger.info("Streaming question: %s domain=%s conv_id=%s", question[:50], domain, conversation_id)
@@ -624,6 +685,14 @@ async def ask_stream(request: dict):
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )
     except Exception as exc:
+        fallback = {
+            "question": question,
+            "run_id": request_run_id,
+            "final_audit_status": "error",
+            "delivery_reason": "研究初始化失败",
+        }
+        run_log.log_run_start(fallback)
+        run_log.log_delivery(fallback, delivery_status="failed", persisted=False, sink="sse")
         logger.exception("Internal error during streaming research")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

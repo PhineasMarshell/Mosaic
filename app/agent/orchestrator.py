@@ -46,7 +46,6 @@ class Orchestrator:
             raise ValueError("question cannot be empty")
 
         # ── LangGraph 图调用 ────────────────────────────────
-        graph = self._ensure_graph()
         run_id = run_log.new_run_id()
         state = ResearchState(
             question=question,
@@ -59,6 +58,7 @@ class Orchestrator:
         )
         run_log.log_run_start(state)
         try:
+            graph = self._ensure_graph()
             result_state = await graph.ainvoke(
                 state,
                 config={"recursion_limit": self.settings.graph_recursion_limit},
@@ -69,11 +69,17 @@ class Orchestrator:
         except asyncio.CancelledError:
             # 外层总预算通过 wait_for 取消这里；保留同一个 run_id，避免
             # timeout 的 delivery 日志脱离 run_start 链路。
-            run_log.log_delivery(state, delivery_status="failed", persisted=False, sink="sync")
+            run_log.log_delivery(
+                {**state, "final_audit_status": "error", "delivery_reason": "研究任务已取消"},
+                delivery_status="failed", persisted=False, sink="sync",
+            )
             raise
-        except Exception:
+        except Exception as exc:
             # 上游/图组装异常也必须留下终态失败事件，不能只返回 HTTP 错误。
-            run_log.log_delivery(state, delivery_status="failed", persisted=False, sink="sync")
+            run_log.log_delivery(
+                {**state, "final_audit_status": "error", "delivery_reason": type(exc).__name__},
+                delivery_status="failed", persisted=False, sink="sync",
+            )
             raise
 
         # 可信与否只看 delivery_status；errors 只是"运行有没有出错"。
