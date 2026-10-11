@@ -7,18 +7,22 @@
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import shlex
+import subprocess
 import tempfile
 import time
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
+import anyio
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import get_default_environment, stdio_client
+from mcp.client.stdio import _parse_line, get_default_environment, stdio_client
+from mcp.shared.message import SessionMessage
 
 from app.config import Settings
 from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, summarize_arguments
@@ -132,12 +136,87 @@ class MarketGatewayClient:
         # iiix derives its log file from APPDATA.  Keep the override narrow to
         # the spawned process and record the effective path for diagnostics.
         env["APPDATA"] = str(appdata)
+        # iiix stores plugin bundles and cross-process locks under LOCALAPPDATA
+        # (APPDATA only controls its roaming log/auth root).  Keep installation,
+        # authorization locks, logs, and the spawned runtime inside the same
+        # project-writable directory.
+        env["LOCALAPPDATA"] = str(appdata)
         logger.info("MCP child APPDATA/log root=%s", appdata / "iiix" / "logs")
         for key in PROXY_ENV_KEYS:
             value = os.environ.get(key)
             if value:
                 env[key] = value
         return env
+
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def _blocking_stdio_client(params: StdioServerParameters):
+        """Fallback stdio bridge for Windows hosts whose asyncio pipe API is denied.
+
+        Some managed Windows runtimes reject ``CreateNamedPipe`` from
+        ``asyncio``/AnyIO (WinError 5), while ordinary ``subprocess.Popen``
+        pipes remain available.  Preserve the MCP wire protocol and lifecycle
+        by moving only blocking pipe reads/writes to worker threads.  This is
+        used strictly after the native MCP transport reports PermissionError.
+        """
+        env = get_default_environment() | (params.env or {})
+        proc = subprocess.Popen(
+            [params.command, *params.args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=params.cwd,
+            env=env,
+            bufsize=0,
+        )
+        assert proc.stdin is not None and proc.stdout is not None
+        read_send, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](0)
+        write_stream, write_recv = anyio.create_memory_object_stream[SessionMessage](0)
+        stop = asyncio.Event()
+
+        async def reader() -> None:
+            try:
+                while not stop.is_set():
+                    line = await asyncio.to_thread(proc.stdout.readline)
+                    if not line:
+                        break
+                    try:
+                        text = line.decode(params.encoding, errors=params.encoding_error_handler)
+                        await read_send.send(_parse_line(text.rstrip("\r\n")))
+                    except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+                        break
+            finally:
+                await read_send.aclose()
+
+        async def writer() -> None:
+            try:
+                async for message in write_recv:
+                    payload = (
+                        message.message.model_dump_json(by_alias=True, exclude_unset=True) + "\n"
+                    ).encode(params.encoding, errors=params.encoding_error_handler)
+                    await asyncio.to_thread(proc.stdin.write, payload)
+                    await asyncio.to_thread(proc.stdin.flush)
+            except (anyio.ClosedResourceError, anyio.BrokenResourceError, OSError):
+                pass
+
+        reader_task = asyncio.create_task(reader())
+        writer_task = asyncio.create_task(writer())
+        try:
+            yield read_stream, write_stream
+        finally:
+            stop.set()
+            await write_stream.aclose()
+            await write_recv.aclose()
+            with contextlib.suppress(OSError):
+                proc.stdin.close()
+            if proc.poll() is None:
+                proc.terminate()
+            await asyncio.to_thread(proc.wait)
+            reader_task.cancel()
+            writer_task.cancel()
+            await asyncio.gather(reader_task, writer_task, return_exceptions=True)
+            await read_stream.aclose()
+            await read_send.aclose()
 
     async def connect(self) -> None:
         args = shlex.split(self.settings.mcp_args)
@@ -152,10 +231,23 @@ class MarketGatewayClient:
 
         try:
             try:
-                read_stream, write_stream = await asyncio.wait_for(
-                    self.stack.enter_async_context(stdio_client(params)),
-                    timeout=self.settings.research_timeout_seconds,
-                )
+                try:
+                    read_stream, write_stream = await asyncio.wait_for(
+                        self.stack.enter_async_context(stdio_client(params)),
+                        timeout=self.settings.research_timeout_seconds,
+                    )
+                except PermissionError as exc:
+                    # Managed Windows hosts may deny asyncio's named-pipe
+                    # creation even though ordinary Popen pipes are allowed.
+                    # Retry the exact same MCP command through the blocking
+                    # bridge; protocol, auth, and tool validation stay real.
+                    if os.name != "nt":
+                        raise
+                    logger.warning("Native MCP stdio pipe denied; using blocking bridge: %s", exc)
+                    read_stream, write_stream = await asyncio.wait_for(
+                        self.stack.enter_async_context(self._blocking_stdio_client(params)),
+                        timeout=self.settings.research_timeout_seconds,
+                    )
             except TimeoutError:
                 raise MCPConnectionError(
                     f"MCP server startup timed out after {self.settings.research_timeout_seconds}s (command: {launch})"
