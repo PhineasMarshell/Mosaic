@@ -89,7 +89,7 @@ async def persist_research(
 
     - **只有 ``delivery_status == "verified"`` 的结果才允许进入对话轮次 / 当日状态
       / 后续记忆上下文**。``errors == []`` 不构成放行理由——那只说明运行没出错。
-    - ``degraded``（本版尚未自动产生）与 ``blocked`` / ``failed`` 一律不写入 memory；
+    - ``degraded`` 与 ``blocked`` / ``failed`` 一律不写入 memory；
       诊断信息保留在响应和结构化运行日志中。
     - ``result.report is None`` 时不写任何持久化记录，以免空值污染历史状态。
     - 使用结果 ``run_id`` 作为幂等键；锁冲突只在事务回滚后有限重试。

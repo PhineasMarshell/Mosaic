@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.errors import LLMOutputError, UpstreamTimeoutError
 from app.graph import run_log
 from app.logging_config import setup_logging
+from app.memory.storage import get_memory
 from app.models.response import build_response_from_state
 from app.research.trading_calendar import requested_date_from_question, resolve_trading_date_semantics
 
@@ -76,7 +77,6 @@ _settings: dict | None = None
 _orchestrator: object | None = None
 _settings_lock = __import__("threading").Lock()
 
-from app.memory.storage import get_memory
 
 def _get_settings():
     global _settings
@@ -302,12 +302,13 @@ async def ask(request: dict):
             {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
              "delivery_reason": result.delivery_reason, "critique": result.critique,
              "blocked_reason": result.blocked_reason,
-             "unresolved_issues": result.unresolved_issues},
+             "unresolved_issues": result.unresolved_issues,
+             "reason_codes": result.reason_codes},
             delivery_status=str(delivery), persisted=persisted, sink="sync"
         )
 
         return JSONResponse(content=data)
-    except TimeoutError as exc:
+    except TimeoutError:
         logger.warning("Research exceeded %ds budget: %s", settings.research_budget_seconds, run_log.redact_text(question))
         return JSONResponse(
             status_code=504,
@@ -522,6 +523,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             "delivery_reason": result.delivery_reason,
             "blocked_reason": result.blocked_reason,
             "unresolved_issues": result.unresolved_issues,
+            "reason_codes": result.reason_codes,
         }
         if result.report is None:
             if delivery == "blocked":

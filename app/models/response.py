@@ -62,6 +62,10 @@ class MarketIntelligence(BaseModel):
     requested_date: str | None = None
     as_of_date: str | None = None
     market_closed: bool | None = None
+    #: 受控 degraded 的数据完整性与来源覆盖元数据。
+    partial: bool = False
+    source: Any = None
+    coverage: Any = None
     #: T20：允许为空（旧实现必填）——模型少写一个字段就把整份报告（连同此前
     #: 所有已付费的工具调用）变成 ValidationError → report=None。缺失时由
     #: reasoning 归一化写入 data_caveats 说明降级，不允许静默变成正常报告。
@@ -101,6 +105,9 @@ class ResearchResponse(BaseModel):
     requested_date: str | None = None
     as_of_date: str | None = None
     market_closed: bool | None = None
+    partial: bool = False
+    source: Any = None
+    coverage: Any = None
     #: reasoning 环节失败时为空。此前该字段是必填的，导致"没产出报告"这种最需要
     #: 被解释的失败反而在组装响应时就抛 ValidationError，调用方只能拿到 500 和
     #: 一段 pydantic 校验文本，state.errors 里真正的原因永远传不出去。
@@ -113,6 +120,7 @@ class ResearchResponse(BaseModel):
     critique: dict[str, Any] | None = None
     #: report 被清空后仍保留的确定性 issue 摘要，供前端和诊断使用。
     unresolved_issues: list[str] = Field(default_factory=list)
+    reason_codes: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     #: 阶段 5：最终审计状态与交付状态。缺省 None = "本次运行没有经过审计判定"，
     #: 调用方必须显式处理（不得推断 ``errors == []`` 即可信）。
@@ -225,7 +233,7 @@ def build_response_from_state(
     final_audit_status, delivery_status, delivery_reason, report = _resolve_terminal_state(state, report, errors)
     from app.graph.nodes.finalize import infer_blocked_reason
 
-    blocked_reason = infer_blocked_reason(state, critique) if delivery_status != "verified" else ""
+    blocked_reason = infer_blocked_reason(state, critique) if delivery_status not in ("verified", "degraded") else ""
 
     if report is None and not errors and delivery_status not in ("blocked",):
         # 保证 report 为空时调用方手里一定有一条可展示的原因，而不是只有空报告。
@@ -251,15 +259,21 @@ def build_response_from_state(
 
     return ResearchResponse(
         question=question,
-        requested_date=state.get("requested_date"),
-        as_of_date=state.get("as_of_date"),
-        market_closed=state.get("market_closed"),
+        requested_date=state.get("requested_date") or (report.requested_date if hasattr(report, "requested_date") else report.get("requested_date") if isinstance(report, dict) else None),
+        as_of_date=state.get("as_of_date") or (report.as_of_date if hasattr(report, "as_of_date") else report.get("as_of_date") if isinstance(report, dict) else None),
+        market_closed=state.get("market_closed") if state.get("market_closed") is not None else (report.market_closed if hasattr(report, "market_closed") else report.get("market_closed") if isinstance(report, dict) else None),
+        partial=bool((report.partial if hasattr(report, "partial") else report.get("partial", False)) if report is not None else False),
+        source=(report.source if hasattr(report, "source") else report.get("source") if isinstance(report, dict) else None)
+        if report is not None else None,
+        coverage=(report.coverage if hasattr(report, "coverage") else report.get("coverage") if isinstance(report, dict) else None)
+        if report is not None else None,
         report=report,
         tool_results=tool_results,
         cache_stats=dict(state.get("cache_stats") or {}),
         conversation_id=conversation_id,
         critique=critique,
         unresolved_issues=list(state.get("unresolved_issues") or _unresolved_issues(critique)),
+        reason_codes=list(state.get("reason_codes") or state.get("degraded_reason_codes") or []),
         errors=errors,
         final_audit_status=final_audit_status,
         delivery_status=delivery_status,

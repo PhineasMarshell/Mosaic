@@ -503,6 +503,7 @@ def log_finalize(
     remaining_budget: float | None = None,
     gap_key_decisions: Any = None,
     executable_gap_steps: Any = None,
+    reason_codes: Any = None,
 ) -> None:
     """finalize_audit 节点的判定依据（为什么 verified / blocked / failed）。"""
     emit(
@@ -518,6 +519,7 @@ def log_finalize(
         remaining_budget=remaining_budget,
         gap_key_decisions=gap_key_decisions or [],
         executable_gap_steps=executable_gap_steps or [],
+        reason_codes=reason_codes or [],
     )
 
 
@@ -547,6 +549,7 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
             for i in (_field(_field(state, "critique"), "issues", []) or [])
         ],
         error_category=_field(state, "error_category"),
+        reason_codes=_field(state, "reason_codes", []) or [],
     )
 
 

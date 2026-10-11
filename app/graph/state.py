@@ -161,7 +161,7 @@ class ResearchState(BaseModel):
     #: 路由决策**不得**读它，否则计数拆分失去意义。
     revision_count: int = 0
 
-    # ── 终态（阶段 5 保守版）──
+    # ── 终态（受控 degraded 交付）──
     #: 最终审计状态（由 finalize_audit 节点写入；pass 路径不经过该节点，
     #: 由 build_response_from_state 从 critique.verdict 兜底派生）。
     final_audit_status: object | None = None
@@ -170,6 +170,9 @@ class ResearchState(BaseModel):
     delivery_status: object | None = None
     delivery_reason: str = ""
     unresolved_issues: list[str] = []
+    #: 终态机器可读原因码，供 sync/SSE 与 delivery 日志保持一致。
+    reason_codes: list[str] = []
+    degraded_reason_codes: list[str] = []
 
     # ── 并行写入字段（必须 reducer）──
     #: T16：evidence 按 id、findings 按 analyst 去重（回环覆盖，保留最新）
