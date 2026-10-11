@@ -49,9 +49,7 @@ class MarketAnalystNode:
     #: 也不要再往这里加名字——新增无 symbol 工具请在注册表里声明
     #: ``requires_symbol=False``（在 ``ToolMeta`` 构造时或 ``_SYMBOL_FREE_TOOLS``）。
     #: 保留该属性只为不打断既有测试/外部引用。
-    WHITELIST_NO_SYMBOL: frozenset[str] = frozenset(
-        meta.tool_name for meta in ALL_TOOLS if not meta.requires_symbol
-    )
+    WHITELIST_NO_SYMBOL: frozenset[str] = frozenset(meta.tool_name for meta in ALL_TOOLS if not meta.requires_symbol)
 
     def __init__(self, settings: Settings):
         """初始化分析员节点。"""
@@ -79,7 +77,8 @@ class MarketAnalystNode:
             async with self._runtime.gateway_session():
                 for result in await self._execute_tools(state, called_signatures):
                     results.append(result)
-                    tools_used.append(result.tool)
+                    if getattr(result, "note", None) != "local_argument_validation":
+                        tools_used.append(result.tool)
                     stats = getattr(result, "_cache_info", None)
                     if stats:
                         cache_stats.update(stats)
@@ -114,7 +113,7 @@ class MarketAnalystNode:
             }
 
         except Exception as exc:
-            logger.warning("Analyst %s failed: %s", self.category, exc)
+            logger.warning("Analyst %s failed error_type=%s", self.category, type(exc).__name__)
             return {
                 "errors": [f"{self.category} analysis failed: {exc}"],
                 "findings": [
@@ -132,7 +131,7 @@ class MarketAnalystNode:
     # ------------------------------------------------------------------ #
 
     def _extract_stocks(self, state: dict) -> list[str]:
-        """从问题文本 / 研究计划中抽取 A 股 6 位数字代码。"""
+        """从问题文本 / 研究计划中抽取可确认的 A 股代码。"""
         question = state.get("question", "")
         if not isinstance(question, str):
             question = ""
@@ -144,6 +143,12 @@ class MarketAnalystNode:
             code = match.group(1)
             if code not in candidates:
                 candidates.append(code)
+
+        from app.gateway.stock_codes import STOCK_CODE_MAP_A_SHARE
+
+        for name, symbol in STOCK_CODE_MAP_A_SHARE.items():
+            if name in question and symbol.startswith(("SH", "SZ")) and symbol[2:] not in candidates:
+                candidates.append(symbol[2:])
 
         # ② 查找 supervisor route 中各 assignment 的 tool_calls.arguments.symbol
         route = state.get("route")
@@ -232,13 +237,36 @@ class MarketAnalystNode:
                 continue
 
             arguments = dict(tc.get("arguments") or {})
+            # Fill question-derived symbols before canonical validation.  An
+            # LLM plan can omit quote arguments even when the user supplied a
+            # concrete six-digit code; validating first used to discard the
+            # call before this recovery path could run.
+            if meta.requires_symbol:
+                if meta.tool_name == "get_market_quotes":
+                    has_quote_target = bool(arguments.get("symbols") or arguments.get("symbol"))
+                    if not has_quote_target and stocks:
+                        arguments["symbols"] = sorted(set(stocks))
+                elif not arguments.get("symbol") and stocks:
+                    arguments["symbol"] = ";".join(stocks)
             # Convert legacy planner arguments before the symbol guard and
             # before deduplication.  The execution layer only sees canonical
             # Gateway arguments.
             try:
                 arguments = canonicalize_tool_arguments(meta.tool_name, arguments)
             except Exception as exc:
-                logger.warning("%s 跳过 %s（参数无效: %s）", self.category, tool_key, exc)
+                logger.warning("%s 跳过 %s（参数无效: %s）", self.category, tool_key, type(exc).__name__)
+                results.append(
+                    ToolResult(
+                        tool=meta.tool_name,
+                        operation_id=meta.tool_name,
+                        tool_key=tool_key,
+                        arguments=arguments,
+                        status=STATUS_ERROR,
+                        normalized=[],
+                        error=f"Invalid arguments: {exc}",
+                        note="local_argument_validation",
+                    )
+                )
                 continue
             # symbol 守卫（阶段 3 ④）：是否需要 symbol 由注册表元数据声明，
             # planner 没给 → 用问题里抽到的代码补，仍无则跳过。
@@ -252,6 +280,18 @@ class MarketAnalystNode:
                 else:
                     # T8：跳过必须可见（旧实现是 debug，功能没跑却看不出）。
                     logger.warning("%s 跳过 %s（缺少 symbol 且问题中无 6 位代码）", self.category, tool_key)
+                    results.append(
+                        ToolResult(
+                            tool=meta.tool_name,
+                            operation_id=meta.tool_name,
+                            tool_key=tool_key,
+                            arguments=arguments,
+                            status=STATUS_ERROR,
+                            normalized=[],
+                            error="Missing required symbol: no verified target in question or plan",
+                            note="local_argument_validation",
+                        )
+                    )
                     continue
 
             dedup_key = semantic_signature(meta.tool_name, arguments)
@@ -260,19 +300,28 @@ class MarketAnalystNode:
                 continue
             seen.add(dedup_key)
 
-            deadline = None
+            deadline = float(budget_deadline) if budget_deadline is not None else None
             if budget_seconds > 0:
                 remaining_budget = min(
                     remaining_budget,
                     budget_seconds - (time.monotonic() - run_started),
                 )
+                if budget_deadline is not None:
+                    remaining_budget = min(remaining_budget, float(budget_deadline) - time.monotonic())
                 remaining_tools = max(total_calls - idx, 1)
-                deadline = time.monotonic() + max(remaining_budget / remaining_tools, 0.0)
+                tool_deadline = time.monotonic() + max(remaining_budget / remaining_tools, 0.0)
+                deadline = min(deadline, tool_deadline) if deadline is not None else tool_deadline
 
             # D4：只在真正执行前扣减——被跳过的调用（上面那些 continue）不消耗预算
             budget -= 1
             exec_started = time.monotonic()
-            result = await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
+            refresh = bool(tc.get("refresh", False) or "覆盖不足重拉" in str(tc.get("purpose", "")))
+            if refresh:
+                result = await self._runtime.execute(
+                    meta.tool_name, arguments, called_signatures, deadline=deadline, refresh=True
+                )
+            else:
+                result = await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
             # 阶段 2：把**原计划的 registry key** 写进结果。缺口判定必须读这个字段，
             # 而不是拿 operationId 反查（同一 operationId 被多个 registry key 复用时，
             # 反查只能拿到规范条目，会把兄弟 key 的缺口误判成"已满足"）。

@@ -1,0 +1,317 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 42,
+      "row": 79
+    },
+    "filename": "D:\\Mosaic\\app\\main.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from app.memory.storage import get_memory\r\n\r\n\r\n",
+          "end_location": {
+            "column": 1,
+            "row": 81
+          },
+          "location": {
+            "column": 1,
+            "row": 79
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 79
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 79,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 31,
+      "row": 310
+    },
+    "filename": "D:\\Mosaic\\app\\main.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 31,
+            "row": 310
+          },
+          "location": {
+            "column": 24,
+            "row": 310
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `exc`"
+    },
+    "location": {
+      "column": 28,
+      "row": 310
+    },
+    "message": "Local variable `exc` is assigned to but never used",
+    "name": "unused-variable",
+    "noqa_row": 310,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 15,
+      "row": 11
+    },
+    "filename": "D:\\Mosaic\\tests\\test_graph_topology.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 12
+          },
+          "location": {
+            "column": 1,
+            "row": 11
+          }
+        }
+      ],
+      "message": "Remove unused import: `logging`"
+    },
+    "location": {
+      "column": 8,
+      "row": 11
+    },
+    "message": "`logging` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 11,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 13,
+      "row": 10
+    },
+    "filename": "D:\\Mosaic\\tests\\test_sentiment_analyst.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 11
+          },
+          "location": {
+            "column": 1,
+            "row": 10
+          }
+        }
+      ],
+      "message": "Remove unused import: `types`"
+    },
+    "location": {
+      "column": 8,
+      "row": 10
+    },
+    "message": "`types` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 10,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 48,
+      "row": 15
+    },
+    "filename": "D:\\Mosaic\\tests\\test_sentiment_analyst.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from app.gateway.tool_registry import by_category, resolve_tool",
+          "end_location": {
+            "column": 75,
+            "row": 15
+          },
+          "location": {
+            "column": 1,
+            "row": 15
+          }
+        }
+      ],
+      "message": "Remove unused import: `app.gateway.tool_registry.ALL_TOOLS`"
+    },
+    "location": {
+      "column": 39,
+      "row": 15
+    },
+    "message": "`app.gateway.tool_registry.ALL_TOOLS` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 15,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 75,
+      "row": 14
+    },
+    "filename": "D:\\Mosaic\\tests\\test_stage1_quote_contract.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import pytest\n\nfrom app.agent.prompts_graph import PLANNER_PROMPT\nfrom app.config import Settings\nfrom app.gateway.arguments import canonicalize_tool_arguments, freeze_arguments, semantic_signature\nfrom app.gateway.http_client import MarketGatewayHttpClient\nfrom app.graph import run_log\nfrom app.graph.gap_loop import drop_repeat_steps\nfrom app.graph.market_plan import A_SHARE_BENCHMARK_SYMBOL, apply_market_summary_prefix\nfrom app.graph.nodes.analysts.technical import TechnicalAnalystNode\nfrom app.models.market import NormalizedDatum, ToolResult\nfrom app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 17
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 54,
+      "row": 11
+    },
+    "filename": "D:\\Mosaic\\tests\\test_stage3_research_loop.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 12
+          },
+          "location": {
+            "column": 1,
+            "row": 11
+          }
+        }
+      ],
+      "message": "Remove unused import: `app.graph.nodes.finalize.resolve_delivery`"
+    },
+    "location": {
+      "column": 38,
+      "row": 11
+    },
+    "message": "`app.graph.nodes.finalize.resolve_delivery` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 11,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 96,
+      "row": 23
+    },
+    "filename": "D:\\Mosaic\\tests\\test_stage4_integration.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport logging\nimport uuid\nfrom pathlib import Path\nfrom types import SimpleNamespace\n\nimport pytest\nfrom fastapi.testclient import TestClient\n\nimport app.main as main\nfrom app.agent.persistence import persist_research\nfrom app.memory.storage import MarketMemory\nfrom app.models.response import MarketIntelligence, ResearchResponse, build_response_from_state\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 26
+          },
+          "location": {
+            "column": 1,
+            "row": 8
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 8
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 8,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 69,
+      "row": 32
+    },
+    "filename": "D:\\Mosaic\\tests\\test_stage8_release.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport logging\nimport os\nimport sqlite3\nimport subprocess\nimport sys\nfrom contextlib import contextmanager\nfrom pathlib import Path\nfrom types import SimpleNamespace\n\nimport pytest\nfrom fastapi.testclient import TestClient\nfrom pydantic import ValidationError\n\nimport app.cli as cli\nimport app.main as main\nfrom app.agent.persistence import persist_research\nfrom app.config import Settings\nfrom app.graph import run_log\nfrom app.memory.storage import MarketMemory\nfrom app.models.response import MarketIntelligence, ResearchResponse\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 35
+          },
+          "location": {
+            "column": 1,
+            "row": 9
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 9
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 9,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  }
+]

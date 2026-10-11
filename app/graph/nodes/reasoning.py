@@ -12,9 +12,10 @@ import logging
 
 from app.config import Settings
 from app.errors import LLMOutputError
+from app.models.evidence import Evidence
 from app.models.market import ToolResult
 from app.models.response import MarketIntelligence
-from app.research.reasoning import ReasoningEngine, _get_evidence_key
+from app.research.reasoning import ReasoningEngine, _get_evidence_key, build_evidence_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +53,22 @@ def _select_evidence(items: list, previous_report, *, total_limit: int = 500, pe
     for i, item in enumerate(items):
         metric = str(_field(item, "metric", "") or "").lower()
         tool = _get_evidence_key(item).lower()
-        if any(x in metric for x in ("up_count", "down_count", "涨跌", "涨停", "timestamp", "date")) or any(
-            x in tool for x in ("quote", "sentiment", "limit_up", "telegraph")
-        ) or _field(item, "partial") or _field(item, "note"):
+        if (
+            any(x in metric for x in ("up_count", "down_count", "涨跌", "涨停", "timestamp", "date"))
+            or any(x in tool for x in ("quote", "sentiment", "limit_up", "telegraph"))
+            or _field(item, "partial")
+            or _field(item, "note")
+        ):
             take(i, "market_minimum")
     for i in range(len(items) - 1, -1, -1):
         take(i, "tool_quota")
     selected_items = [item for i, item in enumerate(items) if i in selected]
-    return selected_items, {"kept": len(selected_items), "omitted": len(items) - len(selected_items),
-                            "reason": "total_and_per_tool_limit", "kept_reasons": reasons}
+    return selected_items, {
+        "kept": len(selected_items),
+        "omitted": len(items) - len(selected_items),
+        "reason": "total_and_per_tool_limit",
+        "kept_reasons": reasons,
+    }
 
 
 class ReasoningNode:
@@ -70,9 +78,7 @@ class ReasoningNode:
         self.settings = settings
         #: 阶段 6：本节点只负责 `revise → reasoning` 这一条路径的计数上限
         #: （research_more 的额度由 SupervisorNode 自己管）。
-        self.max_rewrites = (
-            settings.effective_max_rewrites if max_rewrites is None else max(0, int(max_rewrites))
-        )
+        self.max_rewrites = settings.effective_max_rewrites if max_rewrites is None else max(0, int(max_rewrites))
         self._engine = ReasoningEngine(settings)
 
     async def __call__(self, state):
@@ -106,25 +112,27 @@ class ReasoningNode:
             # 阶段 6：这次进本节点是"Critic 判 revise 的打回"还是"补完证据后的重新成文"？
             # 只有前者算 `rewrite_count`；后者（research_more 回环）由 SupervisorNode
             # 记 `research_round_count`，两条路径各自设限、互不挤占额度。
-            is_rewrite = (
-                state.get("report") is not None
-                and str(critique_verdict or "").strip().lower() == "revise"
-            )
+            is_rewrite = state.get("report") is not None and str(critique_verdict or "").strip().lower() == "revise"
             is_followup = state.get("report") is not None and not is_rewrite
 
             question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
 
-            evidence_items, truncation = _select_evidence(state.get("evidence", []), state.get("report"))
+            all_evidence_items = state.get("evidence", [])
+            evidence_aliases = (
+                build_evidence_aliases([e if not isinstance(e, dict) else Evidence(**e) for e in all_evidence_items])
+                if all_evidence_items
+                else {}
+            )
+            evidence_items, truncation = _select_evidence(all_evidence_items, state.get("report"))
             if truncation["omitted"]:
                 from app.graph import run_log
+
                 run_log.emit("reasoning_context", run_id=state.get("run_id"), context_truncation=truncation)
 
             results = state.get("results", [])
             # LangGraph reducer merge 将 ToolResult 序列化为 dict，需要转回
             results: list[ToolResult] = [ToolResult(**r) if isinstance(r, dict) else r for r in results]
             # 使用截断后的 evidence_items，并将 reducer 序列化产生的 dict 转回 Evidence
-            from app.models.evidence import Evidence
-
             evidence = [Evidence(**e) if isinstance(e, dict) else e for e in evidence_items]
 
             # 调用推理引擎
@@ -134,6 +142,7 @@ class ReasoningNode:
                 evidence=evidence,
                 history_context=self._build_revision_context(unsupported_claims, structured_issues),
                 findings=state.get("findings", []),
+                evidence_aliases=evidence_aliases,
                 domain=state.get("domain") or _field(state.get("intent"), "domain") or "a_share",
                 requested_date=state.get("requested_date") or _field(state.get("intent"), "requested_date"),
                 as_of_date=state.get("as_of_date"),
@@ -203,7 +212,7 @@ class ReasoningNode:
                 "errors": [f"Reasoning engine failed: {exc}"],
             }
         except Exception as exc:
-            logger.exception("Reasoning node unexpected error")
+            logger.error("Reasoning node unexpected error error_type=%s", type(exc).__name__)
             return {
                 "report": None,
                 "errors": [f"Reasoning node failed: {exc}"],
@@ -213,16 +222,12 @@ class ReasoningNode:
     #: 只把 claim 文本贴回去是不够的 —— 模型会把"补研究"重新表述成"措辞更谨慎"，
     #: 于是同一句话换层皮再被审计打回一次（方案 §2 根因：三轮 LLM 改写伪装解决）。
     _ACTION_INSTRUCTIONS = {
-        "remove_or_qualify": (
-            "删除该论断，或改写到证据真正支持的范围（明确写出缺口，不得保留原有强度）"
-        ),
+        "remove_or_qualify": ("删除该论断，或改写到证据真正支持的范围（明确写出缺口，不得保留原有强度）"),
         "research_more": (
             "该论断缺少数据支撑：本轮补充的研究结果已在上方数据/evidence 中，"
             "只能按新证据能支持的程度重写；新证据仍不足则删除该论断"
         ),
-        "repair_format": (
-            "该论断的口径/格式不合规：按证据的原始口径重写（单位、时间范围、标的必须与证据一致）"
-        ),
+        "repair_format": ("该论断的口径/格式不合规：按证据的原始口径重写（单位、时间范围、标的必须与证据一致）"),
     }
 
     def _build_revision_context(self, unsupported_claims: list[str], issues: list | None = None) -> str:

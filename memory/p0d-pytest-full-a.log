@@ -1,0 +1,64 @@
+........................................................................ [  6%]
+........................................................................ [ 13%]
+...............................................F........................ [ 19%]
+........................................................................ [ 26%]
+........................................................................ [ 32%]
+........................................................................ [ 39%]
+......................F................................................. [ 45%]
+........................................................................ [ 52%]
+........................................................................ [ 58%]
+........................................................................ [ 65%]
+........................................................................ [ 71%]
+........................................................................ [ 78%]
+............................................F........................... [ 85%]
+........................................................................ [ 91%]
+........................................................................ [ 98%]
+.....................                                                    [100%]
+================================== FAILURES ===================================
+________ test_expired_investigation_deadline_issues_immediate_deadline ________
+tests\test_budget_deadline.py:97: in test_expired_investigation_deadline_issues_immediate_deadline
+    assert _RecordingGateway.deadlines
+E   assert []
+E    +  where [] = _RecordingGateway.deadlines
+---------------------------- Captured stdout call -----------------------------
+[03:00:37] INFO run_log: {"ts": 1791687637.733, "event": "executions", "run_id": null, "category": "technical", "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": 0.0, "arguments": {"symbols": {"type": "array", "count": 1}}, "status": "error", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+------------------------------ Captured log call ------------------------------
+INFO     app.graph.run_log:run_log.py:209 {"ts": 1791687637.733, "event": "executions", "run_id": null, "category": "technical", "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": 0.0, "arguments": {"symbols": {"type": "array", "count": 1}}, "status": "error", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+_________________________ test_critic_route_pass_ends _________________________
+tests\test_graph_topology.py:63: in test_critic_route_pass_ends
+    assert critic_route_decision({}, settings) == "end"
+E   AssertionError: assert 'finalize_audit' == 'end'
+E     
+E     - end
+E     + finalize_audit
+---------------------------- Captured stdout call -----------------------------
+[03:00:46] INFO run_log: {"ts": 1791687646.17, "event": "route", "run_id": null, "verdict": "pass", "decision": "end", "reason": "audit_passed", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": null, "tool_calls_remaining": null, "required_tool_calls": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "<redacted len=0>"}
+[03:00:46] INFO run_log: {"ts": 1791687646.17, "event": "route", "run_id": null, "verdict": "pass", "decision": "end", "reason": "audit_passed", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": null, "tool_calls_remaining": null, "required_tool_calls": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "<redacted len=0>"}
+[03:00:46] INFO run_log: {"ts": 1791687646.17, "event": "route", "run_id": null, "verdict": "", "decision": "finalize_audit", "reason": "critic_error", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "critic_error"}
+------------------------------ Captured log call ------------------------------
+INFO     app.graph.run_log:run_log.py:209 {"ts": 1791687646.17, "event": "route", "run_id": null, "verdict": "pass", "decision": "end", "reason": "audit_passed", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": null, "tool_calls_remaining": null, "required_tool_calls": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:209 {"ts": 1791687646.17, "event": "route", "run_id": null, "verdict": "pass", "decision": "end", "reason": "audit_passed", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": null, "tool_calls_remaining": null, "required_tool_calls": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:209 {"ts": 1791687646.17, "event": "route", "run_id": null, "verdict": "", "decision": "finalize_audit", "reason": "critic_error", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "critic_error"}
+______ test_execution_log_contains_trace_fields_and_canonical_arguments _______
+tests\test_stage1_quote_contract.py:172: in test_execution_log_contains_trace_fields_and_canonical_arguments
+    assert row["arguments"] == {"symbols": ["000300"]}
+E   AssertionError: assert {'symbols': {..., 'count': 1}} == {'symbols': ['000300']}
+E     
+E     Differing items:
+E     {'symbols': {'type': 'array', 'count': 1}} != {'symbols': ['000300']}
+E     Use -v to get more diff
+---------------------------- Captured stdout call -----------------------------
+[03:00:51] INFO run_log: {"ts": 1791687651.19, "event": "executions", "run_id": "r1", "category": null, "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": null, "arguments": {"symbols": {"type": "array", "count": 1}}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+------------------------------ Captured log call ------------------------------
+INFO     app.graph.run_log:run_log.py:209 {"ts": 1791687651.19, "event": "executions", "run_id": "r1", "category": null, "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": null, "arguments": {"symbols": {"type": "array", "count": 1}}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+============================== warnings summary ===============================
+.venv\Lib\site-packages\starlette\testclient.py:53
+  D:\Mosaic\.venv\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_budget_deadline.py::test_expired_investigation_deadline_issues_immediate_deadline
+FAILED tests/test_graph_topology.py::test_critic_route_pass_ends - AssertionE...
+FAILED tests/test_stage1_quote_contract.py::test_execution_log_contains_trace_fields_and_canonical_arguments
+3 failed, 1098 passed, 1 warning in 23.43s

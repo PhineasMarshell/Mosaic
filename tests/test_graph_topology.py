@@ -60,8 +60,8 @@ def test_critic_route_pass_ends():
         == "end"
     )
     assert critic_route_decision({"critique": Critique(verdict="pass"), "rewrite_count": 0}, settings) == "end"
-    assert critic_route_decision({}, settings) == "end"
-    assert critic_route_decision({"critique": None}, settings) == "end"
+    assert critic_route_decision({}, settings) == "finalize_audit"
+    assert critic_route_decision({"critique": None}, settings) == "finalize_audit"
 
 
 def test_critic_route_revise_continues_under_limit():

@@ -1,0 +1,2220 @@
+diff --git a/app/agent/prompts.py b/app/agent/prompts.py
+index 9fda35a..b037d42 100644
+--- a/app/agent/prompts.py
++++ b/app/agent/prompts.py
+@@ -58,6 +58,8 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
+ 以下是 Evidence：
+ {evidence}
+ 
++{evidence_alias_context}
++
+ {history_context}
+ 
+ 请形成结构化市场情报。
+@@ -77,9 +79,9 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
+ "why": 数组，每个元素是字符串（原因/解释）
+ 
+ "evidence": 数组，每个元素是一个完整证据对象，包含：
+-   - id: 唯一标识符，格式 "technical-001", "fundamental-002" 等（前缀是产出该证据的
+-     analyst category，编号三位从 001 起；这条是最终 evidence 账本的 id，由代码
+-     build_evidence(id_prefix=<analyst category>) 生成）
++   - id: 只能使用上方“允许引用的证据 id 集合”中的短别名（如 E001）；不要自行编号，
++     不要生成旧式的 category-数字或 evidence-数字 id（例如账本真实 id technical-001 仅供右侧映射展示）。
++     代码会把合法别名映射回持久化真实 id。
+    - source_tool: 数据来源工具名
+    - domain: 市场域字符串
+    - metric: 指标名称
+@@ -90,11 +92,11 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
+    - partial: 是否 partial 数据（true/false）
+    - note: 备注说明（可选）
+ 
+-例如：[{{"id":"technical-001","source_tool":"get_ashare_sentiment","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
++例如：[{{"id":"E001","source_tool":"get_ashare_sentiment","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
+ 
+ "claims": 数组，每个元素是一条**关键论断**及其证据引用（claim—evidence 映射）：
+    - claim: 论断文本（会出现在报告正文里的那句话）
+-   - evidence_ids: 支撑这条论断的 evidence id 数组，只能引用上面 evidence 数组里**真实存在**的 id
++   - evidence_ids: 支撑这条论断的 evidence id 数组，只能引用上方集合中的短别名
+    - claim_type: "fact" | "inference" | "single_source" | "comparison" | "causation" | "structure" | "other"
+    规则：
+    - comparison（"最强/最密集/主线/领涨/落差最大"等比较）与 causation（"驱动/导致/因为"
+@@ -123,6 +125,9 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
+ --- 约束 ---
+ 
+ - 不得创造数据。所有分析基于提供的数据。
++- 当前事实、外部实体、政策、新闻与因果判断必须有对应的真实 evidence id；不得用模型记忆补齐“今天”的行情。
++- 只有一个来源时必须明确写“单一来源，未交叉确认”；缺少日期或来源只能写“无法确认”。
++- partial、截断、无日期锚点的 evidence 只能支持有限观察，不能推出“主线/最密集/全面反转”等全市场比较或因果结论。
+ - 报告正文里出现的每个具体上市公司名，必须来自证据的 instrument 字段、或某个证据值中明确
+   提到的名称。不得用相近的公司名替代（"XX 科技" 与 "XX 科技股份" 是两家不同的公司）。
+ - 没有证据支持的实体，不得断言其"不存在 / 未上市 / 查无此股"；无校验源时只能写
+diff --git a/app/gateway/arguments.py b/app/gateway/arguments.py
+index 9b8d44b..3b6ccc4 100644
+--- a/app/gateway/arguments.py
++++ b/app/gateway/arguments.py
+@@ -14,6 +14,42 @@ class ArgumentValidationError(ValueError):
+     """Raised when a tool's canonical argument contract cannot be satisfied."""
+ 
+ 
++_FREE_TEXT_ARGUMENTS = frozenset({"q", "query", "keyword", "text", "prompt", "description"})
++
++
++def summarize_arguments(arguments: Any) -> dict[str, Any]:
++    """Return a bounded, log-safe transport summary.
++
++    Free text is always redacted.  Symbols expose only their transport shape
++    and count so quote boundary debugging remains possible without logging
++    complete user input or arbitrary argument payloads.
++    """
++    if not isinstance(arguments, dict):
++        return {"type": type(arguments).__name__}
++    summary: dict[str, Any] = {}
++    for key, value in arguments.items():
++        name = str(key)
++        lower = name.casefold()
++        if lower in _FREE_TEXT_ARGUMENTS:
++            summary[name] = "<redacted>"
++        elif lower in {"symbols", "symbol"}:
++            if isinstance(value, str):
++                summary[name] = {"type": "string", "count": len([x for x in value.split(",") if x.strip()])}
++            elif isinstance(value, (list, tuple, set)):
++                summary[name] = {"type": "array", "count": len(value)}
++            else:
++                summary[name] = {"type": type(value).__name__}
++        elif isinstance(value, (str, int, float, bool)) or value is None:
++            summary[name] = value if not isinstance(value, str) or len(value) <= 32 else "<redacted>"
++        elif isinstance(value, (list, tuple, set)):
++            summary[name] = {"type": "array", "count": len(value)}
++        elif isinstance(value, dict):
++            summary[name] = {"type": "object", "keys": sorted(str(k) for k in value)[:12]}
++        else:
++            summary[name] = {"type": type(value).__name__}
++    return summary
++
++
+ def _symbols(value: Any) -> list[str]:
+     if isinstance(value, str):
+         values = [part.strip() for part in value.split(",")]
+diff --git a/app/gateway/http_client.py b/app/gateway/http_client.py
+index 5ca1855..d827e58 100644
+--- a/app/gateway/http_client.py
++++ b/app/gateway/http_client.py
+@@ -14,9 +14,8 @@ from typing import Any
+ import httpx
+ 
+ from app.config import Settings
+-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments
++from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, summarize_arguments
+ from app.gateway.normalizer import normalize_tool_result
+-from app.gateway.tool_registry import resolve_tool_by_name
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -136,17 +135,38 @@ class MarketGatewayHttpClient:
+                 return _budget_exhausted()
+ 
+             try:
++                attempt_timeout = self.settings.research_timeout_seconds
++                if remaining is not None:
++                    attempt_timeout = min(attempt_timeout, max(remaining, 0.0))
+                 request_arguments = dict(arguments)
+                 if tool_name == "get_market_quotes":
+                     # allowed_openapi.json models the HTTP query field as a
+                     # comma separated string; keep list[str] canonical inside
+                     # Mosaic and encode only at this transport boundary.
+                     request_arguments["symbols"] = ",".join(arguments["symbols"])
+-                response = await self.client.request(
+-                    meta.http_method,
+-                    meta.http_path,
+-                    params=request_arguments if meta.http_method == "GET" else None,
+-                    json=request_arguments if meta.http_method != "GET" else None,
++                logger.info(
++                    "HTTP call %s attempt=%d attempt_timeout_ms=%.0f remaining_budget_ms=%s "
++                    "canonical_argument_summary=%s transport_argument_summary=%s",
++                    tool_name,
++                    attempt + 1,
++                    attempt_timeout * 1000,
++                    "none" if remaining is None else f"{remaining * 1000:.0f}",
++                    summarize_arguments(arguments),
++                    summarize_arguments(request_arguments),
++                )
++                # HTTPX's timeout is phase based; a server that continually
++                # sends small chunks can otherwise keep resetting the read
++                # timer forever.  The outer wait_for enforces the wall-clock
++                # deadline for the complete response.
++                response = await asyncio.wait_for(
++                    self.client.request(
++                        meta.http_method,
++                        meta.http_path,
++                        params=request_arguments if meta.http_method == "GET" else None,
++                        json=request_arguments if meta.http_method != "GET" else None,
++                        timeout=attempt_timeout,
++                    ),
++                    timeout=attempt_timeout,
+                 )
+ 
+                 # --------------------------------------------------
+@@ -169,7 +189,9 @@ class MarketGatewayHttpClient:
+ 
+                 if response.status_code == 422:
+                     # 记录错误详情供后续报告使用
+-                    error_msg = f"Invalid parameters (422): {response.text[:200]}"
++                    # Keep upstream bodies out of logs and downstream traces;
++                    # some gateways echo the original query in their detail.
++                    error_msg = "Invalid parameters (422)"
+                     return normalize_tool_result(
+                         tool_name,
+                         arguments,
+@@ -185,6 +207,14 @@ class MarketGatewayHttpClient:
+                         if remaining <= 0:
+                             last_error = "Rate limited (429)"
+                             return _budget_exhausted()
++                        if backoff > remaining:
++                            logger.info(
++                                "HTTP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
++                                "remaining_budget_ms=%.0f",
++                                tool_name,
++                                remaining * 1000,
++                            )
++                            return _budget_exhausted()
+                         backoff = min(backoff, remaining)
+                     logger.warning(
+                         "Rate limited (%d), backing off %ds",
+@@ -199,19 +229,40 @@ class MarketGatewayHttpClient:
+                 raw = response.json()
+                 return normalize_tool_result(tool_name, arguments, raw)
+ 
++            except TimeoutError:
++                last_error = (
++                    f"Timeout on {tool_name} attempt {attempt + 1} after {attempt_timeout:.3f}s "
++                    f"(remaining budget was {'unknown' if remaining is None else f'{remaining:.3f}'}s)"
++                )
++                logger.warning(
++                    "HTTP call %s attempt %d/%d timed out attempt_timeout_ms=%.0f remaining_budget_ms=%s",
++                    tool_name,
++                    attempt + 1,
++                    max_attempts,
++                    attempt_timeout * 1000,
++                    "none" if remaining is None else f"{max(remaining, 0) * 1000:.0f}",
++                )
+             except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
+-                last_error = str(exc)
++                if isinstance(exc, httpx.TimeoutException):
++                    last_error = (
++                        f"Timeout on {tool_name} attempt {attempt + 1} after {attempt_timeout:.3f}s "
++                        f"(remaining budget was {'unknown' if remaining is None else f'{remaining:.3f}'}s)"
++                    )
++                else:
++                    last_error = f"{type(exc).__name__}"
+                 logger.warning(
+-                    "HTTP call %s attempt %d/%d failed: %s",
++                    "HTTP call %s attempt %d/%d failed error_type=%s",
+                     tool_name,
+                     attempt + 1,
+                     max_attempts,
+-                    exc,
++                    type(exc).__name__,
+                 )
+             except HTTPGatewayError as exc:
+                 # 致命错误（认证/权限/请求非法），不再重试。
+                 # 必须用 str(exc) —— last_error 在首次尝试时还是 None。
+-                logger.warning("HTTP call %s failed permanently: %s", tool_name, exc)
++                logger.warning(
++                    "HTTP call %s failed permanently error_type=%s", tool_name, type(exc).__name__
++                )
+                 return normalize_tool_result(
+                     tool_name,
+                     arguments,
+@@ -219,13 +270,13 @@ class MarketGatewayHttpClient:
+                     error=str(exc) or "HTTP gateway error",
+                 )
+             except Exception as exc:
+-                last_error = str(exc)
++                last_error = f"{type(exc).__name__}"
+                 logger.warning(
+-                    "HTTP call %s attempt %d/%d failed: %s",
++                    "HTTP call %s attempt %d/%d failed error_type=%s",
+                     tool_name,
+                     attempt + 1,
+                     max_attempts,
+-                    exc,
++                    type(exc).__name__,
+                 )
+ 
+             if attempt < max_attempts - 1:
+@@ -234,6 +285,14 @@ class MarketGatewayHttpClient:
+                 if remaining is not None:
+                     if remaining <= 0:
+                         return _budget_exhausted()
++                    if backoff > remaining:
++                        logger.info(
++                            "HTTP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
++                            "remaining_budget_ms=%.0f",
++                            tool_name,
++                            remaining * 1000,
++                        )
++                        return _budget_exhausted()
+                     backoff = min(backoff, remaining)
+                 await asyncio.sleep(backoff)
+ 
+diff --git a/app/gateway/mcp_client.py b/app/gateway/mcp_client.py
+index ef6e815..ceb1b2b 100644
+--- a/app/gateway/mcp_client.py
++++ b/app/gateway/mcp_client.py
+@@ -19,7 +19,7 @@ from mcp import ClientSession, StdioServerParameters
+ from mcp.client.stdio import get_default_environment, stdio_client
+ 
+ from app.config import Settings
+-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments
++from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, summarize_arguments
+ from app.gateway.normalizer import normalize_tool_result
+ from app.gateway.tool_registry import resolve_tool_by_name
+ 
+@@ -62,6 +62,44 @@ class MarketGatewayClient:
+         self.session: ClientSession | None = None
+         self.tools: list[Any] = []
+ 
++    def _input_schema(self, tool_name: str) -> dict[str, Any] | None:
++        """Return the discovered MCP input schema for ``tool_name``.
++
++        MCP SDK versions expose the field as either ``inputSchema`` or
++        ``input_schema``.  Keep this lookup at the transport boundary so the
++        planner/state always retain the canonical list form.
++        """
++        for tool in self.tools or []:
++            name = getattr(tool, "name", None)
++            if name != tool_name and isinstance(tool, dict):
++                name = tool.get("name")
++            if name != tool_name:
++                continue
++            schema = getattr(tool, "inputSchema", None)
++            if schema is None:
++                schema = getattr(tool, "input_schema", None)
++            if schema is None and isinstance(tool, dict):
++                schema = tool.get("inputSchema") or tool.get("input_schema")
++            return schema if isinstance(schema, dict) else None
++        return None
++
++    def _encode_transport_arguments(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
++        """Encode canonical arguments according to the discovered MCP schema."""
++        encoded = dict(arguments)
++        if tool_name != "get_market_quotes" or "symbols" not in encoded:
++            return encoded
++        schema = self._input_schema(tool_name) or {}
++        properties = schema.get("properties") if isinstance(schema, dict) else None
++        symbol_schema = properties.get("symbols") if isinstance(properties, dict) else None
++        schema_type = symbol_schema.get("type") if isinstance(symbol_schema, dict) else None
++        if schema_type == "array":
++            return encoded
++        # Current Gateway contract is a string; unknown schemas use that
++        # contract for backwards compatibility.  The canonical list remains
++        # untouched in ToolResult/logging.
++        encoded["symbols"] = ",".join(encoded["symbols"])
++        return encoded
++
+     async def __aenter__(self):
+         await self.connect()
+         return self
+@@ -180,17 +218,35 @@ class MarketGatewayClient:
+         max_attempts = self.settings.max_retry_per_tool + 1
+ 
+         for attempt in range(max_attempts):
+-            # T23：与 HTTP client 相同的预算语义——总预算用尽就不再重试。
+-            if deadline is not None and deadline - time.monotonic() <= 0:
+-                logger.warning("MCP call %s stopped: budget exhausted before attempt %d", tool_name, attempt + 1)
+-                reason = "budget exhausted: no time left for another attempt"
++            remaining = None if deadline is None else deadline - time.monotonic()
++            if remaining is not None and remaining <= 0:
++                logger.warning(
++                    "MCP call %s stopped: attempt=%d remaining_budget_ms=0 retry_skipped_reason=deadline_exhausted",
++                    tool_name,
++                    attempt + 1,
++                )
++                reason = f"budget exhausted: no time left for attempt {attempt + 1} of {tool_name}"
+                 if last_error:
+                     reason = f"{last_error}; {reason}"
+                 return normalize_tool_result(tool_name, arguments, None, error=reason)
+             try:
++                attempt_timeout = self.settings.research_timeout_seconds
++                if remaining is not None:
++                    attempt_timeout = min(attempt_timeout, max(remaining, 0.0))
++                transport_arguments = self._encode_transport_arguments(tool_name, arguments)
++                logger.info(
++                    "MCP call %s attempt=%d attempt_timeout_ms=%.0f remaining_budget_ms=%s "
++                    "canonical_argument_summary=%s transport_argument_summary=%s",
++                    tool_name,
++                    attempt + 1,
++                    attempt_timeout * 1000,
++                    "none" if remaining is None else f"{remaining * 1000:.0f}",
++                    summarize_arguments(arguments),
++                    summarize_arguments(transport_arguments),
++                )
+                 result = await asyncio.wait_for(
+-                    self.session.call_tool(tool_name, arguments=arguments),
+-                    timeout=self.settings.research_timeout_seconds,
++                    self.session.call_tool(tool_name, arguments=transport_arguments),
++                    timeout=attempt_timeout,
+                 )
+                 if getattr(result, "is_error", False):
+                     # MCP 规范里工具级失败是**带内** signalling：call_tool 会返回
+@@ -201,9 +257,9 @@ class MarketGatewayClient:
+                     # 重试只会白等一轮 research_timeout_seconds。
+                     text = _mcp_result_to_text(result)
+                     logger.warning(
+-                        "MCP call %s returned a tool-level error: %s",
++                        "MCP call %s returned a tool-level error payload_len=%d",
+                         tool_name,
+-                        text[:200],
++                        len(text),
+                     )
+                     return normalize_tool_result(
+                         tool_name,
+@@ -214,28 +270,61 @@ class MarketGatewayClient:
+                 raw = _mcp_result_to_json(result)
+                 return normalize_tool_result(tool_name, arguments, raw)
+             except TimeoutError:
+-                last_error = f"Timeout after {self.settings.research_timeout_seconds}s"
++                last_error = (
++                    f"Timeout on {tool_name} attempt {attempt + 1} after "
++                    f"{attempt_timeout:.3f}s (remaining budget was "
++                    f"{'unknown' if remaining is None else f'{remaining:.3f}'}s)"
++                )
+                 logger.warning(
+-                    "MCP call %s attempt %d/%d timed out",
++                    "MCP call %s attempt %d/%d timed out attempt_timeout_ms=%.0f remaining_budget_ms=%s",
+                     tool_name,
+                     attempt + 1,
+                     max_attempts,
++                    attempt_timeout * 1000,
++                    "none" if remaining is None else f"{max(remaining, 0) * 1000:.0f}",
+                 )
+             except MCPConnectionError:
+                 # 连接级别错误不应该重试
+                 raise
+             except Exception as exc:
+-                last_error = str(exc)
++                last_error = f"{type(exc).__name__}"
+                 logger.warning(
+-                    "MCP call %s attempt %d/%d failed: %s",
++                    "MCP call %s attempt %d/%d failed error_type=%s",
+                     tool_name,
+                     attempt + 1,
+                     max_attempts,
+-                    exc,
++                    type(exc).__name__,
+                 )
+ 
+             if attempt < max_attempts - 1:
+-                await asyncio.sleep(0.5 * (attempt + 1))
++                backoff = 0.5 * (attempt + 1)
++                remaining_after = None if deadline is None else deadline - time.monotonic()
++                if remaining_after is not None:
++                    if remaining_after <= 0:
++                        logger.warning(
++                            "MCP call %s retry skipped retry_skipped_reason=deadline_exhausted remaining_budget_ms=0",
++                            tool_name,
++                        )
++                        return normalize_tool_result(
++                            tool_name,
++                            arguments,
++                            None,
++                            error=f"{last_error or 'MCP call failed'}; budget exhausted before retry",
++                        )
++                    if backoff > remaining_after:
++                        logger.info(
++                            "MCP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
++                            "remaining_budget_ms=%.0f",
++                            tool_name,
++                            remaining_after * 1000,
++                        )
++                        return normalize_tool_result(
++                            tool_name,
++                            arguments,
++                            None,
++                            error=f"{last_error or 'MCP call failed'}; budget exhausted before retry",
++                        )
++                await asyncio.sleep(backoff)
+ 
+         return normalize_tool_result(
+             tool_name,
+diff --git a/app/graph/builder.py b/app/graph/builder.py
+index 5a8b1c5..a63de80 100644
+--- a/app/graph/builder.py
++++ b/app/graph/builder.py
+@@ -86,6 +86,52 @@ def research_round_budget(state: dict, settings: Settings) -> dict[str, object]:
+     }
+ 
+ 
++def critic_route_outcome(state, settings: Settings) -> tuple[str, str]:
++    """Return the Critic route and its reason without mutating graph state."""
++    if hasattr(state, "model_dump"):
++        state = state.model_dump(exclude_none=False)
++
++    rewrite_count = int(state.get("rewrite_count", 0) or 0)
++    research_round_count = int(state.get("research_round_count", 0) or 0)
++    critique = state.get("critique")
++    if not critique:
++        return "end", "no_critique"
++
++    verdict = (
++        str(critique.get("verdict", "") if isinstance(critique, dict) else getattr(critique, "verdict", ""))
++        .strip()
++        .lower()
++    )
++    if not verdict or verdict == "error":
++        return "finalize_audit", "critic_error"
++    if verdict == "revise":
++        if rewrite_count < settings.effective_max_rewrites:
++            return "reasoning", "revise_allowed"
++        return "finalize_audit", "rewrite_budget_exhausted"
++    if verdict == "research_more":
++        if not state.get("report"):
++            return "finalize_audit", "no_report_to_revise"
++        if research_round_count >= settings.effective_max_research_rounds:
++            return "finalize_audit", "research_budget_exhausted"
++        gap_decisions = state.get("gap_key_decisions") or (
++            critique.get("gap_key_decisions", [])
++            if isinstance(critique, dict)
++            else getattr(critique, "gap_key_decisions", [])
++        )
++        if gap_decisions and not any(isinstance(row, dict) and row.get("decision") == "kept" for row in gap_decisions):
++            return "finalize_audit", "no_executable_gap_steps"
++        budget_info = research_round_budget(state, settings)
++        if budget_info["decision"] == "deny":
++            return "finalize_audit", str(budget_info["reason"])
++        if state.get("finalize_after_gap"):
++            return "finalize_audit", "no_executable_gap_steps"
++        return "supervisor", "research_allowed"
++    if verdict == "pass":
++        return "end", "audit_passed"
++    logger.error("critic_route_decision 遇到未预期 verdict %r，安全终止", verdict)
++    return "finalize_audit", "unknown_verdict"
++
++
+ def critic_route_decision(state, settings: Settings) -> str:
+     """Critic 条件边的路由决策（模块级，便于单元测试）。
+ 
+@@ -119,7 +165,7 @@ def critic_route_decision(state, settings: Settings) -> str:
+             else:
+                 gap_decisions = getattr(critique_obj, "gap_key_decisions", []) or []
+         executable = state.get("executable_gap_steps") or []
+-        blocked_reason = state.get("blocked_reason")
++        blocked_reason = state.get("blocked_reason") or (reason if decision == "finalize_audit" else None)
+         run_log.log_route(
+             state,
+             decision,
+@@ -135,59 +181,12 @@ def critic_route_decision(state, settings: Settings) -> str:
+             required_tool_calls=budget_info.get("required_tool_calls"),
+             gap_key_decisions=gap_decisions,
+             executable_gap_steps=executable,
+-            blocked_reason=blocked_reason or (reason if decision == "finalize_audit" else None),
++            blocked_reason=blocked_reason,
+         )
+         return decision
+ 
+-    critique = state.get("critique")
+-    if not critique:
+-        return _decide("end", "no_critique")
+-
+-    if isinstance(critique, dict):
+-        verdict = str(critique.get("verdict", "")).strip().lower()
+-    else:
+-        verdict = str(getattr(critique, "verdict", "")).strip().lower()
+-
+-    # T11：内部 error（审计自身失败 / verdict 无法识别）或空 verdict：
+-    # 交给 finalize_audit 判 failed —— 绝不静默 END 冒充正常完成。
+-    if not verdict or verdict == "error":
+-        return _decide("finalize_audit", "critic_error")
+-
+-    if verdict == "revise":
+-        if rewrite_count < max_rewrites:
+-            return _decide("reasoning", "revise_allowed")
+-        # 阶段 5：轮次耗尽不再静默 END —— 先过 finalize_audit 落终态。
+-        return _decide("finalize_audit", "rewrite_budget_exhausted")
+-
+-    if verdict == "research_more":
+-        # report 为 None 说明是 reasoning 引擎失败（非缺数据），
+-        # 重新走 supervisor 无法解决，直接进终态避免无限循环。
+-        if not state.get("report"):
+-            return _decide("finalize_audit", "no_report_to_revise")
+-        if research_round_count >= max_research_rounds:
+-            return _decide("finalize_audit", "research_budget_exhausted")
+-        gap_decisions = state.get("gap_key_decisions") or (
+-            critique.get("gap_key_decisions", []) if isinstance(critique, dict)
+-            else getattr(critique, "gap_key_decisions", [])
+-        )
+-        if gap_decisions and not any(
+-            isinstance(row, dict) and row.get("decision") == "kept" for row in gap_decisions
+-        ):
+-            return _decide("finalize_audit", "no_executable_gap_steps")
+-        # 回环前同时检查墙钟、工具调用余额和 reasoning/critic 最低预算。
+-        budget_info = research_round_budget(state, settings)
+-        if budget_info["decision"] == "deny":
+-            return _decide("finalize_audit", str(budget_info["reason"]))
+-        if state.get("finalize_after_gap"):
+-            return _decide("finalize_audit", "no_executable_gap_steps")
+-        return _decide("supervisor", "research_allowed")
+-
+-    if verdict == "pass":
+-        return _decide("end", "audit_passed")
+-
+-    # T11：理论上 Critic 已拦截非法 verdict；兜底仍按安全终止处理（不当 pass）。
+-    logger.error("critic_route_decision 遇到未预期 verdict %r，安全终止", verdict)
+-    return _decide("finalize_audit", "unknown_verdict")
++    decision, reason = critic_route_outcome(state, settings)
++    return _decide(decision, reason)
+ 
+ 
+ def build_graph(settings: Settings):
+diff --git a/app/graph/gap_loop.py b/app/graph/gap_loop.py
+index c162cb1..c37b47b 100644
+--- a/app/graph/gap_loop.py
++++ b/app/graph/gap_loop.py
+@@ -32,8 +32,9 @@ import json
+ from dataclasses import dataclass, field
+ from typing import Any
+ 
+-from app.models.research import ToolCallPlan
+ from app.gateway.arguments import canonicalize_tool_arguments, semantic_signature
++from app.gateway.tool_registry import resolve_tool
++from app.models.research import ToolCallPlan
+ 
+ #: 视为"拿到过调用结果"的状态 —— error 不算，允许回环轮重试失败的工具
+ _DONE_STATUSES = ("success", "partial")
+@@ -109,6 +110,9 @@ def coverage_records(results: Any) -> list[ExecutionCoverage]:
+     for r in results or []:
+         status = str(_field(r, "status", "") or "")
+         normalized = _field(r, "normalized", []) or []
++        source_count = _field(r, "source_datum_count")
++        source_partial = _field(r, "source_partial")
++        local_truncation = source_count is not None
+         tool_name = str(_field(r, "tool", "") or "")
+         args = dict(_field(r, "arguments", {}) or {})
+         try:
+@@ -120,9 +124,9 @@ def coverage_records(results: Any) -> list[ExecutionCoverage]:
+                 tool_key=_field(r, "tool_key") or None,
+                 tool_name=tool_name,
+                 arguments=args,
+-                status=status,
+-                partial=bool(_field(r, "partial", False)),
+-                datum_count=len(normalized),
++                status=("partial" if source_partial else "success") if local_truncation else status,
++                partial=bool(source_partial) if local_truncation else bool(_field(r, "partial", False)),
++                datum_count=source_count if local_truncation else len(normalized),
+                 note=_field(r, "note"),
+             )
+         )
+@@ -231,16 +235,14 @@ def _key_satisfied(key: str, records: list[ExecutionCoverage], spec: dict[str, A
+     if not variants:
+         generic = {k: v for k, v in spec.items() if k != "argument_variants"}
+         return any(judge_coverage(record, {key}, generic).satisfies for record in records)
+-    return all(
+-        _variant_satisfied(key, records, _with_key_policy(variant, spec)) for variant in variants
+-    )
++    return all(_variant_satisfied(key, records, _with_key_policy(variant, spec)) for variant in variants)
+ 
+ 
+ def satisfied_keys(
+     results: Any,
+     requirements: dict[str, dict[str, Any]] | None = None,
+ ) -> set[str]:
+-    """"已拿到充分证据"的 registry key 集合。
++    """ "已拿到充分证据"的 registry key 集合。
+ 
+     与旧的 ``executed_keys`` 的区别就是本阶段的意义：
+     - error → 不算（可重试）
+@@ -380,9 +382,7 @@ def executed_keys(results: Any) -> set[str]:
+     多个 registry key 复用时它会把兄弟 key 的缺口误判成"已满足"（阶段 2 修掉的
+     真实缺陷）。证据充分性判据只有一个：``satisfied_keys(results, requirements)``。
+     """
+-    raise NotImplementedError(
+-        "executed_keys() 已删除（阶段 6）：证据充分性请用 satisfied_keys(results, requirements)"
+-    )
++    raise NotImplementedError("executed_keys() 已删除（阶段 6）：证据充分性请用 satisfied_keys(results, requirements)")
+ 
+ 
+ def allowed_keys(registry: str) -> set[str]:
+@@ -448,11 +448,20 @@ def _args_subset(planned: dict, executed: dict) -> bool:
+     return True
+ 
+ 
+-def is_repeat_step(step: ToolCallPlan, results: Any) -> bool:
++def is_repeat_step(
++    step: ToolCallPlan,
++    results: Any,
++    requirements: dict[str, dict[str, Any]] | None = None,
++) -> bool:
+     """该 step 是否为「同工具同参数已经调过、且拿到过结果」的重复。
+ 
+     这里用 operationId 是**正确的**：它回答的是"要不要再调一次"，不是"证据够不够"。
+     """
++    # ``refresh`` is an explicit Critic/Supervisor instruction.  Even a
++    # successful prior call must not make a refresh step disappear during
++    # route de-duplication; the caller asked to re-read the upstream source.
++    if bool(_field(step, "refresh", False)):
++        return False
+     from app.gateway.tool_registry import resolve_tool
+ 
+     try:
+@@ -463,17 +472,41 @@ def is_repeat_step(step: ToolCallPlan, results: Any) -> bool:
+         planned = canonicalize_tool_arguments(meta.tool_name, dict(step.arguments or {}))
+     except Exception:
+         planned = dict(step.arguments or {})
++    # When a Critic supplied coverage requirements, a prior call may only be
++    # dropped if it actually satisfies the requirement.  This keeps partial,
++    # empty, low-count, or wrong-argument results retryable.
++    required = (requirements or {}).get(step.tool_key) if requirements is not None else None
++    records = coverage_records(results) if required is not None else None
+     for args in executed_index(results).get(meta.tool_name, []):
+         try:
+             executed = canonicalize_tool_arguments(meta.tool_name, dict(args or {}))
+         except Exception:
+             executed = dict(args or {})
+         if _args_subset(planned, executed):
+-            return True
++            if required is None:
++                return True
++            for record in records or []:
++                if record.tool_name != meta.tool_name:
++                    continue
++                if not _args_subset(planned, record.arguments):
++                    continue
++                if required.get("argument_variants"):
++                    if any(
++                        _variant_satisfied(step.tool_key, [record], _with_key_policy(v, required))
++                        for v in required["argument_variants"]
++                    ):
++                        return True
++                elif judge_coverage(record, {step.tool_key}, required).satisfies:
++                    return True
++            return False
+     return False
+ 
+ 
+-def drop_repeat_steps(steps: list[ToolCallPlan], results: Any) -> tuple[list[ToolCallPlan], list[str]]:
++def drop_repeat_steps(
++    steps: list[ToolCallPlan],
++    results: Any,
++    requirements: dict[str, dict[str, Any]] | None = None,
++) -> tuple[list[ToolCallPlan], list[str]]:
+     """丢掉重复步骤 → (保留的 steps, 被丢弃的 tool_key 列表)。"""
+     kept: list[ToolCallPlan] = []
+     dropped: list[str] = []
+@@ -483,7 +516,7 @@ def drop_repeat_steps(steps: list[ToolCallPlan], results: Any) -> tuple[list[Too
+             step.arguments = canonicalize_tool_arguments(meta.tool_name, dict(step.arguments or {}))
+         except Exception:
+             pass
+-        if is_repeat_step(step, results):
++        if is_repeat_step(step, results, requirements):
+             dropped.append(step.tool_key)
+         else:
+             kept.append(step)
+@@ -681,25 +714,24 @@ def append_gap_steps(
+         variants = spec.get("argument_variants")
+         if variants:
+             # key 级 allow_partial 禁令同样下压到变体：被禁令挡下的变体必须继续补研究
+-            specs = [
+-                v for v in variants if not _variant_satisfied(key, records, _with_key_policy(v, spec))
+-            ]
++            specs = [v for v in variants if not _variant_satisfied(key, records, _with_key_policy(v, spec))]
+         else:
+             specs = [None]
+         for variant in specs:
+             if len(forced) >= max_gap_steps:
+                 break
+             if variant is None:
+-                if key in present:
++                if requirements is None and key in present:
+                     continue
+-                arguments: dict[str, Any] = {}
++                # A kept gap key with no explicit coverage variant still needs
++                # a retry when the existing plan contains the same key (for
++                # example a previous partial result). Reuse its canonical args.
++                existing = next((s for s in steps if s.tool_key == key), None)
++                arguments = dict(existing.arguments or {}) if existing is not None else {}
+             else:
+                 arguments = dict(variant.get("arguments") or {})
+                 signature = _variant_signature(arguments)
+-                if any(
+-                    s.tool_key == key and _variant_signature(dict(s.arguments or {})) == signature
+-                    for s in forced
+-                ):
++                if any(s.tool_key == key and _variant_signature(dict(s.arguments or {})) == signature for s in forced):
+                     continue
+             if meta.tool_name.startswith(_QUERY_TOOL_PREFIXES):
+                 arguments.setdefault("query", question)
+@@ -712,17 +744,31 @@ def append_gap_steps(
+             except Exception:
+                 continue
+             signature = semantic_signature(key, arguments)
+-            if any(semantic_signature(s.tool_key, dict(s.arguments or {})) == signature for s in steps + forced):
++            # With coverage-aware requirements, an identical existing step may
++            # be the low-coverage/partial execution that caused this gap. Keep
++            # the retry step.  The forced list itself is still deduplicated by
++            # variant above. Legacy calls retain idempotent behaviour.
++            if requirements is None and any(
++                semantic_signature(s.tool_key, dict(s.arguments or {})) == signature for s in steps + forced
++            ):
+                 continue
+             forced.append(
+                 ToolCallPlan(
+                     tool_key=key,
+                     arguments=arguments,
+-                    purpose="Critic 指出的证据缺口（代码级补齐）",
++                    purpose=(
++                        "Critic 指出的证据缺口（覆盖不足重拉，代码级补齐）"
++                        if key in present
++                        else "Critic 指出的证据缺口（代码级补齐）"
++                    ),
+                     priority="high",
++                    refresh=bool(requirements is not None),
+                 )
+             )
+             present.add(key)
++    if requirements is not None and forced:
++        forced_signatures = {semantic_signature(s.tool_key, dict(s.arguments or {})) for s in forced}
++        steps = [s for s in steps if semantic_signature(s.tool_key, dict(s.arguments or {})) not in forced_signatures]
+     merged = forced + list(steps)
+     selected = merged[:max_steps]
+     return selected, [s.tool_key for s in forced if s in selected]
+diff --git a/app/graph/market_plan.py b/app/graph/market_plan.py
+index 00ccbd8..5cfdaaa 100644
+--- a/app/graph/market_plan.py
++++ b/app/graph/market_plan.py
+@@ -21,8 +21,8 @@ import logging
+ import re
+ from typing import Any
+ 
+-from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
+ from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, semantic_signature
++from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -80,7 +80,11 @@ def is_market_level_question(intent: ResearchIntent | Any, question: str) -> boo
+         return False
+     if getattr(intent, "task", None) not in MARKET_TASKS:
+         return False
+-    return _STOCK_CODE_RE.search(question or "") is None
++    from app.gateway.stock_codes import STOCK_CODE_MAP_A_SHARE
++
++    return _STOCK_CODE_RE.search(question or "") is None and not any(
++        name in (question or "") and symbol.startswith(("SH", "SZ")) for name, symbol in STOCK_CODE_MAP_A_SHARE.items()
++    )
+ 
+ 
+ def _in_registry(tool_key: str, registry: str) -> bool:
+@@ -95,9 +99,12 @@ def unexecutable_steps(plan: ResearchPlan, question: str) -> list[str]:
+     ``arguments`` 里没有 ``symbol``，且问题里也抽不出 6 位代码 → analyst 会
+     打一条 warning 后 ``continue``。这类 step 留在计划里只会制造假覆盖。
+     """
++    from app.gateway.stock_codes import STOCK_CODE_MAP_A_SHARE
+     from app.gateway.tool_registry import resolve_tool
+ 
+-    has_code_in_question = _STOCK_CODE_RE.search(question or "") is not None
++    has_code_in_question = _STOCK_CODE_RE.search(question or "") is not None or any(
++        name in (question or "") and symbol.startswith(("SH", "SZ")) for name, symbol in STOCK_CODE_MAP_A_SHARE.items()
++    )
+     dropped: list[str] = []
+     for step in plan.steps:
+         try:
+diff --git a/app/graph/nodes/analysts/base.py b/app/graph/nodes/analysts/base.py
+index 815ae09..ce86d74 100644
+--- a/app/graph/nodes/analysts/base.py
++++ b/app/graph/nodes/analysts/base.py
+@@ -49,9 +49,7 @@ class MarketAnalystNode:
+     #: 也不要再往这里加名字——新增无 symbol 工具请在注册表里声明
+     #: ``requires_symbol=False``（在 ``ToolMeta`` 构造时或 ``_SYMBOL_FREE_TOOLS``）。
+     #: 保留该属性只为不打断既有测试/外部引用。
+-    WHITELIST_NO_SYMBOL: frozenset[str] = frozenset(
+-        meta.tool_name for meta in ALL_TOOLS if not meta.requires_symbol
+-    )
++    WHITELIST_NO_SYMBOL: frozenset[str] = frozenset(meta.tool_name for meta in ALL_TOOLS if not meta.requires_symbol)
+ 
+     def __init__(self, settings: Settings):
+         """初始化分析员节点。"""
+@@ -79,7 +77,8 @@ class MarketAnalystNode:
+             async with self._runtime.gateway_session():
+                 for result in await self._execute_tools(state, called_signatures):
+                     results.append(result)
+-                    tools_used.append(result.tool)
++                    if getattr(result, "note", None) != "local_argument_validation":
++                        tools_used.append(result.tool)
+                     stats = getattr(result, "_cache_info", None)
+                     if stats:
+                         cache_stats.update(stats)
+@@ -132,7 +131,7 @@ class MarketAnalystNode:
+     # ------------------------------------------------------------------ #
+ 
+     def _extract_stocks(self, state: dict) -> list[str]:
+-        """从问题文本 / 研究计划中抽取 A 股 6 位数字代码。"""
++        """从问题文本 / 研究计划中抽取可确认的 A 股代码。"""
+         question = state.get("question", "")
+         if not isinstance(question, str):
+             question = ""
+@@ -145,6 +144,12 @@ class MarketAnalystNode:
+             if code not in candidates:
+                 candidates.append(code)
+ 
++        from app.gateway.stock_codes import STOCK_CODE_MAP_A_SHARE
++
++        for name, symbol in STOCK_CODE_MAP_A_SHARE.items():
++            if name in question and symbol.startswith(("SH", "SZ")) and symbol[2:] not in candidates:
++                candidates.append(symbol[2:])
++
+         # ② 查找 supervisor route 中各 assignment 的 tool_calls.arguments.symbol
+         route = state.get("route")
+         if isinstance(route, list):
+@@ -232,6 +237,17 @@ class MarketAnalystNode:
+                 continue
+ 
+             arguments = dict(tc.get("arguments") or {})
++            # Fill question-derived symbols before canonical validation.  An
++            # LLM plan can omit quote arguments even when the user supplied a
++            # concrete six-digit code; validating first used to discard the
++            # call before this recovery path could run.
++            if meta.requires_symbol:
++                if meta.tool_name == "get_market_quotes":
++                    has_quote_target = bool(arguments.get("symbols") or arguments.get("symbol"))
++                    if not has_quote_target and stocks:
++                        arguments["symbols"] = sorted(set(stocks))
++                elif not arguments.get("symbol") and stocks:
++                    arguments["symbol"] = ";".join(stocks)
+             # Convert legacy planner arguments before the symbol guard and
+             # before deduplication.  The execution layer only sees canonical
+             # Gateway arguments.
+@@ -239,6 +255,18 @@ class MarketAnalystNode:
+                 arguments = canonicalize_tool_arguments(meta.tool_name, arguments)
+             except Exception as exc:
+                 logger.warning("%s 跳过 %s（参数无效: %s）", self.category, tool_key, exc)
++                results.append(
++                    ToolResult(
++                        tool=meta.tool_name,
++                        operation_id=meta.tool_name,
++                        tool_key=tool_key,
++                        arguments=arguments,
++                        status=STATUS_ERROR,
++                        normalized=[],
++                        error=f"Invalid arguments: {exc}",
++                        note="local_argument_validation",
++                    )
++                )
+                 continue
+             # symbol 守卫（阶段 3 ④）：是否需要 symbol 由注册表元数据声明，
+             # planner 没给 → 用问题里抽到的代码补，仍无则跳过。
+@@ -252,6 +280,18 @@ class MarketAnalystNode:
+                 else:
+                     # T8：跳过必须可见（旧实现是 debug，功能没跑却看不出）。
+                     logger.warning("%s 跳过 %s（缺少 symbol 且问题中无 6 位代码）", self.category, tool_key)
++                    results.append(
++                        ToolResult(
++                            tool=meta.tool_name,
++                            operation_id=meta.tool_name,
++                            tool_key=tool_key,
++                            arguments=arguments,
++                            status=STATUS_ERROR,
++                            normalized=[],
++                            error="Missing required symbol: no verified target in question or plan",
++                            note="local_argument_validation",
++                        )
++                    )
+                     continue
+ 
+             dedup_key = semantic_signature(meta.tool_name, arguments)
+@@ -272,7 +312,13 @@ class MarketAnalystNode:
+             # D4：只在真正执行前扣减——被跳过的调用（上面那些 continue）不消耗预算
+             budget -= 1
+             exec_started = time.monotonic()
+-            result = await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
++            refresh = bool(tc.get("refresh", False) or "覆盖不足重拉" in str(tc.get("purpose", "")))
++            if refresh:
++                result = await self._runtime.execute(
++                    meta.tool_name, arguments, called_signatures, deadline=deadline, refresh=True
++                )
++            else:
++                result = await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
+             # 阶段 2：把**原计划的 registry key** 写进结果。缺口判定必须读这个字段，
+             # 而不是拿 operationId 反查（同一 operationId 被多个 registry key 复用时，
+             # 反查只能拿到规范条目，会把兄弟 key 的缺口误判成"已满足"）。
+diff --git a/app/graph/nodes/critic.py b/app/graph/nodes/critic.py
+index 1f8a3ba..7961973 100644
+--- a/app/graph/nodes/critic.py
++++ b/app/graph/nodes/critic.py
+@@ -41,6 +41,7 @@ from app.graph.gap_loop import (
+ from app.llm_json import parse_json_object
+ from app.research.entity_check import nonexistence_assertions
+ from app.research.entity_check import report_text as entity_report_text
++from app.research.reasoning import build_evidence_aliases
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -151,7 +152,7 @@ _ISSUE_RULES = (
+     '  {"allow_partial": false}、{"arguments": {"date": "2026-10-08"}}），\n'
+     "  空对象表示没有额外覆盖要求。\n"
+     "- 同一个 tool_key 出现在多条 issue 时，每条 issue 的 required_coverage 都会被独立要求满足。\n"
+-    '  若两条 issue 要求同一个参数的不同取值（例如分别要 date=2026-10-07 与 date=2026-10-08），\n'
++    "  若两条 issue 要求同一个参数的不同取值（例如分别要 date=2026-10-07 与 date=2026-10-08），\n"
+     "  单次调用无法同时满足：系统会为每个取值各规划一次调用，你**不要**为了迁就单次调用而\n"
+     "  只保留其中一个取值——那样会让前一条缺口凭空消失。\n"
+     "- 「工具执行过」不等于「证据已充分」：如果某个工具返回 partial、空列表，"
+@@ -160,9 +161,12 @@ _ISSUE_RULES = (
+     "- status=partial、partial=true、缺日期锚点或 note 指明截断的证据不得支撑全市场或明确资金流向等强结论。\n"
+     "- 没有完整同日上涨/下跌家数时，报告只能写无法确认，不能声称全市场全部上涨/下跌。\n"
+     "- 因果、资金从一板块流向另一板块、跨市场带动，须有同日同标的/板块直接证据；否则要求改为可能/无法确认或删除。\n"
+-    "- 报告中的当前事实、外部实体/政策/新闻必须能在当前 evidence 中逐条核实；没有对应 evidence 的事实必须标为 unsupported_claim 或 missing_evidence，并按需要补研究。\n"
+-    "- partial、截断、无日期锚点或仅单一来源的 evidence 只能支持有限、带限定语的观察；不得据此放过全市场比较、绝对化或因果结论。\n"
+-    '- 非法输出会被安全终止：issues 必须是数组，元素必须是对象；'
++    "- 报告中的当前事实、外部实体/政策/新闻（例如公司、指数判断、地方补贴）必须能在当前 evidence 中逐条核实；"
++    "没有对应 evidence 的事实必须标为 unsupported_claim 或 missing_evidence，并按需要补研究。\n"
++    "- partial、截断、无日期锚点或仅单一来源的 evidence 只能支持有限、带限定语的观察；"
++    "不得据此放过‘主线/最密集/全面反转’等全市场比较、绝对化或因果结论。\n"
++    "- 审查时只接受证据集合中列出的真实 id/短别名，不能根据 technical-001 等编号模式猜引用。\n"
++    "- 非法输出会被安全终止：issues 必须是数组，元素必须是对象；"
+     '显式写 "issues": null 会被判为非法 payload（要表达"没有 issue"请给空数组 []）。'
+ )
+ 
+@@ -254,8 +258,11 @@ def _market_priority(item) -> int:
+ 
+ def _incomplete(item) -> bool:
+     note = str(_field(item, "note", "") or "").lower()
+-    return (_field(item, "status") != "success" or bool(_field(item, "partial"))
+-            or any(token in note for token in ("截断", "仅返回", "truncat", "partial")))
++    return (
++        _field(item, "status") != "success"
++        or bool(_field(item, "partial"))
++        or any(token in note for token in ("截断", "仅返回", "truncat", "partial"))
++    )
+ 
+ 
+ def _render_field(name: str, value: Any, truncations: list[dict]) -> str | None:
+@@ -264,10 +271,10 @@ def _render_field(name: str, value: Any, truncations: list[dict]) -> str | None:
+     if not text:
+         return None
+     if len(text) > _MAX_REVIEW_FIELD_CHARS:
+-        truncations.append({"field": name, "shown": _MAX_REVIEW_FIELD_CHARS, "total": len(text), "reason": "field_char_limit"})
+-        text = text[:_MAX_REVIEW_FIELD_CHARS] + (
+-            f"…[已截断：仅展示前 {_MAX_REVIEW_FIELD_CHARS} 字，共 {len(text)} 字]"
++        truncations.append(
++            {"field": name, "shown": _MAX_REVIEW_FIELD_CHARS, "total": len(text), "reason": "field_char_limit"}
+         )
++        text = text[:_MAX_REVIEW_FIELD_CHARS] + (f"…[已截断：仅展示前 {_MAX_REVIEW_FIELD_CHARS} 字，共 {len(text)} 字]")
+     return text
+ 
+ 
+@@ -287,7 +294,11 @@ def _add_field(parts: list[str], label: str, value: str | None) -> None:
+     parts.append(f"{label}:\n{value}" if "\n" in value else f"{label}: {value}")
+ 
+ 
+-def _format_report_for_review(report) -> tuple[str, list[dict]]:
++def _format_report_for_review(
++    report,
++    *,
++    evidence_aliases: dict[str, str] | None = None,
++) -> tuple[str, list[dict]]:
+     """将报告格式化为审查文本，返回 ``(文本, 截断记录)``。
+ 
+     阶段 4①：必须覆盖**全部用户可见字段**。旧实现只看 what_happened（还被截到
+@@ -317,10 +328,7 @@ def _format_report_for_review(report) -> tuple[str, list[dict]]:
+     # ── 阶段 4④：代码级校验结论（这些不是 LLM 的判断，是代码已经确定的事实）──
+     violations = [str(v) for v in (_field(report, "evidence_violations", []) or [])]
+     if violations:
+-        parts.append(
+-            "【代码级校验：无效证据引用 — 本报告不可能 pass】\n"
+-            + "\n".join(f"  ! {v}" for v in violations)
+-        )
++        parts.append("【代码级校验：无效证据引用 — 本报告不可能 pass】\n" + "\n".join(f"  ! {v}" for v in violations))
+     unverified = [str(x) for x in (_field(report, "unverified_entities", []) or [])]
+     missing_market = [str(x) for x in (_field(report, "entities_without_market_evidence", []) or [])]
+     if unverified:
+@@ -332,12 +340,14 @@ def _format_report_for_review(report) -> tuple[str, list[dict]]:
+         parts.append("【缺少本次行情 datum 的实体】\n" + "\n".join(f"  ? {name}" for name in missing_market))
+ 
+     # ── 阶段 4③：claim—evidence 映射（逐条论断 → 支撑它的 evidence id）──
++    real_to_alias = {real: alias for alias, real in (evidence_aliases or {}).items()}
++
+     claims = list(_field(report, "claims", []) or [])
+     if claims:
+         claim_lines = []
+         for claim in claims:
+             text = _render_field("claims", _field(claim, "claim", ""), truncations)
+-            ids = [str(x) for x in (_field(claim, "evidence_ids", []) or [])]
++            ids = [real_to_alias.get(str(x), str(x)) for x in (_field(claim, "evidence_ids", []) or [])]
+             ctype = str(_field(claim, "claim_type", "other"))
+             claim_lines.append(f"  - [{ctype}] {text} ← {', '.join(ids) if ids else '（无 evidence 引用）'}")
+         parts.append("关键论断 → 证据映射:\n" + "\n".join(claim_lines))
+@@ -346,10 +356,17 @@ def _format_report_for_review(report) -> tuple[str, list[dict]]:
+ 
+     report_evidence = list(_field(report, "evidence", []) or [])
+     if report_evidence:
+-        ids = [str(_field(item, "id", "?")) for item in report_evidence]
++        ids = [real_to_alias.get(str(_field(item, "id", "?")), str(_field(item, "id", "?"))) for item in report_evidence]
+         parts.append(f"报告自带的证据条目（{len(ids)} 条）: {', '.join(ids)}")
+ 
+-    return "\n".join(parts), truncations
++    review = "\n".join(parts)
++    if real_to_alias:
++        # Reasoning resolves known aliases back to persisted IDs before the
++        # report enters state.  Convert them back only for this model-facing
++        # view so Critic sees the same bounded references as Reasoning.
++        for real_id, alias in sorted(real_to_alias.items(), key=lambda item: len(item[0]), reverse=True):
++            review = review.replace(real_id, alias)
++    return review, truncations
+ 
+ 
+ def _referenced_evidence_ids(report) -> list[str]:
+@@ -370,12 +387,20 @@ def _referenced_evidence_ids(report) -> list[str]:
+     return ids
+ 
+ 
+-def _render_evidence_item(item, *, value_limit: int = 500) -> str:
++def _render_evidence_item(
++    item,
++    *,
++    value_limit: int = 500,
++    alias: str | None = None,
++    alias_only: bool = False,
++) -> str:
+     """渲染一条证据（datum 原文 + 状态元信息）。"""
+     value = str(_field(item, "value", ""))
+     if len(value) > value_limit:
+         value = value[:value_limit] + "…"
+-    head = f"{_field(item, 'id', '?')} | {_field(item, 'source_tool', '?')} | {_field(item, 'metric', '?')} = {value}"
++    item_id = _field(item, "id", "?")
++    ref = alias if alias_only and alias else (f"{alias} ({item_id})" if alias else item_id)
++    head = f"{ref} | {_field(item, 'source_tool', '?')} | {_field(item, 'metric', '?')} = {value}"
+     meta: list[str] = []
+     for key in ("tool_key", "operation_id"):
+         if _field(item, key):
+@@ -397,7 +422,14 @@ def _render_evidence_item(item, *, value_limit: int = 500) -> str:
+     return f"{head} [{' ; '.join(meta)}]" if meta else head
+ 
+ 
+-def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> tuple[str, dict]:
++def _format_evidence_for_review(
++    results,
++    evidence,
++    gate,
++    referenced_ids=(),
++    *,
++    presentation_aliases: dict[str, str] | None = None,
++) -> tuple[str, dict]:
+     """格式化证据用于审查，返回 ``(文本, 统计/截断记录)``。
+ 
+     阶段 4②：**报告引用的 evidence id 优先**，逐条给完整原始 datum ——
+@@ -415,7 +447,22 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
+         "kept": [],
+         "omitted": [],
+     }
+-    lines = ["=== 成功工具 ==="]
++    aliases = presentation_aliases or build_evidence_aliases([item for item in (evidence or [])])
++    alias_only = presentation_aliases is not None
++    alias_by_real = {real: alias for alias, real in aliases.items()}
++    stats["allowed_ids"] = dict(aliases)
++    if alias_only:
++        stats["allowed_aliases"] = list(aliases)
++    lines = [
++        (
++            "允许引用的 evidence id 集合（只能使用短别名；代码会在校验前映射回真实 id）："
++            if alias_only
++            else "允许引用的 evidence id 集合（短别名 -> 持久化真实 id；只能使用集合中的 id）："
++        ),
++        *([f"  {alias}" for alias in aliases] if alias_only else [f"  {alias} -> {real}" for alias, real in aliases.items()]),
++        "",
++        "=== 成功工具 ===",
++    ]
+     if gate:
+         for key in ("successful_tool_count", "valid_evidence_count", "invalid_evidence_count"):
+             value = _field(gate, key, None)
+@@ -426,8 +473,14 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
+             if value:
+                 lines.append(f"  {key}={value}")
+         for quality in _field(gate, "evidence_quality", []) or []:
+-            lines.append(f"  QUALITY evidence_id={quality.get('evidence_id', '?')} tool_key={quality.get('tool_key', '?')} source={quality.get('source', 'unknown')} as_of_date={quality.get('as_of_date', 'unknown')} retrieved_at={quality.get('retrieved_at', 'unknown')} completeness={quality.get('completeness', 'unknown')} coverage={quality.get('coverage', 'unknown')} reasons={quality.get('reason_codes', [])}")
+-    if gate:
++            quality_id = str(quality.get("evidence_id", "?"))
++            quality_ref = alias_by_real.get(quality_id, quality_id) if alias_only else quality_id
++            lines.append(
++                f"  QUALITY evidence_id={quality_ref} tool_key={quality.get('tool_key', '?')} "
++                f"source={quality.get('source', 'unknown')} as_of_date={quality.get('as_of_date', 'unknown')} "
++                f"retrieved_at={quality.get('retrieved_at', 'unknown')} completeness={quality.get('completeness', 'unknown')} "
++                f"coverage={quality.get('coverage', 'unknown')} reasons={quality.get('reason_codes', [])}"
++            )
+         for t in _field(gate, "successful_tools", []) or []:
+             lines.append(f"  OK {t}")
+         for t in _field(gate, "partial_tools", []) or []:
+@@ -456,7 +509,9 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
+                 continue
+             stats["referenced_shown"] += 1
+             stats["kept"].append({"id": eid, "reason": "report_reference"})
+-            lines.append(f"  - {_render_evidence_item(item)}")
++            lines.append(
++                f"  - {_render_evidence_item(item, alias=alias_by_real.get(eid), alias_only=alias_only)}"
++            )
+ 
+     referenced_set = set(referenced)
+     others = [item for eid, item in by_id.items() if eid not in referenced_set]
+@@ -467,8 +522,12 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
+     selected = [item for _, item in prioritized[:_MAX_UNREFERENCED_EVIDENCE_LINES]]
+     for item in selected:
+         stats["other_shown"] += 1
+-        stats["kept"].append({"id": _field(item, "id"), "reason": "market_minimum" if _market_priority(item) < 3 else "tool_quota"})
+-        lines.append(f"  - {_render_evidence_item(item, value_limit=120)}")
++        stats["kept"].append(
++            {"id": _field(item, "id"), "reason": "market_minimum" if _market_priority(item) < 3 else "tool_quota"}
++        )
++        lines.append(
++            f"  - {_render_evidence_item(item, value_limit=120, alias=alias_by_real.get(str(_field(item, 'id', ''))), alias_only=alias_only)}"
++        )
+     omitted = len(others) - stats["other_shown"]
+     if omitted > 0:
+         stats["omitted"].append({"kind": "evidence", "count": omitted, "reason": "unreferenced_evidence_limit"})
+@@ -478,30 +537,43 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
+     lines.append("")
+     lines.append("=== 原始 normalized 数据摘要（最多 20 个工具 × 10 条）===")
+     shown_tools = 0
+-    sorted_results = sorted(enumerate(results or []), key=lambda pair: (
+-        _market_priority({"source_tool": _field(pair[1], "tool")}), pair[0]
+-    ))
++    sorted_results = sorted(
++        enumerate(results or []), key=lambda pair: (_market_priority({"source_tool": _field(pair[1], "tool")}), pair[0])
++    )
+     for _, result in sorted_results[:20]:
+         normalized = _field(result, "normalized", []) or []
+         shown_tools += 1
+         result_meta = " ".join(
+-            f"{key}={_field(result, key)}" for key in ("status", "partial", "note")
+-            if _field(result, key)
++            f"{key}={_field(result, key)}" for key in ("status", "partial", "note") if _field(result, key)
++        )
++        lines.append(
++            f"  TOOL {_field(result, 'tool_key', '?')} | {_field(result, 'operation_id') or _field(result, 'tool')} {result_meta}"
+         )
+-        lines.append(f"  TOOL {_field(result, 'tool_key', '?')} | {_field(result, 'operation_id') or _field(result, 'tool')} {result_meta}")
+         selected_datums = sorted(enumerate(normalized), key=lambda pair: (_market_priority(pair[1]), pair[0]))[:10]
+         for _, datum in selected_datums:
+             metric = _field(datum, "metric", "?")
+             value = str(_field(datum, "value", ""))[:80]
+             meta = " ".join(
+-                f"{key}={_field(datum, key)}" for key in ("timestamp", "status", "partial", "note")
++                f"{key}={_field(datum, key)}"
++                for key in ("timestamp", "status", "partial", "note")
+                 if _field(datum, key)
+             )
+-            lines.append(f"  - {_field(result, 'tool_key', '?')} | {_field(result, 'operation_id') or _field(result, 'tool')} | {metric}: {value} {meta}")
+-            stats["kept"].append({"metric": metric, "reason": "market_minimum" if _market_priority(datum) < 3 else "tool_quota"})
++            lines.append(
++                f"  - {_field(result, 'tool_key', '?')} | {_field(result, 'operation_id') or _field(result, 'tool')} | {metric}: {value} {meta}"
++            )
++            stats["kept"].append(
++                {"metric": metric, "reason": "market_minimum" if _market_priority(datum) < 3 else "tool_quota"}
++            )
+         if len(normalized) > 10:
+             stats["datums_omitted"] += len(normalized) - 10
+-            stats["omitted"].append({"kind": "datum", "tool_key": _field(result, "tool_key"), "count": len(normalized) - 10, "reason": "per_tool_datum_limit"})
++            stats["omitted"].append(
++                {
++                    "kind": "datum",
++                    "tool_key": _field(result, "tool_key"),
++                    "count": len(normalized) - 10,
++                    "reason": "per_tool_datum_limit",
++                }
++            )
+             lines.append(f"    …（该工具另有 {len(normalized) - 10} 条 datum 未展示）")
+     total_tools = len(results or [])
+     if total_tools > shown_tools:
+@@ -515,14 +587,19 @@ def _format_evidence_for_review(results, evidence, gate, referenced_ids=()) -> t
+ def _truncation_summary(report_truncations: list[dict], evidence_stats: dict) -> str:
+     """把截断情况写成 Critic 可读的说明（同时进入 telemetry）。"""
+     lines: list[str] = []
++    if evidence_stats.get("allowed_aliases"):
++        lines.append("  - 允许引用的 evidence 短别名：" + ", ".join(evidence_stats["allowed_aliases"]))
++    elif evidence_stats.get("allowed_ids"):
++        lines.append(
++            "  - 允许引用的 evidence id 集合："
++            + ", ".join(f"{alias}->{real}" for alias, real in evidence_stats["allowed_ids"].items())
++        )
+     for item in report_truncations:
+         lines.append(f"  - 报告字段 {item['field']}：展示 {item['shown']} 字 / 共 {item['total']} 字")
+     if evidence_stats.get("referenced_missing"):
+         lines.append(f"  - 报告引用了但账本中没有的 evidence id: {', '.join(evidence_stats['referenced_missing'])}")
+     if evidence_stats.get("other_total", 0) > evidence_stats.get("other_shown", 0):
+-        lines.append(
+-            f"  - 未引用证据只展示 {evidence_stats['other_shown']} / {evidence_stats['other_total']} 条"
+-        )
++        lines.append(f"  - 未引用证据只展示 {evidence_stats['other_shown']} / {evidence_stats['other_total']} 条")
+     if evidence_stats.get("datums_omitted"):
+         lines.append(f"  - 单个工具的 datum 摘要另有 {evidence_stats['datums_omitted']} 条未展示")
+     if evidence_stats.get("results_omitted"):
+@@ -646,14 +723,16 @@ def _claim_evidence_issues(
+                 claim=row["claim"][:200],
+                 severity="high" if any(x in reasons for x in ("invalid_reference", "invalid_evidence", "news_mention_not_price")) else "medium",
+                 action=action,
+-                rationale=f"逐条 claim to evidence 校验失败；evidence_ids={','.join(row['evidence_ids']) or 'none'}；reason_codes={','.join(reasons)}",
++                rationale=f"逐条 claim→evidence 校验失败；evidence_ids={','.join(row['evidence_ids']) or 'none'}；reason_codes={','.join(reasons)}",
+             )
+         )
+     return issues
+ 
+ 
+ _DATE_RE = re.compile(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}")
+-_BREADTH_RE = re.compile(r"(?:全市场|所有(?:股票|个股)|全部(?:股票|个股)).{0,12}(?:全部)?(?:上涨|下跌)|(?:全部|全线)(?:上涨|下跌)")
++_BREADTH_RE = re.compile(
++    r"(?:全市场|所有(?:股票|个股)|全部(?:股票|个股)).{0,12}(?:全部)?(?:上涨|下跌)|(?:全部|全线)(?:上涨|下跌)"
++)
+ _CAUSAL_RE = re.compile(r"(?:导致|带动|引发|造成)")
+ _FLOW_RE = re.compile(r"资金.{0,24}(?:流向|转向|从.{1,20}流入)")
+ _QUALIFIED_RE = re.compile(r"可能|或许|疑似|无法确认|尚不能确认|未能确认")
+@@ -666,8 +745,13 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
+     segments = [part.strip() for part in re.split(r"[。！？；\n]", text) if part.strip()]
+     complete = [item for item in items if not _incomplete(item)]
+     up = [item for item in complete if re.search(r"up_count|advancing|上涨家数", str(_field(item, "metric", "")), re.I)]
+-    down = [item for item in complete if re.search(r"down_count|declining|下跌家数", str(_field(item, "metric", "")), re.I)]
++    down = [
++        item for item in complete if re.search(r"down_count|declining|下跌家数", str(_field(item, "metric", "")), re.I)
++    ]
+     issues: list[AuditIssue] = []
++    # A claim labelled fact/comparison/causation/structure without a concrete
++    # evidence mapping is unsupported by construction.  This catches external
++    # background facts that do not happen to match a breadth/causal regex.
+     for claim in _field(report, "claims", []) or []:
+         claim_text = str(_field(claim, "claim", "") or "").strip()
+         claim_type = str(_field(claim, "claim_type", "other") or "other")
+@@ -700,8 +784,15 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
+             complete_breadth = bool(up_dates & down_dates)
+             zero_opposing = all(str(_field(i, "value", "")).strip() in ("0", "0.0") for i in opposing)
+             if not complete_breadth or not zero_opposing:
+-                issues.append(AuditIssue(kind="unsupported_claim", claim=segment[:200], severity="high",
+-                    action="remove_or_qualify", rationale="缺少完整、同日的上涨/下跌家数，不能断言全市场全部上涨或下跌；只能写无法确认"))
++                issues.append(
++                    AuditIssue(
++                        kind="unsupported_claim",
++                        claim=segment[:200],
++                        severity="high",
++                        action="remove_or_qualify",
++                        rationale="缺少完整、同日的上涨/下跌家数，不能断言全市场全部上涨或下跌；只能写无法确认",
++                    )
++                )
+         if _CAUSAL_RE.search(segment) or _FLOW_RE.search(segment):
+             # Separate price and news observations cannot establish the relationship.
+             relation = re.sub(r"\s+", "", segment)
+@@ -713,8 +804,15 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
+                 for item in complete
+             )
+             if not direct:
+-                issues.append(AuditIssue(kind="unsupported_claim", claim=segment[:200], severity="high",
+-                    action="remove_or_qualify", rationale="缺少同日、同标的或板块的直接证据支撑因果或资金流向断言"))
++                issues.append(
++                    AuditIssue(
++                        kind="unsupported_claim",
++                        claim=segment[:200],
++                        severity="high",
++                        action="remove_or_qualify",
++                        rationale="缺少同日、同标的或板块的直接证据支撑因果或资金流向断言",
++                    )
++                )
+     return issues
+ 
+ 
+@@ -763,9 +861,7 @@ def parse_issues(raw: Any) -> list[AuditIssue]:
+     issues: list[AuditIssue] = []
+     for index, item in enumerate(raw):
+         if not isinstance(item, dict):
+-            raise _issues_error(
+-                f"issues[{index}] must be an object, got {type(item).__name__}: {item!r:.120}"
+-            )
++            raise _issues_error(f"issues[{index}] must be an object, got {type(item).__name__}: {item!r:.120}")
+         issues.append(AuditIssue.model_validate(item))
+     return issues
+ 
+@@ -900,10 +996,17 @@ class CriticNode:
+             rules = _get_domain_rules(domain)
+ 
+             # 阶段 4①②：报告全字段（含 claim—evidence 映射）+ 报告引用优先的证据。
+-            report_review, report_truncations = _format_report_for_review(report)
+             referenced_ids = _referenced_evidence_ids(report)
++            presentation_aliases = build_evidence_aliases([item for item in (evidence or [])])
++            report_review, report_truncations = _format_report_for_review(
++                report, evidence_aliases=presentation_aliases
++            )
+             evidence_review, evidence_stats = _format_evidence_for_review(
+-                results, evidence, gate, referenced_ids
++                results,
++                evidence,
++                gate,
++                referenced_ids,
++                presentation_aliases=presentation_aliases,
+             )
+ 
+             # Assemble prompt pieces
+diff --git a/app/graph/nodes/finalize.py b/app/graph/nodes/finalize.py
+index 69afc3f..1d42b04 100644
+--- a/app/graph/nodes/finalize.py
++++ b/app/graph/nodes/finalize.py
+@@ -78,8 +78,7 @@ def resolve_delivery(
+         decisions = gap_key_decisions or _field(critique, "gap_key_decisions", []) or []
+         if decisions:
+             rendered = ", ".join(
+-                f"{_field(d, 'key', '?')}:{_field(d, 'reason', _field(d, 'decision', '?'))}"
+-                for d in decisions[:10]
++                f"{_field(d, 'key', '?')}:{_field(d, 'reason', _field(d, 'decision', '?'))}" for d in decisions[:10]
+             )
+             details.append("gap=" + rendered)
+         return base + ("；" + "；".join(details) if details else "")
+@@ -113,6 +112,32 @@ def unresolved_issue_summary(critique: Any) -> list[str]:
+     return out
+ 
+ 
++def infer_blocked_reason(state: dict[str, Any], critique: Any, settings: Any = None) -> str:
++    """Choose a non-empty structured terminal reason when route state lacks one."""
++    explicit = str(state.get("blocked_reason") or "").strip()
++    if explicit:
++        return explicit
++    if settings is not None:
++        from app.graph.builder import critic_route_outcome
++
++        decision, reason = critic_route_outcome(state, settings)
++        if decision == "finalize_audit":
++            return reason
++    verdict = str(_field(critique, "verdict", "") or "").strip().lower()
++    if verdict == "pass":
++        return ""
++    if verdict == "research_more":
++        decisions = state.get("gap_key_decisions") or _field(critique, "gap_key_decisions", []) or []
++        if decisions and not any(_field(row, "decision", "") == "kept" for row in decisions):
++            return "no_executable_gap_steps"
++        return "research_budget_exhausted"
++    if verdict == "revise":
++        return "rewrite_budget_exhausted"
++    if verdict == "error" or not verdict:
++        return "audit_error"
++    return "research_budget_exhausted"
++
++
+ class FinalizeAuditNode:
+     """终态节点：写 ``final_audit_status`` / ``delivery_status``，不产生新数据。"""
+ 
+@@ -134,10 +159,11 @@ class FinalizeAuditNode:
+                     remaining_budget = float(s["budget_deadline"]) - time.monotonic()
+                 except (TypeError, ValueError):
+                     remaining_budget = None
++            blocked_reason = infer_blocked_reason(s, critique, self.settings)
+             audit_status, delivery_status, reason = resolve_delivery(
+                 critique,
+                 errors,
+-                blocked_reason=s.get("blocked_reason"),
++                blocked_reason=blocked_reason,
+                 gap_key_decisions=s.get("gap_key_decisions"),
+             )
+ 
+@@ -149,7 +175,7 @@ class FinalizeAuditNode:
+                 delivery_status=delivery_status,
+                 reason=reason,
+                 unresolved_issues=unresolved,
+-                blocked_reason=s.get("blocked_reason"),
++                blocked_reason=blocked_reason,
+                 research_round_count=int(s.get("research_round_count", 0) or 0),
+                 rewrite_count=int(s.get("rewrite_count", 0) or 0),
+                 remaining_budget=remaining_budget,
+@@ -168,7 +194,7 @@ class FinalizeAuditNode:
+                 "final_audit_status": audit_status,
+                 "delivery_status": delivery_status,
+                 "delivery_reason": reason,
+-                "blocked_reason": s.get("blocked_reason"),
++                "blocked_reason": blocked_reason,
+                 "remaining_budget": remaining_budget,
+                 "unresolved_issues": unresolved,
+             }
+diff --git a/app/graph/nodes/reasoning.py b/app/graph/nodes/reasoning.py
+index 64b21ff..9215669 100644
+--- a/app/graph/nodes/reasoning.py
++++ b/app/graph/nodes/reasoning.py
+@@ -12,9 +12,10 @@ import logging
+ 
+ from app.config import Settings
+ from app.errors import LLMOutputError
++from app.models.evidence import Evidence
+ from app.models.market import ToolResult
+ from app.models.response import MarketIntelligence
+-from app.research.reasoning import ReasoningEngine, _get_evidence_key
++from app.research.reasoning import ReasoningEngine, _get_evidence_key, build_evidence_aliases
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -52,15 +53,22 @@ def _select_evidence(items: list, previous_report, *, total_limit: int = 500, pe
+     for i, item in enumerate(items):
+         metric = str(_field(item, "metric", "") or "").lower()
+         tool = _get_evidence_key(item).lower()
+-        if any(x in metric for x in ("up_count", "down_count", "涨跌", "涨停", "timestamp", "date")) or any(
+-            x in tool for x in ("quote", "sentiment", "limit_up", "telegraph")
+-        ) or _field(item, "partial") or _field(item, "note"):
++        if (
++            any(x in metric for x in ("up_count", "down_count", "涨跌", "涨停", "timestamp", "date"))
++            or any(x in tool for x in ("quote", "sentiment", "limit_up", "telegraph"))
++            or _field(item, "partial")
++            or _field(item, "note")
++        ):
+             take(i, "market_minimum")
+     for i in range(len(items) - 1, -1, -1):
+         take(i, "tool_quota")
+     selected_items = [item for i, item in enumerate(items) if i in selected]
+-    return selected_items, {"kept": len(selected_items), "omitted": len(items) - len(selected_items),
+-                            "reason": "total_and_per_tool_limit", "kept_reasons": reasons}
++    return selected_items, {
++        "kept": len(selected_items),
++        "omitted": len(items) - len(selected_items),
++        "reason": "total_and_per_tool_limit",
++        "kept_reasons": reasons,
++    }
+ 
+ 
+ class ReasoningNode:
+@@ -70,9 +78,7 @@ class ReasoningNode:
+         self.settings = settings
+         #: 阶段 6：本节点只负责 `revise → reasoning` 这一条路径的计数上限
+         #: （research_more 的额度由 SupervisorNode 自己管）。
+-        self.max_rewrites = (
+-            settings.effective_max_rewrites if max_rewrites is None else max(0, int(max_rewrites))
+-        )
++        self.max_rewrites = settings.effective_max_rewrites if max_rewrites is None else max(0, int(max_rewrites))
+         self._engine = ReasoningEngine(settings)
+ 
+     async def __call__(self, state):
+@@ -106,25 +112,27 @@ class ReasoningNode:
+             # 阶段 6：这次进本节点是"Critic 判 revise 的打回"还是"补完证据后的重新成文"？
+             # 只有前者算 `rewrite_count`；后者（research_more 回环）由 SupervisorNode
+             # 记 `research_round_count`，两条路径各自设限、互不挤占额度。
+-            is_rewrite = (
+-                state.get("report") is not None
+-                and str(critique_verdict or "").strip().lower() == "revise"
+-            )
++            is_rewrite = state.get("report") is not None and str(critique_verdict or "").strip().lower() == "revise"
+             is_followup = state.get("report") is not None and not is_rewrite
+ 
+             question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
+ 
+-            evidence_items, truncation = _select_evidence(state.get("evidence", []), state.get("report"))
++            all_evidence_items = state.get("evidence", [])
++            evidence_aliases = (
++                build_evidence_aliases([e if not isinstance(e, dict) else Evidence(**e) for e in all_evidence_items])
++                if all_evidence_items
++                else {}
++            )
++            evidence_items, truncation = _select_evidence(all_evidence_items, state.get("report"))
+             if truncation["omitted"]:
+                 from app.graph import run_log
++
+                 run_log.emit("reasoning_context", run_id=state.get("run_id"), context_truncation=truncation)
+ 
+             results = state.get("results", [])
+             # LangGraph reducer merge 将 ToolResult 序列化为 dict，需要转回
+             results: list[ToolResult] = [ToolResult(**r) if isinstance(r, dict) else r for r in results]
+             # 使用截断后的 evidence_items，并将 reducer 序列化产生的 dict 转回 Evidence
+-            from app.models.evidence import Evidence
+-
+             evidence = [Evidence(**e) if isinstance(e, dict) else e for e in evidence_items]
+ 
+             # 调用推理引擎
+@@ -134,6 +142,7 @@ class ReasoningNode:
+                 evidence=evidence,
+                 history_context=self._build_revision_context(unsupported_claims, structured_issues),
+                 findings=state.get("findings", []),
++                evidence_aliases=evidence_aliases,
+                 domain=state.get("domain") or _field(state.get("intent"), "domain") or "a_share",
+                 requested_date=state.get("requested_date") or _field(state.get("intent"), "requested_date"),
+                 as_of_date=state.get("as_of_date"),
+@@ -213,16 +222,12 @@ class ReasoningNode:
+     #: 只把 claim 文本贴回去是不够的 —— 模型会把"补研究"重新表述成"措辞更谨慎"，
+     #: 于是同一句话换层皮再被审计打回一次（方案 §2 根因：三轮 LLM 改写伪装解决）。
+     _ACTION_INSTRUCTIONS = {
+-        "remove_or_qualify": (
+-            "删除该论断，或改写到证据真正支持的范围（明确写出缺口，不得保留原有强度）"
+-        ),
++        "remove_or_qualify": ("删除该论断，或改写到证据真正支持的范围（明确写出缺口，不得保留原有强度）"),
+         "research_more": (
+             "该论断缺少数据支撑：本轮补充的研究结果已在上方数据/evidence 中，"
+             "只能按新证据能支持的程度重写；新证据仍不足则删除该论断"
+         ),
+-        "repair_format": (
+-            "该论断的口径/格式不合规：按证据的原始口径重写（单位、时间范围、标的必须与证据一致）"
+-        ),
++        "repair_format": ("该论断的口径/格式不合规：按证据的原始口径重写（单位、时间范围、标的必须与证据一致）"),
+     }
+ 
+     def _build_revision_context(self, unsupported_claims: list[str], issues: list | None = None) -> str:
+diff --git a/app/graph/nodes/supervisor.py b/app/graph/nodes/supervisor.py
+index 18dde7d..1b6e663 100644
+--- a/app/graph/nodes/supervisor.py
++++ b/app/graph/nodes/supervisor.py
+@@ -163,13 +163,19 @@ class SupervisorNode:
+         # 无法执行的 LLM 规划。
+         critique = state.get("critique") if isinstance(state, dict) else getattr(state, "critique", None)
+         results = state.get("results", []) if isinstance(state, dict) else getattr(state, "results", [])
+-        preflight = gap_key_decision(
+-            critique,
+-            registry,
+-            results,
+-            max_keys=getattr(self.settings, "gap_max_steps", 3),
+-        ) if critique else None
+-        verdict = str(critique.get("verdict", "") if isinstance(critique, dict) else getattr(critique, "verdict", "")).lower()
++        preflight = (
++            gap_key_decision(
++                critique,
++                registry,
++                results,
++                max_keys=getattr(self.settings, "gap_max_steps", 3),
++            )
++            if critique
++            else None
++        )
++        verdict = str(
++            critique.get("verdict", "") if isinstance(critique, dict) else getattr(critique, "verdict", "")
++        ).lower()
+         if preflight and verdict == "research_more" and preflight.raw and not preflight.kept:
+             from app.models.research import ResearchIntent
+ 
+@@ -318,7 +324,8 @@ class SupervisorNode:
+                 decision.reason_counts(),
+             )
+ 
+-        plan.steps, dropped_repeat = drop_repeat_steps(plan.steps, results)
++        coverage_specs = coverage_requirements(critique)
++        plan.steps, dropped_repeat = drop_repeat_steps(plan.steps, results, coverage_specs)
+         if dropped_repeat:
+             logger.info("Supervisor: 回环轮丢弃已拿到数据的重复步骤: %s", dropped_repeat)
+ 
+@@ -331,7 +338,7 @@ class SupervisorNode:
+             question=question,
+             # 逐条 issue 的覆盖要求（含互相冲突的 arguments 变体）：每个尚未被满足的
+             # 变体各补一条独立步骤，让"同一工具、不同参数"的多次调用真实进入计划。
+-            requirements=coverage_requirements(critique),
++            requirements=coverage_specs,
+             results=results,
+         )
+         # Gap steps are appended after the initial plan pass.  Apply the same
+@@ -342,7 +349,11 @@ class SupervisorNode:
+         self._last_forced_gap = list(forced_gap)
+         prior_disposition = []
+         if critique is not None:
+-            raw_prior = critique.get("gap_key_decisions", []) if isinstance(critique, dict) else getattr(critique, "gap_key_decisions", [])
++            raw_prior = (
++                critique.get("gap_key_decisions", [])
++                if isinstance(critique, dict)
++                else getattr(critique, "gap_key_decisions", [])
++            )
+             prior_disposition = list(raw_prior or [])
+         planned_gap = [step.tool_key for step in plan.steps if step.tool_key in gap_keys]
+         current_disposition = decision.as_state()
+diff --git a/app/graph/run_log.py b/app/graph/run_log.py
+index 408a3b1..1b96450 100644
+--- a/app/graph/run_log.py
++++ b/app/graph/run_log.py
+@@ -68,7 +68,6 @@ _SENSITIVE_FIELDS = {
+     "error",
+     "errors",
+     "delivery_reason",
+-    "blocked_reason",
+     "note",
+     "claim",
+     "missing_points",
+@@ -82,6 +81,26 @@ _SENSITIVE_FIELDS = {
+     "keywords",
+ }
+ 
++_BLOCKED_REASONS = frozenset(
++    {
++        "research_budget_exhausted",
++        "rewrite_budget_exhausted",
++        "no_executable_gap_steps",
++        "time_budget_insufficient",
++        "tool_call_budget_insufficient",
++        "no_report_to_revise",
++        "critic_error",
++        "audit_error",
++        "unknown_verdict",
++        "budget_truncated",
++    }
++)
++
++
++def _safe_blocked_reason(value: Any) -> str:
++    text = str(value or "")
++    return text if text in _BLOCKED_REASONS else redact_text(text)
++
+ 
+ def _redact_sensitive(value: Any) -> Any:
+     if isinstance(value, str):
+@@ -145,11 +164,19 @@ def sanitize(value: Any, _depth: int = 0) -> Any:
+         # 回放误判工具没有返回数据。
+         if "tool_key" in value and "status" in value:
+             return {
+-                k: _redact_sensitive(v) if str(k) in _SENSITIVE_FIELDS else sanitize(v, _depth + 1)
++                k: _safe_blocked_reason(v)
++                if str(k) == "blocked_reason"
++                else _redact_sensitive(v)
++                if str(k) in _SENSITIVE_FIELDS
++                else sanitize(v, _depth + 1)
+                 for k, v in value.items()
+             }
+         return {
+-            k: _redact_sensitive(v) if str(k) in _SENSITIVE_FIELDS else sanitize(v, _depth + 1)
++            k: _safe_blocked_reason(v)
++            if str(k) == "blocked_reason"
++            else _redact_sensitive(v)
++            if str(k) in _SENSITIVE_FIELDS
++            else sanitize(v, _depth + 1)
+             for k, v in clip_args(value).items()
+         }
+     return value
+@@ -161,7 +188,16 @@ def emit(event: str, *, run_id: str | None = None, level: int = logging.INFO, **
+     所有字段先过 ``sanitize``：调用点忘了截断也不会泄漏大文本 / 完整会话史。
+     """
+     payload = {"ts": round(time.time(), 3), "event": event, "run_id": run_id}
+-    payload.update({k: _redact_sensitive(v) if k in _SENSITIVE_FIELDS else sanitize(v) for k, v in fields.items()})
++    payload.update(
++        {
++            k: _safe_blocked_reason(v)
++            if k == "blocked_reason"
++            else _redact_sensitive(v)
++            if k in _SENSITIVE_FIELDS
++            else sanitize(v)
++            for k, v in fields.items()
++        }
++    )
+     logger.log(level, json.dumps(payload, ensure_ascii=False, default=str))
+     return payload
+ 
+@@ -220,8 +256,8 @@ def log_plan(
+     - ``unexecutable_keys``：计划里被剔除的、需要 symbol 却拿不到 symbol 的
+       step（旧行为是执行层静默跳过 → 假覆盖）。
+     """
+-    from app.gateway.tool_registry import resolve_tool
+     from app.gateway.arguments import canonicalize_tool_arguments
++    from app.gateway.tool_registry import resolve_tool
+ 
+     steps: list[dict] = []
+     for step in _field(plan, "steps", []) or []:
+@@ -332,6 +368,7 @@ def log_critic(
+                 "severity": _field(i, "severity"),
+                 "action": _field(i, "action"),
+                 "claim": clip(_field(i, "claim")),
++                "rationale": clip(_field(i, "rationale")),
+                 "required_tool_keys": clip_list(_field(i, "required_tool_keys")),
+                 "required_coverage": _field(i, "required_coverage", {}) or {},
+             }
+diff --git a/app/graph/tool_runtime.py b/app/graph/tool_runtime.py
+index 95f8258..bc93226 100644
+--- a/app/graph/tool_runtime.py
++++ b/app/graph/tool_runtime.py
+@@ -320,6 +320,7 @@ class ToolRuntime:
+         arguments: dict,
+         called_signatures: set[str],
+         deadline: float | None = None,
++        refresh: bool = False,
+     ) -> ToolResult:
+         """执行单个工具调用。
+ 
+@@ -354,7 +355,11 @@ class ToolRuntime:
+         # T27：同一次运行里同签名已真实执行过 → 明确跳过（partial + note）。
+         # 旧实现这里 return None 被调用方当成"无缓存"，同签名第 3 次调用
+         # 会**绕过缓存**再打一次真实网关——与"去重"意图相反。
+-        if signature in called_signatures:
++        # A research_more step marked refresh is an explicit request for a
++        # fresh upstream read.  It must bypass both the same-run duplicate
++        # guard and the shared cache; otherwise a partial/empty result can be
++        # reported as "already executed" forever.
++        if signature in called_signatures and not refresh:
+             logger.info("Skipping duplicate call %s (already executed this run)", tool_name)
+             return ToolResult(
+                 tool=tool_name,
+@@ -368,7 +373,7 @@ class ToolRuntime:
+             )
+ 
+         # 检查缓存命中
+-        cached = self._check_cache(tool_name, arguments, called_signatures, signature)
++        cached = None if refresh else self._check_cache(tool_name, arguments, called_signatures, signature)
+         if cached is not None:
+             logger.info("Cache hit for %s", tool_name)
+             cached.operation_id = cached.operation_id or tool_name
+@@ -376,7 +381,20 @@ class ToolRuntime:
+             return cached
+ 
+         # 执行真实调用
+-        result = await self._do_execute(tool_name, arguments, deadline=deadline)
++        # External gateway adapters already receive a fresh request whenever
++        # the outer cache/duplicate guards are bypassed.  Pass the explicit
++        # flag only to the internal adapter, whose per-tool caches live below
++        # ``_do_execute``.  Keeping the external call shape compatible also
++        # preserves lightweight gateway doubles used by integrations.
++        is_internal = False
++        try:
++            is_internal = getattr(resolve_tool_by_name(tool_name), "http_method", None) == "INTERNAL"
++        except Exception:
++            pass
++        if refresh and is_internal:
++            result = await self._do_execute(tool_name, arguments, deadline=deadline, refresh=True)
++        else:
++            result = await self._do_execute(tool_name, arguments, deadline=deadline)
+         # Keep trace fields present even when a Gateway/mock implementation
+         # constructs an older ToolResult shape.
+         result.operation_id = result.operation_id or tool_name
+@@ -400,6 +418,8 @@ class ToolRuntime:
+             return
+         # T5：原始条数必须在切片 / 追加 note **之前**取，note 自身不算进计数。
+         original_count = len(result.normalized)
++        result.source_datum_count = original_count
++        result.source_partial = result.partial or result.status == STATUS_PARTIAL
+         # 保留**末尾** 200：K 线按时间升序，末尾才是最新数据；
+         # 旧实现 [:200] 保留最旧，note 却写"保留最近 200"。
+         kept = result.normalized[-200:]
+@@ -447,12 +467,21 @@ class ToolRuntime:
+     # 内部实现                                                             #
+     # ------------------------------------------------------------------ #
+ 
+-    async def _do_execute(self, tool_name: str, arguments: dict, deadline: float | None = None) -> ToolResult:
++    async def _do_execute(
++        self,
++        tool_name: str,
++        arguments: dict,
++        deadline: float | None = None,
++        *,
++        refresh: bool = False,
++    ) -> ToolResult:
+         """单次工具调用的核心逻辑。"""
+         # 内部工具直连（不走 Gateway）—— 必须在会话分支之前 return，
+         # 只用内部工具的 analyst 不得触发建连（T18b）
+         meta = resolve_tool_by_name(tool_name)
+         if getattr(meta, "http_method", None) == "INTERNAL":
++            if refresh:
++                return await self._execute_internal(tool_name, arguments, refresh=True)
+             return await self._execute_internal(tool_name, arguments)
+ 
+         # T18：gateway_session 打开期间复用同一个客户端；T18b：按需建连；
+@@ -525,7 +554,7 @@ class ToolRuntime:
+ 
+         return ALL_TOOLS
+ 
+-    async def _execute_internal(self, tool_name: str, arguments: dict) -> ToolResult:
++    async def _execute_internal(self, tool_name: str, arguments: dict, *, refresh: bool = False) -> ToolResult:
+         """执行内部工具（不走 Gateway，直连外部 API）。"""
+         if tool_name == "internal_hk_northbound":
+             try:
+@@ -575,7 +604,7 @@ class ToolRuntime:
+ 
+         if tool_name == "news_search":
+             cache_key = _make_cache_key(tool_name, arguments)
+-            cached = market_cache.get(cache_key)
++            cached = None if refresh else market_cache.get(cache_key)
+             if cached is not None:
+                 logger.info("Cache hit for news_search")
+                 return cached
+@@ -622,13 +651,13 @@ class ToolRuntime:
+                 )
+ 
+         if tool_name == "internal_symbol_news":
+-            return await self._run_internal_symbol_news(arguments)
++            return await self._run_internal_symbol_news(arguments, refresh=refresh)
+ 
+         if tool_name == "internal_market_telegraph":
+-            return await self._run_internal_market_telegraph(arguments)
++            return await self._run_internal_market_telegraph(arguments, refresh=refresh)
+ 
+         if tool_name == "internal_news_digest":
+-            return await self._run_internal_news_digest(arguments)
++            return await self._run_internal_news_digest(arguments, refresh=refresh)
+ 
+         if tool_name == "internal_us_fundamentals":
+             # SEC 公平访问政策门闩：未声明访问身份不得发起任何网络请求
+@@ -641,7 +670,7 @@ class ToolRuntime:
+                     error=_SEC_EDGAR_CONTACT_MISSING,
+                 )
+             cache_key = _make_cache_key(tool_name, arguments)
+-            cached = market_cache.get(cache_key)
++            cached = None if refresh else market_cache.get(cache_key)
+             if cached is not None:
+                 logger.info("Cache hit for us_fundamentals")
+                 return cached
+@@ -690,7 +719,7 @@ class ToolRuntime:
+                     error=_SEC_EDGAR_CONTACT_MISSING,
+                 )
+             cache_key = _make_cache_key(tool_name, arguments)
+-            cached = market_cache.get(cache_key)
++            cached = None if refresh else market_cache.get(cache_key)
+             if cached is not None:
+                 logger.info("Cache hit for us_filings_recent")
+                 return cached
+@@ -760,11 +789,11 @@ class ToolRuntime:
+             logger.warning("Internal tool news: code_name map fetch failed (non-fatal): %s", exc)
+             return ""
+ 
+-    async def _run_internal_symbol_news(self, arguments: dict) -> ToolResult:
++    async def _run_internal_symbol_news(self, arguments: dict, *, refresh: bool = False) -> ToolResult:
+         """internal_symbol_news — A 股个股新闻聚合（东财个股新闻 + Google 资讯）。"""
+         tool = "symbol_news"
+         cache_key = _make_cache_key("internal_symbol_news", arguments)
+-        cached = market_cache.get(cache_key)
++        cached = None if refresh else market_cache.get(cache_key)
+         if cached is not None:
+             logger.info("Cache hit for internal_symbol_news")
+             return cached
+@@ -866,11 +895,11 @@ class ToolRuntime:
+             market_cache.set(cache_key, result, ttl=self.settings.news_symbol_ttl_seconds)
+         return result
+ 
+-    async def _run_internal_market_telegraph(self, arguments: dict) -> ToolResult:
++    async def _run_internal_market_telegraph(self, arguments: dict, *, refresh: bool = False) -> ToolResult:
+         """internal_market_telegraph — 财联社电报快讯（全市场最新电报流）。"""
+         tool = "telegraph"
+         cache_key = _make_cache_key("internal_market_telegraph", arguments)
+-        cached = market_cache.get(cache_key)
++        cached = None if refresh else market_cache.get(cache_key)
+         if cached is not None:
+             logger.info("Cache hit for %s", "internal_market_telegraph")
+             return cached
+@@ -927,11 +956,11 @@ class ToolRuntime:
+             market_cache.set(cache_key, result, ttl=self.settings.news_telegraph_ttl_seconds)
+         return result
+ 
+-    async def _run_internal_news_digest(self, arguments: dict) -> ToolResult:
++    async def _run_internal_news_digest(self, arguments: dict, *, refresh: bool = False) -> ToolResult:
+         """internal_news_digest — 跨市场主题/事件聚合（Google 资讯 + DDGS）。"""
+         tool = "news_digest"
+         cache_key = _make_cache_key("internal_news_digest", arguments)
+-        cached = market_cache.get(cache_key)
++        cached = None if refresh else market_cache.get(cache_key)
+         if cached is not None:
+             logger.info("Cache hit for %s", "internal_news_digest")
+             return cached
+@@ -1016,7 +1045,11 @@ class ToolRuntime:
+             note=note,
+         )
+         logger.info(
+-            "Internal tool news_digest: %r → kept %d/%d (status=%s)", query, len(kept), total_before_dedup, status
++            "Internal tool news_digest: query_len=%d → kept %d/%d (status=%s)",
++            len(query),
++            len(kept),
++            total_before_dedup,
++            status,
+         )
+         if status != STATUS_ERROR:
+             market_cache.set(cache_key, result, ttl=self.settings.news_digest_ttl_seconds)
+diff --git a/app/models/research.py b/app/models/research.py
+index 486b679..01b5ab1 100644
+--- a/app/models/research.py
++++ b/app/models/research.py
+@@ -63,6 +63,9 @@ class ToolCallPlan(BaseModel):
+     arguments: dict[str, Any] = Field(default_factory=dict)
+     purpose: str
+     priority: Literal["high", "medium", "low"] = "medium"
++    #: Force a fresh Gateway fetch when a prior partial/low-coverage result
++    #: must be re-collected instead of served from cache.
++    refresh: bool = False
+ 
+ 
+ class ResearchPlan(BaseModel):
+diff --git a/app/models/response.py b/app/models/response.py
+index ee6a559..df9f28c 100644
+--- a/app/models/response.py
++++ b/app/models/response.py
+@@ -84,6 +84,7 @@ class MarketIntelligence(BaseModel):
+     entity_registry_source: str | None = None
+     entity_registry_as_of: str | None = None
+     entity_conflicts: list[dict[str, str]] = Field(default_factory=list)
++    entity_code_matches: dict[str, str] = Field(default_factory=dict)
+     entities_without_market_evidence: list[str] = Field(default_factory=list)
+     strong_areas: list[str] = Field(default_factory=list)  # What's Moving — PRD §26
+     what_changed: list[str] = Field(default_factory=list)  # 与之前相比的变化 — PRD §10
+@@ -134,14 +135,17 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
+     优先用 ``finalize_audit`` 节点写入的字段；``verdict=pass`` 的快乐路径不经过该
+     节点，这里按 critique 兜底派生，保证两条路径的对外契约一致。
+     """
+-    from app.graph.nodes.finalize import resolve_delivery
++    from app.graph.nodes.finalize import infer_blocked_reason, resolve_delivery
+ 
+     critique = state.get("critique")
++    blocked_reason = infer_blocked_reason(state, critique)
+     delivery_status = state.get("delivery_status")
+ 
+-    if (
+-        delivery_status in ("verified", "degraded", "blocked", "failed")
+-        and state.get("final_audit_status") in ("pass", "revise_exhausted", "research_exhausted", "error")
++    if delivery_status in ("verified", "degraded", "blocked", "failed") and state.get("final_audit_status") in (
++        "pass",
++        "revise_exhausted",
++        "research_exhausted",
++        "error",
+     ):
+         audit_status = state.get("final_audit_status")
+         if state.get("delivery_reason"):
+@@ -150,7 +154,7 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
+             _, _, reason = resolve_delivery(
+                 critique,
+                 errors,
+-                blocked_reason=state.get("blocked_reason"),
++                blocked_reason=blocked_reason,
+                 gap_key_decisions=state.get("gap_key_decisions"),
+             )
+         if delivery_status == "verified":
+@@ -159,14 +163,14 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
+                 audit_status, delivery_status, reason = resolve_delivery(
+                     critique,
+                     errors,
+-                    blocked_reason=state.get("blocked_reason"),
++                    blocked_reason=blocked_reason,
+                     gap_key_decisions=state.get("gap_key_decisions"),
+                 )
+     else:
+         audit_status, derived_delivery, reason = resolve_delivery(
+             critique,
+             errors,
+-            blocked_reason=state.get("blocked_reason"),
++            blocked_reason=blocked_reason,
+             gap_key_decisions=state.get("gap_key_decisions"),
+         )
+         delivery_status = derived_delivery
+diff --git a/app/research/news_search.py b/app/research/news_search.py
+index e762dfb..a3192b0 100644
+--- a/app/research/news_search.py
++++ b/app/research/news_search.py
+@@ -66,7 +66,7 @@ def _do_news_search(
+         }
+ 
+     try:
+-        logger.info("News search: %s (limit=%s)", query, time_limit)
++        logger.info("News search started query_len=%d (limit=%s)", len(query), time_limit)
+         kwargs: dict[str, Any] = dict(
+             region="wt-wt",
+             safesearch="moderate",
+@@ -91,7 +91,7 @@ def _do_news_search(
+         return result
+ 
+     except Exception as exc:
+-        logger.warning("News search failed for %s: %s", query, exc)
++        logger.warning("News search failed query_len=%d error_type=%s", len(query), type(exc).__name__)
+         return {
+             "meta": {
+                 "query": query,
+diff --git a/app/research/reasoning.py b/app/research/reasoning.py
+index 9587a5f..a170209 100644
+--- a/app/research/reasoning.py
++++ b/app/research/reasoning.py
+@@ -47,7 +47,72 @@ def _ensure_list(val, default=None):
+     return [val]
+ 
+ 
+-def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> list[EvidenceItem]:
++def build_evidence_aliases(evidence: list[Evidence]) -> dict[str, str]:
++    """Build deterministic short references for one evidence ledger.
++
++    The persisted id is never changed.  Aliases are presentation/input syntax
++    only and are resolved back to the real id before validation.
++    """
++    return {
++        f"E{index:03d}": str(item.get("id") if isinstance(item, dict) else item.id)
++        for index, item in enumerate(evidence, start=1)
++    }
++
++
++def _resolve_alias(value: Any, aliases: dict[str, str] | None) -> Any:
++    if not isinstance(value, str) or not aliases:
++        return value
++    return aliases.get(value, value)
++
++
++def _resolve_payload_aliases(payload: dict[str, Any], aliases: dict[str, str] | None) -> None:
++    """Resolve aliases in report text, evidence entries and claim mappings."""
++    if not aliases:
++        return
++    for item in _ensure_list(payload.get("evidence")):
++        if isinstance(item, dict) and item.get("id"):
++            item["id"] = _resolve_alias(item["id"], aliases)
++    for claim in _ensure_list(payload.get("claims")):
++        if isinstance(claim, dict):
++            if isinstance(claim.get("claim"), str):
++                claim["claim"] = re.sub(
++                    r"\bE\d{3,}\b",
++                    lambda m: aliases.get(m.group(), m.group()),
++                    claim["claim"],
++                )
++            claim["evidence_ids"] = [_resolve_alias(eid, aliases) for eid in _ensure_list(claim.get("evidence_ids"))]
++    # A model may put E001 directly in prose. Resolve known aliases while
++    # leaving unknown ids untouched so the existing invalid-id safety gate fires.
++    alias_re = re.compile(r"\bE\d{3,}\b")
++    for key in (*_REPORT_TEXT_FIELDS, *_REPORT_LIST_FIELDS):
++        value = payload.get(key)
++        if isinstance(value, str):
++            payload[key] = alias_re.sub(lambda m: aliases.get(m.group(), m.group()), value)
++        elif isinstance(value, list):
++            payload[key] = [
++                alias_re.sub(lambda m: aliases.get(m.group(), m.group()), item) if isinstance(item, str) else item
++                for item in value
++            ]
++
++
++def _alias_prompt_context(evidence: list[Evidence], aliases: dict[str, str]) -> str:
++    if not evidence:
++        return "允许引用的证据 id 集合：〔空〕"
++    visible_ids = {str(item.get("id") if isinstance(item, dict) else item.id) for item in evidence}
++    # The model only needs the short presentation references.  Persisted IDs
++    # stay in the code-side ledger and are resolved after the model responds;
++    # showing the mapping here defeats the purpose of bounded aliases and
++    # encourages the model to copy opaque internal IDs into prose.
++    return "允许引用的证据 id 集合（只能使用短别名；代码会在校验前映射回真实 id）：\n" + ", ".join(
++        alias for alias, real_id in aliases.items() if real_id in visible_ids
++    )
++
++
++def _parse_evidence(
++    raw_evidence: list,
++    original_evidence: list[Evidence],
++    aliases: dict[str, str] | None = None,
++) -> list[EvidenceItem]:
+     """将 LLM 返回的 evidence 转换为 EvidenceItem 列表。
+ 
+     支持两种格式：
+@@ -90,7 +155,7 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
+         if not isinstance(raw_item, dict):
+             continue
+ 
+-        item_id = raw_item.get("id")
++        item_id = _resolve_alias(raw_item.get("id"), aliases)
+         claim = raw_item.get("claim")
+         ev_ids = raw_item.get("evidence_ids", [])
+ 
+@@ -100,7 +165,8 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
+         if is_old_format:
+             # 旧格式：{claim, evidence_ids}
+             matched_count = 0
+-            for eid in ev_ids or []:
++            for raw_eid in ev_ids or []:
++                eid = _resolve_alias(raw_eid, aliases)
+                 ev = _resolve_evidence(eid, None)
+                 if ev:
+                     matched_count += 1
+@@ -243,9 +309,7 @@ def _validate_claims(
+         valid = [eid for eid in claim.evidence_ids if eid in valid_ids]
+         missing = [eid for eid in claim.evidence_ids if eid not in valid_ids]
+         if missing:
+-            violations.append(
+-                f"论断「{claim.claim[:80]}」引用了不存在的 evidence id: {', '.join(missing)}"
+-            )
++            violations.append(f"论断「{claim.claim[:80]}」引用了不存在的 evidence id: {', '.join(missing)}")
+         if not valid:
+             continue
+         claim.evidence_ids = valid
+@@ -253,7 +317,10 @@ def _validate_claims(
+     return kept, violations
+ 
+ 
+-_EVIDENCE_ID_RE = re.compile(r"\b(?:technical|fundamental|moneyflow|news|sentiment|evidence)-[A-Za-z0-9]+\b|\b[A-Za-z][A-Za-z0-9_-]*-\d{3,}\b")
++_EVIDENCE_ID_RE = re.compile(
++    r"\bE\d{3,}\b|\b(?:technical|fundamental|moneyflow|news|sentiment|evidence)-[A-Za-z0-9]+\b|"
++    r"\b[A-Za-z][A-Za-z0-9_-]*-\d{3,}\b"
++)
+ _REPORT_TEXT_FIELDS = ("title", "market_state", "what_happened")
+ _REPORT_LIST_FIELDS = ("why", "strong_areas", "what_changed", "what_matters", "risks")
+ 
+@@ -278,7 +345,7 @@ def _validate_report_references(payload: dict, valid_ids: set[str]) -> list[str]
+         if isinstance(payload.get(field), str):
+             payload[field] = clean(payload[field])
+     for field in _REPORT_LIST_FIELDS:
+-        payload[field] = [clean(item) if isinstance(item, str) else item for item in payload[field]]
++        payload[field] = [clean(item) if isinstance(item, str) else item for item in (payload.get(field) or [])]
+     for claim in _ensure_list(payload.get("claims")):
+         if isinstance(claim, dict) and isinstance(claim.get("claim"), str):
+             claim["claim"] = clean(claim["claim"])
+@@ -305,6 +372,7 @@ class ReasoningEngine:
+         evidence: list[Evidence],
+         history_context: str = "",
+         findings: list | None = None,
++        evidence_aliases: dict[str, str] | None = None,
+         domain: str = "a_share",
+         requested_date: str | None = None,
+         as_of_date: str | None = None,
+@@ -339,14 +407,27 @@ class ReasoningEngine:
+         parts.append("\n".join(date_lines))
+         combined_context = "\n\n".join(parts)
+ 
++        aliases = evidence_aliases or build_evidence_aliases(evidence)
++        evidence_payload = []
++        for item in evidence:
++            row = item.model_dump()
++            real_id = str(row.get("id"))
++            alias = next((alias for alias, rid in aliases.items() if rid == real_id), None)
++            # Model-facing context contains only the short alias.  The real
++            # evidence ID is restored by ``_resolve_payload_aliases`` before
++            # any persisted report or claim validation occurs.
++            if alias:
++                row["id"] = alias
++            evidence_payload.append(row)
+         prompt = REASONING_PROMPT.format(
+             question=question,
+             data=json.dumps(normalized_data, ensure_ascii=False, default=str),
+             evidence=json.dumps(
+-                [x.model_dump() for x in evidence],
++                evidence_payload,
+                 ensure_ascii=False,
+                 default=str,
+             ),
++            evidence_alias_context=_alias_prompt_context(evidence, aliases),
+             history_context=combined_context,
+         )
+ 
+@@ -459,24 +540,37 @@ class ReasoningEngine:
+             payload["anomalies"] = [a for a in _ensure_list(payload.get("anomalies")) if isinstance(a, dict)]
+ 
+             # Process evidence with backward compatibility
++            _resolve_payload_aliases(payload, aliases)
+             raw_evidence = payload.get("evidence", [])
+-            parsed_evidence = _parse_evidence(raw_evidence, evidence)
++            parsed_evidence = _parse_evidence(raw_evidence, evidence, aliases)
+             payload["evidence"] = [ei.model_dump() for ei in parsed_evidence]
+ 
+             # 阶段 4③/④：claim—evidence 映射 + **代码级**引用校验。
+             # 合法 id 集合只来自真实证据账本。
+             valid_ids = {item.id for item in evidence}
++            raw_reference_violations: list[str] = []
++            for raw_item in _ensure_list(raw_evidence):
++                if not isinstance(raw_item, dict):
++                    continue
++                for raw_id in [raw_item.get("id"), *_ensure_list(raw_item.get("evidence_ids"))]:
++                    resolved_id = _resolve_alias(raw_id, aliases)
++                    # Legacy unknown ids in an evidence object are kept
++                    # backward-compatible (the item is dropped); short alias
++                    # references are explicit citations and must be audited.
++                    if isinstance(raw_id, str) and re.fullmatch(r"E\d{3,}", raw_id) and resolved_id not in valid_ids:
++                        raw_reference_violations.append(f"报告引用了不存在的 evidence id: {resolved_id}")
+             body_violations = _validate_report_references(payload, valid_ids)
+             claims, violations = _validate_claims(_parse_claims(payload.get("claims")), valid_ids)
++            violations.extend(raw_reference_violations)
+             violations.extend(body_violations)
++            violations = list(dict.fromkeys(violations))
+             payload["claims"] = [claim.model_dump() for claim in claims]
+             payload["evidence_violations"] = violations
+             if violations:
+                 # 引用了不存在的证据 id：报告必须降级，且证据可见（不能静默）。
+                 payload["confidence"] = "low"
+                 data_caveats.append(
+-                    f"有 {len(violations)} 条论断引用了不存在的证据 id，已按「无据」处理："
+-                    + "；".join(violations[:3])
++                    f"有 {len(violations)} 条论断引用了不存在的证据 id，已按「无据」处理：" + "；".join(violations[:3])
+                 )
+                 payload["data_caveats"] = data_caveats
+                 logger.warning("Reasoning 报告存在 %d 条无效 evidence 引用: %s", len(violations), violations[:3])
+@@ -487,6 +581,7 @@ class ReasoningEngine:
+             payload["entity_registry_source"] = None
+             payload["entity_registry_as_of"] = None
+             payload["entity_conflicts"] = []
++            payload["entity_code_matches"] = {}
+             payload["entities_without_market_evidence"] = []
+             if domain == "a_share":
+                 registry = await get_full_a_share_registry()
+@@ -507,6 +602,9 @@ class ReasoningEngine:
+                     }
+                     for a in assessments if a.conflict
+                 ]
++                payload["entity_code_matches"] = {
++                    a.name: a.code for a in assessments if a.code_match == "verified" and a.code
++                }
+                 payload["entities_without_market_evidence"] = [
+                     a.name for a in assessments if not a.market_evidence
+                 ]

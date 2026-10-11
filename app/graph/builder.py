@@ -86,6 +86,52 @@ def research_round_budget(state: dict, settings: Settings) -> dict[str, object]:
     }
 
 
+def critic_route_outcome(state, settings: Settings) -> tuple[str, str]:
+    """Return the Critic route and its reason without mutating graph state."""
+    if hasattr(state, "model_dump"):
+        state = state.model_dump(exclude_none=False)
+
+    rewrite_count = int(state.get("rewrite_count", 0) or 0)
+    research_round_count = int(state.get("research_round_count", 0) or 0)
+    critique = state.get("critique")
+    if not critique:
+        return "finalize_audit", "critic_error"
+
+    verdict = (
+        str(critique.get("verdict", "") if isinstance(critique, dict) else getattr(critique, "verdict", ""))
+        .strip()
+        .lower()
+    )
+    if not verdict or verdict == "error":
+        return "finalize_audit", "critic_error"
+    if verdict == "revise":
+        if rewrite_count < settings.effective_max_rewrites:
+            return "reasoning", "revise_allowed"
+        return "finalize_audit", "rewrite_budget_exhausted"
+    if verdict == "research_more":
+        if not state.get("report"):
+            return "finalize_audit", "no_report_to_revise"
+        if research_round_count >= settings.effective_max_research_rounds:
+            return "finalize_audit", "research_budget_exhausted"
+        gap_decisions = state.get("gap_key_decisions") or (
+            critique.get("gap_key_decisions", [])
+            if isinstance(critique, dict)
+            else getattr(critique, "gap_key_decisions", [])
+        )
+        if gap_decisions and not any(isinstance(row, dict) and row.get("decision") == "kept" for row in gap_decisions):
+            return "finalize_audit", "no_executable_gap_steps"
+        budget_info = research_round_budget(state, settings)
+        if budget_info["decision"] == "deny":
+            return "finalize_audit", str(budget_info["reason"])
+        if state.get("finalize_after_gap"):
+            return "finalize_audit", "no_executable_gap_steps"
+        return "supervisor", "research_allowed"
+    if verdict == "pass":
+        return "end", "audit_passed"
+    logger.error("critic_route_decision 遇到未预期 verdict，安全终止 verdict_len=%d", len(verdict))
+    return "finalize_audit", "unknown_verdict"
+
+
 def critic_route_decision(state, settings: Settings) -> str:
     """Critic 条件边的路由决策（模块级，便于单元测试）。
 
@@ -119,7 +165,7 @@ def critic_route_decision(state, settings: Settings) -> str:
             else:
                 gap_decisions = getattr(critique_obj, "gap_key_decisions", []) or []
         executable = state.get("executable_gap_steps") or []
-        blocked_reason = state.get("blocked_reason")
+        blocked_reason = state.get("blocked_reason") or (reason if decision == "finalize_audit" else None)
         run_log.log_route(
             state,
             decision,
@@ -135,59 +181,12 @@ def critic_route_decision(state, settings: Settings) -> str:
             required_tool_calls=budget_info.get("required_tool_calls"),
             gap_key_decisions=gap_decisions,
             executable_gap_steps=executable,
-            blocked_reason=blocked_reason or (reason if decision == "finalize_audit" else None),
+            blocked_reason=blocked_reason,
         )
         return decision
 
-    critique = state.get("critique")
-    if not critique:
-        return _decide("end", "no_critique")
-
-    if isinstance(critique, dict):
-        verdict = str(critique.get("verdict", "")).strip().lower()
-    else:
-        verdict = str(getattr(critique, "verdict", "")).strip().lower()
-
-    # T11：内部 error（审计自身失败 / verdict 无法识别）或空 verdict：
-    # 交给 finalize_audit 判 failed —— 绝不静默 END 冒充正常完成。
-    if not verdict or verdict == "error":
-        return _decide("finalize_audit", "critic_error")
-
-    if verdict == "revise":
-        if rewrite_count < max_rewrites:
-            return _decide("reasoning", "revise_allowed")
-        # 阶段 5：轮次耗尽不再静默 END —— 先过 finalize_audit 落终态。
-        return _decide("finalize_audit", "rewrite_budget_exhausted")
-
-    if verdict == "research_more":
-        # report 为 None 说明是 reasoning 引擎失败（非缺数据），
-        # 重新走 supervisor 无法解决，直接进终态避免无限循环。
-        if not state.get("report"):
-            return _decide("finalize_audit", "no_report_to_revise")
-        if research_round_count >= max_research_rounds:
-            return _decide("finalize_audit", "research_budget_exhausted")
-        gap_decisions = state.get("gap_key_decisions") or (
-            critique.get("gap_key_decisions", []) if isinstance(critique, dict)
-            else getattr(critique, "gap_key_decisions", [])
-        )
-        if gap_decisions and not any(
-            isinstance(row, dict) and row.get("decision") == "kept" for row in gap_decisions
-        ):
-            return _decide("finalize_audit", "no_executable_gap_steps")
-        # 回环前同时检查墙钟、工具调用余额和 reasoning/critic 最低预算。
-        budget_info = research_round_budget(state, settings)
-        if budget_info["decision"] == "deny":
-            return _decide("finalize_audit", str(budget_info["reason"]))
-        if state.get("finalize_after_gap"):
-            return _decide("finalize_audit", "no_executable_gap_steps")
-        return _decide("supervisor", "research_allowed")
-
-    if verdict == "pass":
-        return _decide("end", "audit_passed")
-
-    # T11：理论上 Critic 已拦截非法 verdict；兜底仍按安全终止处理（不当 pass）。
-    logger.error("critic_route_decision 遇到未预期 verdict %r，安全终止", verdict)
-    return _decide("finalize_audit", "unknown_verdict")
+    decision, reason = critic_route_outcome(state, settings)
+    return _decide(decision, reason)
 
 
 def build_graph(settings: Settings):

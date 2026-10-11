@@ -14,11 +14,24 @@ from typing import Any
 import httpx
 
 from app.config import Settings
-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments
+from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, summarize_arguments
 from app.gateway.normalizer import normalize_tool_result
-from app.gateway.tool_registry import resolve_tool_by_name
 
 logger = logging.getLogger(__name__)
+
+
+class _RedactRequestURL(logging.Filter):
+    """HTTPX INFO logs include query strings even when our logs are redacted."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.msg == 'HTTP Request: %s %s "%s %d %s"' and isinstance(record.args, tuple):
+            args = list(record.args)
+            args[1] = "<redacted-url>"
+            record.args = tuple(args)
+        return True
+
+
+logging.getLogger("httpx").addFilter(_RedactRequestURL())
 
 
 class HTTPGatewayError(RuntimeError):
@@ -136,17 +149,38 @@ class MarketGatewayHttpClient:
                 return _budget_exhausted()
 
             try:
+                attempt_timeout = self.settings.research_timeout_seconds
+                if remaining is not None:
+                    attempt_timeout = min(attempt_timeout, max(remaining, 0.0))
                 request_arguments = dict(arguments)
                 if tool_name == "get_market_quotes":
                     # allowed_openapi.json models the HTTP query field as a
                     # comma separated string; keep list[str] canonical inside
                     # Mosaic and encode only at this transport boundary.
                     request_arguments["symbols"] = ",".join(arguments["symbols"])
-                response = await self.client.request(
-                    meta.http_method,
-                    meta.http_path,
-                    params=request_arguments if meta.http_method == "GET" else None,
-                    json=request_arguments if meta.http_method != "GET" else None,
+                logger.info(
+                    "HTTP call %s attempt=%d attempt_timeout_ms=%.0f remaining_budget_ms=%s "
+                    "canonical_argument_summary=%s transport_argument_summary=%s",
+                    tool_name,
+                    attempt + 1,
+                    attempt_timeout * 1000,
+                    "none" if remaining is None else f"{remaining * 1000:.0f}",
+                    summarize_arguments(arguments),
+                    summarize_arguments(request_arguments),
+                )
+                # HTTPX's timeout is phase based; a server that continually
+                # sends small chunks can otherwise keep resetting the read
+                # timer forever.  The outer wait_for enforces the wall-clock
+                # deadline for the complete response.
+                response = await asyncio.wait_for(
+                    self.client.request(
+                        meta.http_method,
+                        meta.http_path,
+                        params=request_arguments if meta.http_method == "GET" else None,
+                        json=request_arguments if meta.http_method != "GET" else None,
+                        timeout=attempt_timeout,
+                    ),
+                    timeout=attempt_timeout,
                 )
 
                 # --------------------------------------------------
@@ -169,7 +203,9 @@ class MarketGatewayHttpClient:
 
                 if response.status_code == 422:
                     # 记录错误详情供后续报告使用
-                    error_msg = f"Invalid parameters (422): {response.text[:200]}"
+                    # Keep upstream bodies out of logs and downstream traces;
+                    # some gateways echo the original query in their detail.
+                    error_msg = "Invalid parameters (422)"
                     return normalize_tool_result(
                         tool_name,
                         arguments,
@@ -185,6 +221,14 @@ class MarketGatewayHttpClient:
                         if remaining <= 0:
                             last_error = "Rate limited (429)"
                             return _budget_exhausted()
+                        if backoff > remaining:
+                            logger.info(
+                                "HTTP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
+                                "remaining_budget_ms=%.0f",
+                                tool_name,
+                                remaining * 1000,
+                            )
+                            return _budget_exhausted()
                         backoff = min(backoff, remaining)
                     logger.warning(
                         "Rate limited (%d), backing off %ds",
@@ -199,19 +243,40 @@ class MarketGatewayHttpClient:
                 raw = response.json()
                 return normalize_tool_result(tool_name, arguments, raw)
 
-            except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
-                last_error = str(exc)
+            except TimeoutError:
+                last_error = (
+                    f"Timeout on {tool_name} attempt {attempt + 1} after {attempt_timeout:.3f}s "
+                    f"(remaining budget was {'unknown' if remaining is None else f'{remaining:.3f}'}s)"
+                )
                 logger.warning(
-                    "HTTP call %s attempt %d/%d failed: %s",
+                    "HTTP call %s attempt %d/%d timed out attempt_timeout_ms=%.0f remaining_budget_ms=%s",
                     tool_name,
                     attempt + 1,
                     max_attempts,
-                    exc,
+                    attempt_timeout * 1000,
+                    "none" if remaining is None else f"{max(remaining, 0) * 1000:.0f}",
+                )
+            except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
+                if isinstance(exc, httpx.TimeoutException):
+                    last_error = (
+                        f"Timeout on {tool_name} attempt {attempt + 1} after {attempt_timeout:.3f}s "
+                        f"(remaining budget was {'unknown' if remaining is None else f'{remaining:.3f}'}s)"
+                    )
+                else:
+                    last_error = f"{type(exc).__name__}"
+                logger.warning(
+                    "HTTP call %s attempt %d/%d failed error_type=%s",
+                    tool_name,
+                    attempt + 1,
+                    max_attempts,
+                    type(exc).__name__,
                 )
             except HTTPGatewayError as exc:
                 # 致命错误（认证/权限/请求非法），不再重试。
                 # 必须用 str(exc) —— last_error 在首次尝试时还是 None。
-                logger.warning("HTTP call %s failed permanently: %s", tool_name, exc)
+                logger.warning(
+                    "HTTP call %s failed permanently error_type=%s", tool_name, type(exc).__name__
+                )
                 return normalize_tool_result(
                     tool_name,
                     arguments,
@@ -219,13 +284,13 @@ class MarketGatewayHttpClient:
                     error=str(exc) or "HTTP gateway error",
                 )
             except Exception as exc:
-                last_error = str(exc)
+                last_error = f"{type(exc).__name__}"
                 logger.warning(
-                    "HTTP call %s attempt %d/%d failed: %s",
+                    "HTTP call %s attempt %d/%d failed error_type=%s",
                     tool_name,
                     attempt + 1,
                     max_attempts,
-                    exc,
+                    type(exc).__name__,
                 )
 
             if attempt < max_attempts - 1:
@@ -233,6 +298,14 @@ class MarketGatewayHttpClient:
                 remaining = _remaining()
                 if remaining is not None:
                     if remaining <= 0:
+                        return _budget_exhausted()
+                    if backoff > remaining:
+                        logger.info(
+                            "HTTP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
+                            "remaining_budget_ms=%.0f",
+                            tool_name,
+                            remaining * 1000,
+                        )
                         return _budget_exhausted()
                     backoff = min(backoff, remaining)
                 await asyncio.sleep(backoff)

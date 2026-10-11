@@ -47,7 +47,86 @@ def _ensure_list(val, default=None):
     return [val]
 
 
-def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> list[EvidenceItem]:
+def build_evidence_aliases(evidence: list[Evidence]) -> dict[str, str]:
+    """Build deterministic short references for one evidence ledger.
+
+    The persisted id is never changed.  Aliases are presentation/input syntax
+    only and are resolved back to the real id before validation.
+    """
+    return {
+        f"E{index:03d}": str(item.get("id") if isinstance(item, dict) else item.id)
+        for index, item in enumerate(evidence, start=1)
+    }
+
+
+def _resolve_alias(value: Any, aliases: dict[str, str] | None) -> Any:
+    if not isinstance(value, str) or not aliases:
+        return value
+    return aliases.get(value, value)
+
+
+def translate_evidence_references(value: Any, mapping: dict[str, str]) -> Any:
+    """Translate presentation references recursively, with token boundaries."""
+    if isinstance(value, str):
+        if not mapping:
+            return value
+        pattern = r"(?<![A-Za-z0-9_-])(?:" + "|".join(re.escape(k) for k in sorted(mapping, key=len, reverse=True)) + r")(?![A-Za-z0-9_-])"
+        return re.sub(pattern, lambda match: mapping[match.group()], value)
+    if isinstance(value, list):
+        return [translate_evidence_references(item, mapping) for item in value]
+    if isinstance(value, dict):
+        return {key: translate_evidence_references(item, mapping) for key, item in value.items()}
+    return value
+
+
+def _resolve_payload_aliases(payload: dict[str, Any], aliases: dict[str, str] | None) -> None:
+    """Resolve aliases in report text, evidence entries and claim mappings."""
+    if not aliases:
+        return
+    for item in _ensure_list(payload.get("evidence")):
+        if isinstance(item, dict) and item.get("id"):
+            item["id"] = _resolve_alias(item["id"], aliases)
+    for claim in _ensure_list(payload.get("claims")):
+        if isinstance(claim, dict):
+            if isinstance(claim.get("claim"), str):
+                claim["claim"] = re.sub(
+                    r"(?<![A-Za-z0-9_-])E\d{3,}(?![A-Za-z0-9_-])",
+                    lambda m: aliases.get(m.group(), m.group()),
+                    claim["claim"],
+                )
+            claim["evidence_ids"] = [_resolve_alias(eid, aliases) for eid in _ensure_list(claim.get("evidence_ids"))]
+    # A model may put E001 directly in prose. Resolve known aliases while
+    # leaving unknown ids untouched so the existing invalid-id safety gate fires.
+    alias_re = re.compile(r"(?<![A-Za-z0-9_-])E\d{3,}(?![A-Za-z0-9_-])")
+    for key in (*_REPORT_TEXT_FIELDS, *_REPORT_LIST_FIELDS):
+        value = payload.get(key)
+        if isinstance(value, str):
+            payload[key] = alias_re.sub(lambda m: aliases.get(m.group(), m.group()), value)
+        elif isinstance(value, list):
+            payload[key] = [
+                alias_re.sub(lambda m: aliases.get(m.group(), m.group()), item) if isinstance(item, str) else item
+                for item in value
+            ]
+
+
+def _alias_prompt_context(evidence: list[Evidence], aliases: dict[str, str]) -> str:
+    if not evidence:
+        return "允许引用的证据 id 集合：〔空〕"
+    visible_ids = {str(item.get("id") if isinstance(item, dict) else item.id) for item in evidence}
+    # The model only needs the short presentation references.  Persisted IDs
+    # stay in the code-side ledger and are resolved after the model responds;
+    # showing the mapping here defeats the purpose of bounded aliases and
+    # encourages the model to copy opaque internal IDs into prose.
+    return "允许引用的证据 id 集合（只能使用短别名；代码会在校验前映射回真实 id）：\n" + ", ".join(
+        alias for alias, real_id in aliases.items() if real_id in visible_ids
+    )
+
+
+def _parse_evidence(
+    raw_evidence: list,
+    original_evidence: list[Evidence],
+    aliases: dict[str, str] | None = None,
+) -> list[EvidenceItem]:
     """将 LLM 返回的 evidence 转换为 EvidenceItem 列表。
 
     支持两种格式：
@@ -90,7 +169,7 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
         if not isinstance(raw_item, dict):
             continue
 
-        item_id = raw_item.get("id")
+        item_id = _resolve_alias(raw_item.get("id"), aliases)
         claim = raw_item.get("claim")
         ev_ids = raw_item.get("evidence_ids", [])
 
@@ -100,7 +179,8 @@ def _parse_evidence(raw_evidence: list, original_evidence: list[Evidence]) -> li
         if is_old_format:
             # 旧格式：{claim, evidence_ids}
             matched_count = 0
-            for eid in ev_ids or []:
+            for raw_eid in ev_ids or []:
+                eid = _resolve_alias(raw_eid, aliases)
                 ev = _resolve_evidence(eid, None)
                 if ev:
                     matched_count += 1
@@ -243,9 +323,7 @@ def _validate_claims(
         valid = [eid for eid in claim.evidence_ids if eid in valid_ids]
         missing = [eid for eid in claim.evidence_ids if eid not in valid_ids]
         if missing:
-            violations.append(
-                f"论断「{claim.claim[:80]}」引用了不存在的 evidence id: {', '.join(missing)}"
-            )
+            violations.append(f"论断「{claim.claim[:80]}」引用了不存在的 evidence id: {', '.join(missing)}")
         if not valid:
             continue
         claim.evidence_ids = valid
@@ -253,7 +331,10 @@ def _validate_claims(
     return kept, violations
 
 
-_EVIDENCE_ID_RE = re.compile(r"\b(?:technical|fundamental|moneyflow|news|sentiment|evidence)-[A-Za-z0-9]+\b|\b[A-Za-z][A-Za-z0-9_-]*-\d{3,}\b")
+_EVIDENCE_ID_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])E\d{3,}(?![A-Za-z0-9_-])|\b(?:technical|fundamental|moneyflow|news|sentiment|evidence)-[A-Za-z0-9]+\b|"
+    r"\b[A-Za-z][A-Za-z0-9_-]*-\d{3,}\b"
+)
 _REPORT_TEXT_FIELDS = ("title", "market_state", "what_happened")
 _REPORT_LIST_FIELDS = ("why", "strong_areas", "what_changed", "what_matters", "risks")
 
@@ -278,7 +359,7 @@ def _validate_report_references(payload: dict, valid_ids: set[str]) -> list[str]
         if isinstance(payload.get(field), str):
             payload[field] = clean(payload[field])
     for field in _REPORT_LIST_FIELDS:
-        payload[field] = [clean(item) if isinstance(item, str) else item for item in payload[field]]
+        payload[field] = [clean(item) if isinstance(item, str) else item for item in (payload.get(field) or [])]
     for claim in _ensure_list(payload.get("claims")):
         if isinstance(claim, dict) and isinstance(claim.get("claim"), str):
             claim["claim"] = clean(claim["claim"])
@@ -305,6 +386,7 @@ class ReasoningEngine:
         evidence: list[Evidence],
         history_context: str = "",
         findings: list | None = None,
+        evidence_aliases: dict[str, str] | None = None,
         domain: str = "a_share",
         requested_date: str | None = None,
         as_of_date: str | None = None,
@@ -339,16 +421,31 @@ class ReasoningEngine:
         parts.append("\n".join(date_lines))
         combined_context = "\n\n".join(parts)
 
+        aliases = evidence_aliases or build_evidence_aliases(evidence)
+        combined_context = translate_evidence_references(combined_context, {real: alias for alias, real in aliases.items()})
+        evidence_payload = []
+        for item in evidence:
+            row = item.model_dump()
+            real_id = str(row.get("id"))
+            alias = next((alias for alias, rid in aliases.items() if rid == real_id), None)
+            # Model-facing context contains only the short alias.  The real
+            # evidence ID is restored by ``_resolve_payload_aliases`` before
+            # any persisted report or claim validation occurs.
+            if alias:
+                row["id"] = alias
+            evidence_payload.append(row)
         prompt = REASONING_PROMPT.format(
             question=question,
             data=json.dumps(normalized_data, ensure_ascii=False, default=str),
             evidence=json.dumps(
-                [x.model_dump() for x in evidence],
+                evidence_payload,
                 ensure_ascii=False,
                 default=str,
             ),
+            evidence_alias_context=_alias_prompt_context(evidence, aliases),
             history_context=combined_context,
         )
+        prompt = translate_evidence_references(prompt, {real: alias for alias, real in aliases.items()})
 
         _llm_started = time.perf_counter()
         response = await self.client.chat.completions.create(
@@ -459,27 +556,40 @@ class ReasoningEngine:
             payload["anomalies"] = [a for a in _ensure_list(payload.get("anomalies")) if isinstance(a, dict)]
 
             # Process evidence with backward compatibility
+            _resolve_payload_aliases(payload, aliases)
             raw_evidence = payload.get("evidence", [])
-            parsed_evidence = _parse_evidence(raw_evidence, evidence)
+            parsed_evidence = _parse_evidence(raw_evidence, evidence, aliases)
             payload["evidence"] = [ei.model_dump() for ei in parsed_evidence]
 
             # 阶段 4③/④：claim—evidence 映射 + **代码级**引用校验。
             # 合法 id 集合只来自真实证据账本。
             valid_ids = {item.id for item in evidence}
+            raw_reference_violations: list[str] = []
+            for raw_item in _ensure_list(raw_evidence):
+                if not isinstance(raw_item, dict):
+                    continue
+                for raw_id in [raw_item.get("id"), *_ensure_list(raw_item.get("evidence_ids"))]:
+                    resolved_id = _resolve_alias(raw_id, aliases)
+                    # Legacy unknown ids in an evidence object are kept
+                    # backward-compatible (the item is dropped); short alias
+                    # references are explicit citations and must be audited.
+                    if isinstance(raw_id, str) and re.fullmatch(r"E\d{3,}", raw_id) and resolved_id not in valid_ids:
+                        raw_reference_violations.append(f"报告引用了不存在的 evidence id: {resolved_id}")
             body_violations = _validate_report_references(payload, valid_ids)
             claims, violations = _validate_claims(_parse_claims(payload.get("claims")), valid_ids)
+            violations.extend(raw_reference_violations)
             violations.extend(body_violations)
+            violations = list(dict.fromkeys(violations))
             payload["claims"] = [claim.model_dump() for claim in claims]
             payload["evidence_violations"] = violations
             if violations:
                 # 引用了不存在的证据 id：报告必须降级，且证据可见（不能静默）。
                 payload["confidence"] = "low"
                 data_caveats.append(
-                    f"有 {len(violations)} 条论断引用了不存在的证据 id，已按「无据」处理："
-                    + "；".join(violations[:3])
+                    f"有 {len(violations)} 条论断引用了不存在的证据 id，已按「无据」处理：" + "；".join(violations[:3])
                 )
                 payload["data_caveats"] = data_caveats
-                logger.warning("Reasoning 报告存在 %d 条无效 evidence 引用: %s", len(violations), violations[:3])
+                logger.warning("Reasoning 报告存在 %d 条无效 evidence 引用", len(violations))
 
             # P0-A：全 A 股名录与实际返回 datum 分别记录身份、名称代码及行情证据。
             # 名录不可用时保持未验证；下游不得据此推断证券不存在。
@@ -487,6 +597,7 @@ class ReasoningEngine:
             payload["entity_registry_source"] = None
             payload["entity_registry_as_of"] = None
             payload["entity_conflicts"] = []
+            payload["entity_code_matches"] = {}
             payload["entities_without_market_evidence"] = []
             if domain == "a_share":
                 registry = await get_full_a_share_registry()
@@ -507,6 +618,9 @@ class ReasoningEngine:
                     }
                     for a in assessments if a.conflict
                 ]
+                payload["entity_code_matches"] = {
+                    a.name: a.code for a in assessments if a.code_match == "verified" and a.code
+                }
                 payload["entities_without_market_evidence"] = [
                     a.name for a in assessments if not a.market_evidence
                 ]

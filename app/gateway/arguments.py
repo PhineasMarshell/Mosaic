@@ -7,11 +7,69 @@ for hashing nested argument structures.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
 class ArgumentValidationError(ValueError):
     """Raised when a tool's canonical argument contract cannot be satisfied."""
+
+
+_FREE_TEXT_ARGUMENTS = frozenset({"q", "query", "keyword", "text", "prompt", "description"})
+
+
+def summarize_arguments(arguments: Any) -> dict[str, Any]:
+    """Return a bounded, log-safe transport summary.
+
+    Free text is always redacted.  Symbols expose only their transport shape
+    and count so quote boundary debugging remains possible without logging
+    complete user input or arbitrary argument payloads.
+    """
+    if not isinstance(arguments, dict):
+        return {"type": type(arguments).__name__}
+    summary: dict[str, Any] = {}
+    for key, value in arguments.items():
+        name = str(key)
+        lower = name.casefold()
+        if lower in _FREE_TEXT_ARGUMENTS:
+            summary[name] = "<redacted>"
+        elif lower in {"symbols", "symbol"}:
+            if isinstance(value, str):
+                summary[name] = {"type": "string", "count": len([x for x in value.split(",") if x.strip()])}
+            elif isinstance(value, (list, tuple, set)):
+                summary[name] = {"type": "array", "count": len(value)}
+            else:
+                summary[name] = {"type": type(value).__name__}
+        elif isinstance(value, str):
+            summary[name] = "<redacted>"
+        elif isinstance(value, (int, float, bool)) or value is None:
+            summary[name] = value
+        elif isinstance(value, (list, tuple, set)):
+            summary[name] = {"type": "array", "count": len(value)}
+        elif isinstance(value, dict):
+            summary[name] = {"type": "object", "keys": sorted(str(k) for k in value)[:12]}
+        else:
+            summary[name] = {"type": type(value).__name__}
+    return summary
+
+
+def redact_audit_arguments(arguments: Any) -> dict[str, Any]:
+    """Keep validated targets/dates replayable, redact every free-text value."""
+    summary = summarize_arguments(arguments)
+    if not isinstance(arguments, dict):
+        return summary
+    for key, value in arguments.items():
+        if key in {"symbol", "symbols"}:
+            values = re.split(r"[,;]", value) if isinstance(value, str) else value
+            if isinstance(values, (list, tuple)) and all(
+                isinstance(item, str) and re.fullmatch(r"(?:[A-Z]{0,4}\d{5,6}|[A-Z]{1,6})", item)
+                for item in values
+            ):
+                summary[key] = value
+        elif key in {"date", "start_date", "end_date", "as_of_date"} and isinstance(value, str):
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}|\d{8}", value):
+                summary[key] = value
+    return summary
 
 
 def _symbols(value: Any) -> list[str]:

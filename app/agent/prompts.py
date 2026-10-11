@@ -58,6 +58,8 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 以下是 Evidence：
 {evidence}
 
+{evidence_alias_context}
+
 {history_context}
 
 请形成结构化市场情报。
@@ -77,9 +79,9 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 "why": 数组，每个元素是字符串（原因/解释）
 
 "evidence": 数组，每个元素是一个完整证据对象，包含：
-   - id: 唯一标识符，格式 "technical-001", "fundamental-002" 等（前缀是产出该证据的
-     analyst category，编号三位从 001 起；这条是最终 evidence 账本的 id，由代码
-     build_evidence(id_prefix=<analyst category>) 生成）
+   - id: 只能使用上方“允许引用的证据 id 集合”中的短别名（如 E001）；不要自行编号，
+     不要生成旧式的 category-数字或 evidence-数字 id（例如账本真实 id technical-001 仅供右侧映射展示）。
+     代码会把合法别名映射回持久化真实 id。
    - source_tool: 数据来源工具名
    - domain: 市场域字符串
    - metric: 指标名称
@@ -90,11 +92,11 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
    - partial: 是否 partial 数据（true/false）
    - note: 备注说明（可选）
 
-例如：[{{"id":"technical-001","source_tool":"get_ashare_sentiment","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
+例如：[{{"id":"E001","source_tool":"get_ashare_sentiment","domain":"a_share","metric":"risk_on","value":0.35,"status":"success"}}]
 
 "claims": 数组，每个元素是一条**关键论断**及其证据引用（claim—evidence 映射）：
    - claim: 论断文本（会出现在报告正文里的那句话）
-   - evidence_ids: 支撑这条论断的 evidence id 数组，只能引用上面 evidence 数组里**真实存在**的 id
+   - evidence_ids: 支撑这条论断的 evidence id 数组，只能引用上方集合中的短别名
    - claim_type: "fact" | "inference" | "single_source" | "comparison" | "causation" | "structure" | "other"
    规则：
    - comparison（"最强/最密集/主线/领涨/落差最大"等比较）与 causation（"驱动/导致/因为"
@@ -123,6 +125,9 @@ REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 --- 约束 ---
 
 - 不得创造数据。所有分析基于提供的数据。
+- 当前事实、外部实体、政策、新闻与因果判断必须有对应的真实 evidence id；不得用模型记忆补齐“今天”的行情。
+- 只有一个来源时必须明确写“单一来源，未交叉确认”；缺少日期或来源只能写“无法确认”。
+- partial、截断、无日期锚点的 evidence 只能支持有限观察，不能推出“主线/最密集/全面反转”等全市场比较或因果结论。
 - 报告正文里出现的每个具体上市公司名，必须来自证据的 instrument 字段、或某个证据值中明确
   提到的名称。不得用相近的公司名替代（"XX 科技" 与 "XX 科技股份" 是两家不同的公司）。
 - 没有证据支持的实体，不得断言其"不存在 / 未上市 / 查无此股"；无校验源时只能写

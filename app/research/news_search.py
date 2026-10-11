@@ -66,7 +66,7 @@ def _do_news_search(
         }
 
     try:
-        logger.info("News search: %s (limit=%s)", query, time_limit)
+        logger.info("News search started query_len=%d (limit=%s)", len(query), time_limit)
         kwargs: dict[str, Any] = dict(
             region="wt-wt",
             safesearch="moderate",
@@ -91,7 +91,7 @@ def _do_news_search(
         return result
 
     except Exception as exc:
-        logger.warning("News search failed for %s: %s", query, exc)
+        logger.warning("News search failed query_len=%d error_type=%s", len(query), type(exc).__name__)
         return {
             "meta": {
                 "query": query,

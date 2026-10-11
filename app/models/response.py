@@ -84,6 +84,7 @@ class MarketIntelligence(BaseModel):
     entity_registry_source: str | None = None
     entity_registry_as_of: str | None = None
     entity_conflicts: list[dict[str, str]] = Field(default_factory=list)
+    entity_code_matches: dict[str, str] = Field(default_factory=dict)
     entities_without_market_evidence: list[str] = Field(default_factory=list)
     strong_areas: list[str] = Field(default_factory=list)  # What's Moving — PRD §26
     what_changed: list[str] = Field(default_factory=list)  # 与之前相比的变化 — PRD §10
@@ -119,6 +120,7 @@ class ResearchResponse(BaseModel):
     delivery_status: DeliveryStatus | None = None
     #: 阶段 5：非 verified 时的可读原因（前端 / CLI 直接展示）
     delivery_reason: str = ""
+    blocked_reason: str = ""
     #: 持久化门控的实际结果。``None`` 表示调用方尚未执行持久化；
     #: ``False`` 既包括门控拒绝，也包括写入失败或部分写入失败。
     persisted: bool | None = None
@@ -134,14 +136,17 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
     优先用 ``finalize_audit`` 节点写入的字段；``verdict=pass`` 的快乐路径不经过该
     节点，这里按 critique 兜底派生，保证两条路径的对外契约一致。
     """
-    from app.graph.nodes.finalize import resolve_delivery
+    from app.graph.nodes.finalize import infer_blocked_reason, resolve_delivery
 
     critique = state.get("critique")
+    blocked_reason = infer_blocked_reason(state, critique)
     delivery_status = state.get("delivery_status")
 
-    if (
-        delivery_status in ("verified", "degraded", "blocked", "failed")
-        and state.get("final_audit_status") in ("pass", "revise_exhausted", "research_exhausted", "error")
+    if delivery_status in ("verified", "degraded", "blocked", "failed") and state.get("final_audit_status") in (
+        "pass",
+        "revise_exhausted",
+        "research_exhausted",
+        "error",
     ):
         audit_status = state.get("final_audit_status")
         if state.get("delivery_reason"):
@@ -150,7 +155,7 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
             _, _, reason = resolve_delivery(
                 critique,
                 errors,
-                blocked_reason=state.get("blocked_reason"),
+                blocked_reason=blocked_reason,
                 gap_key_decisions=state.get("gap_key_decisions"),
             )
         if delivery_status == "verified":
@@ -159,14 +164,14 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
                 audit_status, delivery_status, reason = resolve_delivery(
                     critique,
                     errors,
-                    blocked_reason=state.get("blocked_reason"),
+                    blocked_reason=blocked_reason,
                     gap_key_decisions=state.get("gap_key_decisions"),
                 )
     else:
         audit_status, derived_delivery, reason = resolve_delivery(
             critique,
             errors,
-            blocked_reason=state.get("blocked_reason"),
+            blocked_reason=blocked_reason,
             gap_key_decisions=state.get("gap_key_decisions"),
         )
         delivery_status = derived_delivery
@@ -218,6 +223,9 @@ def build_response_from_state(
     errors = list(state.get("errors") or [])
 
     final_audit_status, delivery_status, delivery_reason, report = _resolve_terminal_state(state, report, errors)
+    from app.graph.nodes.finalize import infer_blocked_reason
+
+    blocked_reason = infer_blocked_reason(state, critique) if delivery_status != "verified" else ""
 
     if report is None and not errors and delivery_status not in ("blocked",):
         # 保证 report 为空时调用方手里一定有一条可展示的原因，而不是只有空报告。
@@ -256,6 +264,7 @@ def build_response_from_state(
         final_audit_status=final_audit_status,
         delivery_status=delivery_status,
         delivery_reason=delivery_reason,
+        blocked_reason=blocked_reason,
         persisted=state.get("persisted"),
         run_id=state.get("run_id"),
     )

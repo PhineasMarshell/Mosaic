@@ -78,8 +78,7 @@ def resolve_delivery(
         decisions = gap_key_decisions or _field(critique, "gap_key_decisions", []) or []
         if decisions:
             rendered = ", ".join(
-                f"{_field(d, 'key', '?')}:{_field(d, 'reason', _field(d, 'decision', '?'))}"
-                for d in decisions[:10]
+                f"{_field(d, 'key', '?')}:{_field(d, 'reason', _field(d, 'decision', '?'))}" for d in decisions[:10]
             )
             details.append("gap=" + rendered)
         return base + ("；" + "；".join(details) if details else "")
@@ -113,6 +112,32 @@ def unresolved_issue_summary(critique: Any) -> list[str]:
     return out
 
 
+def infer_blocked_reason(state: dict[str, Any], critique: Any, settings: Any = None) -> str:
+    """Choose a non-empty structured terminal reason when route state lacks one."""
+    explicit = str(state.get("blocked_reason") or "").strip()
+    if explicit:
+        return explicit
+    if settings is not None:
+        from app.graph.builder import critic_route_outcome
+
+        decision, reason = critic_route_outcome(state, settings)
+        if decision == "finalize_audit":
+            return reason
+    verdict = str(_field(critique, "verdict", "") or "").strip().lower()
+    if verdict == "pass":
+        return ""
+    if verdict == "research_more":
+        decisions = state.get("gap_key_decisions") or _field(critique, "gap_key_decisions", []) or []
+        if decisions and not any(_field(row, "decision", "") == "kept" for row in decisions):
+            return "no_executable_gap_steps"
+        return "research_budget_exhausted"
+    if verdict == "revise":
+        return "rewrite_budget_exhausted"
+    if verdict == "error" or not verdict:
+        return "audit_error"
+    return "unknown_verdict"
+
+
 class FinalizeAuditNode:
     """终态节点：写 ``final_audit_status`` / ``delivery_status``，不产生新数据。"""
 
@@ -134,10 +159,11 @@ class FinalizeAuditNode:
                     remaining_budget = float(s["budget_deadline"]) - time.monotonic()
                 except (TypeError, ValueError):
                     remaining_budget = None
+            blocked_reason = infer_blocked_reason(s, critique, self.settings)
             audit_status, delivery_status, reason = resolve_delivery(
                 critique,
                 errors,
-                blocked_reason=s.get("blocked_reason"),
+                blocked_reason=blocked_reason,
                 gap_key_decisions=s.get("gap_key_decisions"),
             )
 
@@ -149,7 +175,7 @@ class FinalizeAuditNode:
                 delivery_status=delivery_status,
                 reason=reason,
                 unresolved_issues=unresolved,
-                blocked_reason=s.get("blocked_reason"),
+                blocked_reason=blocked_reason,
                 research_round_count=int(s.get("research_round_count", 0) or 0),
                 rewrite_count=int(s.get("rewrite_count", 0) or 0),
                 remaining_budget=remaining_budget,
@@ -168,7 +194,7 @@ class FinalizeAuditNode:
                 "final_audit_status": audit_status,
                 "delivery_status": delivery_status,
                 "delivery_reason": reason,
-                "blocked_reason": s.get("blocked_reason"),
+                "blocked_reason": blocked_reason,
                 "remaining_budget": remaining_budget,
                 "unresolved_issues": unresolved,
             }
@@ -178,11 +204,15 @@ class FinalizeAuditNode:
                 out["report"] = None
             return out
         except Exception as exc:  # noqa: BLE001 — 终态节点不能把图炸掉
-            logger.exception("finalize_audit failed")
+            logger.error("finalize_audit failed error_type=%s", type(exc).__name__)
             return {
                 "final_audit_status": "error",
                 "delivery_status": "failed",
-                "delivery_reason": f"finalize audit failed: {exc}",
+                "blocked_reason": "audit_error",
+                # Exception text can contain upstream payloads or user query
+                # fragments. Keep the response diagnostic structured and
+                # generic; the logger already records only the exception type.
+                "delivery_reason": "audit_error: finalize audit failed",
                 "report": None,
-                "errors": [f"finalize audit failed: {exc}"],
+                "errors": ["finalize audit failed"],
             }

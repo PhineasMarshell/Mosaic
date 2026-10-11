@@ -1,0 +1,621 @@
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 2 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [high] openInterest=1060000000.00 threshold=5.0 杠杆多头/空头资金快速增加，市场预期加剧
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 2 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: funding_rate_anomaly [high] fundingRate=0.00 threshold=0.15 多头支付高额溢价，市场过度拥挤在多头方向
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: funding_rate_anomaly [critical] fundingRate=0.01 threshold=0.5 市场严重单边化，潜在清算风险极高
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: liquidation_event [high] totalLiqValue=6000000.00 threshold=5000000 杠杆多头被强制平仓，可能触发进一步清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: limit_up_surge [high] 涨停家数=85.00 threshold=80 市场风险偏好显著提升，活跃资金高度集中
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: limit_up_collapse [high] 涨停家数=15.00 threshold=20 市场风险偏好显著下降，短线资金撤退
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: sentiment_change [high] 下跌家数=3500.00 threshold=3000 全面抛售，缺乏承接力量
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: funding_rate_anomaly [critical] fundingRate=0.01 threshold=0.5 市场严重单边化，潜在清算风险极高
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: liquidation_event [high] totalLiqValue=6000000.00 threshold=5000000 杠杆多头被强制平仓，可能触发进一步清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 2 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] data.openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] data[0].openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: limit_up_surge [high] data.涨停家数=85.00 threshold=80 市场风险偏好显著提升，活跃资金高度集中
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 1 tool results
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=NoneType, keys=[])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=str, keys=['question'])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=str, keys=['question'])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=NoneType, keys=['question'])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=int, keys=['question'])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=dict, keys=['question'])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=NoneType, keys=['q'])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+WARNING  app.main:main.py:189 POST /api/ask rejected: unsupported domain=<redacted len=12> (supported=['a_share', 'commodities', 'crypto', 'hk_stock', 'us_stock'])
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 500 Internal Server Error"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 400 Bad Request"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+INFO     app.main:main.py:212 Received question=<redacted len=10> (len=10) domain=None conv_id=<redacted len=0>
+ERROR    app.main:main.py:327 Upstream LLM output unusable: LLMOutputError
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 502 Bad Gateway"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 500 Internal Server Error"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+INFO     app.main:main.py:212 Received question=<redacted len=10> (len=10) domain=None conv_id=<redacted len=0>
+WARNING  app.main:main.py:311 Research exceeded 0s budget: <redacted len=10>
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 504 Gateway Timeout"
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 400 Bad Request"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+INFO     app:logging_config.py:101 Logging initialized: level=DEBUG json=False
+INFO     app.graph.nodes.critic:test_logging_namespace.py:28 caplog-marker
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: 无）
+INFO     app.graph.market_plan:market_plan.py:177 市场级最低证据集用代码口径覆盖 planner 的 quote 参数：{'symbols': ['SH600519']} → {'symbols': ['000300']}
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: 无）
+WARNING  app.graph.market_plan:market_plan.py:204 市场级问题：从计划中剔除 2 个必然被跳过的步骤（需要 symbol 却拿不到 symbol）: ['overview', 'detail']
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: ['overview', 'detail']）
+WARNING  app.graph.market_plan:market_plan.py:170 市场级最低证据集跳过 telegraph（不在本次域过滤后的注册表文本中）
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors']（剔除必然跳过的步骤: 无）
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: 无）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688304.165, "event": "run_start", "run_id": null, "question": "<redacted len=10>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688304.166, "event": "llm", "run_id": null, "node": "supervisor", "phase": "initial", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+WARNING  app.graph.market_plan:market_plan.py:204 市场级问题：从计划中剔除 1 个必然被跳过的步骤（需要 symbol 却拿不到 symbol）: ['overview']
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: ['overview']）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688304.166, "event": "plan", "run_id": null, "requested_date": "2026-10-11", "as_of_date": "2026-10-09", "market_closed": true, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "arguments": {"symbols": ["000300"]}, "priority": "high"}, {"tool_key": "sentiment", "operation_id": "get_ashare_sentiment", "source_tool": "get_ashare_sentiment", "arguments": {}, "priority": "high"}, {"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "arguments": {}, "priority": "high"}, {"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "arguments": {}, "priority": "high"}, {"tool_key": "telegraph", "operation_id": "internal_market_telegraph", "source_tool": "internal_market_telegraph", "arguments": {}, "priority": "high"}, {"tool_key": "longhu", "operation_id": "get_stock_longhu", "source_tool": "get_stock_longhu", "arguments": {}, "priority": "medium"}], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": ["quote", "sentiment", "limit_up_count", "limit_up_sectors", "telegraph"], "unexecutable_keys": ["overview"]}
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-01
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-01
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-01
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-01
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-03
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-04
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-05
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-01
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-02
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-03
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-04
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-05
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-06
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-07
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-08
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-09
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-08-10
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-01
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-09-02
+INFO     app.memory.storage:storage.py:396 Recorded anomaly 8820c448 for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly d1639764 for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly 1381a18d for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly d0da2a96 for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly cab51b13 for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly 8d953c32 for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly 24ddd5eb for 2025-08-01
+INFO     app.memory.storage:storage.py:396 Recorded anomaly 5f23cd3d for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly 34320714 for 2025-09-03
+INFO     app.memory.storage:storage.py:396 Recorded anomaly 7dd3be87 for 2025-09-05
+INFO     app.memory.storage:storage.py:396 Recorded anomaly fae48faf for 2025-09-01
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=11> → f3f8ae9a
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=21> → 2f84a265
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=1> → a1780ea3
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=1> → e4d33ca7
+INFO     app.gateway.mcp_client:mcp_client.py:169 MCP connected: 1 tools available
+ERROR    mcp.shared.jsonrpc_dispatcher:jsonrpc_dispatcher.py:754 handler for 'tools/list' raised
+Traceback (most recent call last):
+  File "D:\Mosaic\.venv\Lib\site-packages\mcp\shared\jsonrpc_dispatcher.py", line 720, in _handle_request
+    result = await on_request(dctx, req.method, req.params)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Mosaic\.venv\Lib\site-packages\mcp\server\runner.py", line 747, in on_request
+    return await runner.on_request(dctx, method, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Mosaic\.venv\Lib\site-packages\mcp\server\runner.py", line 230, in _on_request
+    result = _dump_result(await call(ctx))
+                          ^^^^^^^^^^^^^^^
+  File "D:\Mosaic\.venv\Lib\site-packages\mcp\server\_otel.py", line 44, in __call__
+    result = await call_next(ctx)
+             ^^^^^^^^^^^^^^^^^^^^
+  File "D:\Mosaic\.venv\Lib\site-packages\mcp\server\runner.py", line 217, in _inner
+    result = await entry.handler(ctx, typed_params)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Mosaic\tests\test_mcp_handshake.py", line 32, in list_tools_handler
+    raise RuntimeError("boom")
+RuntimeError: boom
+INFO     app.gateway.mcp_client:mcp_client.py:169 MCP connected: 1 tools available
+INFO     app.gateway.mcp_client:mcp_client.py:169 MCP connected: 1 tools available
+ERROR    app.net_env:net_env.py:90 Proxy environment normalized: NO_PROXY 含 httpx 无法解析的方括号 IPv6 ['[::1]']，已在本进程内归一化为 'localhost,127.0.0.1,::1' — httpx 会把 NO_PROXY 的每一项当 URL 解析，方括号 IPv6 会抛 httpx.InvalidURL: Invalid port: ':1]'，导致 HTTP 模式与全部内部直连工具失败
+INFO     httpx2:_client.py:1085 HTTP Request: GET http://testserver/health "HTTP/1.1 200 OK"
+WARNING  app.graph.nodes.analysts.base:base.py:217 news: state 缺少 budget_deadline，预算退回按本节点起算（每次节点调用重置，旧行为）
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 5 entries (status=ok)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688305.476, "event": "executions", "run_id": null, "category": "news", "results": [{"tool_key": "news_search", "operation_id": "news_search", "source_tool": "news_search", "tool": "news_search", "duration_ms": 0.2, "arguments": {"query": "<redacted len=10>", "max_results": 3}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 5, "note": "<redacted len=0>", "cache": null}]}
+WARNING  app.graph.nodes.analysts.base:base.py:217 news: state 缺少 budget_deadline，预算退回按本节点起算（每次节点调用重置，旧行为）
+WARNING  app.graph.nodes.analysts.base:base.py:257 news 跳过 quote（参数无效: ArgumentValidationError）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688305.479, "event": "executions", "run_id": null, "category": "news", "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": null, "arguments": {}, "status": "error", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=25>", "cache": null}]}
+INFO     app.graph.tool_runtime:tool_runtime.py:905 Internal tool internal_symbol_news: 600519 → kept 1/2 (status=success)
+WARNING  app.graph.tool_runtime:tool_runtime.py:856 Internal tool internal_symbol_news: google rss failed error_type=GoogleRssError
+INFO     app.graph.tool_runtime:tool_runtime.py:905 Internal tool internal_symbol_news: 600519 → kept 1/1 (status=partial)
+WARNING  app.graph.tool_runtime:tool_runtime.py:848 Internal tool internal_symbol_news: eastmoney failed error_type=RuntimeError
+WARNING  app.graph.tool_runtime:tool_runtime.py:856 Internal tool internal_symbol_news: google rss failed error_type=GoogleRssError
+INFO     app.graph.tool_runtime:tool_runtime.py:905 Internal tool internal_symbol_news: 600519 → kept 0/0 (status=error)
+WARNING  app.graph.nodes.analysts.base:base.py:217 news: state 缺少 budget_deadline，预算退回按本节点起算（每次节点调用重置，旧行为）
+INFO     app.graph.tool_runtime:tool_runtime.py:905 Internal tool internal_symbol_news: 600519 → kept 1/1 (status=success)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688305.542, "event": "executions", "run_id": null, "category": "news", "results": [{"tool_key": "symbol_news", "operation_id": "internal_symbol_news", "source_tool": "internal_symbol_news", "tool": "symbol_news", "duration_ms": 0.3, "arguments": {"symbol": "600519"}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 3, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.tool_runtime:tool_runtime.py:972 Internal tool telegraph: total 3 → kept 2
+INFO     app.graph.tool_runtime:tool_runtime.py:972 Internal tool telegraph: total 20 → kept 15
+WARNING  app.graph.tool_runtime:tool_runtime.py:930 Internal tool telegraph failed error_type=RuntimeError
+INFO     app.graph.tool_runtime:tool_runtime.py:1086 Internal tool news_digest: ddgs first attempt failed, retrying once
+INFO     app.graph.tool_runtime:tool_runtime.py:1065 Internal tool news_digest: query_len=4 → kept 2/2 (status=success)
+INFO     app.graph.tool_runtime:tool_runtime.py:1086 Internal tool news_digest: ddgs first attempt failed, retrying once
+WARNING  app.graph.tool_runtime:tool_runtime.py:1013 Internal tool news_digest: google rss failed error_type=GoogleRssError
+WARNING  app.graph.tool_runtime:tool_runtime.py:1019 Internal tool news_digest: ddgs failed error_type=DdgsSourceError
+INFO     app.graph.tool_runtime:tool_runtime.py:1065 Internal tool news_digest: query_len=4 → kept 0/0 (status=error)
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 4 entries (status=ok)
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 4 entries (status=ok)
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 4 entries (status=ok)
+INFO     app.graph.tool_runtime:tool_runtime.py:905 Internal tool internal_symbol_news: 600519 → kept 1/1 (status=success)
+INFO     app.graph.tool_runtime:tool_runtime.py:972 Internal tool telegraph: total 1 → kept 1
+INFO     app.graph.tool_runtime:tool_runtime.py:1065 Internal tool news_digest: query_len=2 → kept 1/1 (status=success)
+INFO     app.research.news_search:news_search.py:69 News search started query_len=9 (limit=d)
+WARNING  app.research.news_search:news_search.py:94 News search failed query_len=9 error_type=RuntimeError
+INFO     app.research.news_search:news_search.py:69 News search started query_len=21 (limit=d)
+INFO     app.research.news_search:news_search.py:69 News search started query_len=10 (limit=w)
+INFO     app.research.news_search:news_search.py:57 News search skipped: empty query
+INFO     app.research.news_search:news_search.py:57 News search skipped: empty query
+INFO     app.research.news_search:news_search.py:69 News search started query_len=10 (limit=d)
+WARNING  primp.tls:tls.rs:500 failed to load native root certificate: failed to open current user certificate store: 拒绝访问。 (os error 5)
+INFO     primp:lib.rs:397 response: https://news.search.yahoo.com/search?p=async_test&btf=d 200
+INFO     primp:lib.rs:397 response: https://duckduckgo.com/?q=async_test 200
+INFO     primp:lib.rs:397 response: https://duckduckgo.com/news.js?l=wt-wt&o=json&noamp=1&q=async_test&vqd=4-87549983085371617693678135588176457221&p=-1&df=d 403
+INFO     primp:lib.rs:397 response: https://cn.bing.com/ 200
+WARNING  app.research.news_search:news_search.py:94 News search failed query_len=10 error_type=DDGSException
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 4 entries (status=ok)
+INFO     app.graph.tool_runtime:tool_runtime.py:380 Cache hit for news_search
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 4 entries (status=ok)
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 4 entries (status=ok)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.587, "event": "run_start", "run_id": "fcbf42d3ebe9", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+WARNING  app.agent.orchestrator:orchestrator.py:97 Research delivery_status=blocked final_audit_status=research_exhausted errors=1 critique=Critic audit failed: boom
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.59, "event": "run_start", "run_id": "b6e07e045b2d", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.594, "event": "executions", "run_id": "redacted-ashare-stream-refresh-partial-201", "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 1.1, "arguments": {}, "status": "partial", "partial": true, "as_of_date": null, "retrieved_at": null, "datum_count": 201, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.601, "event": "llm", "run_id": "redacted-ashare-stream-refresh-partial-201", "node": "supervisor", "phase": "replan", "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: 代码级补齐 Critic 缺口工具: ['limit_up_sectors']
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.601, "event": "plan", "run_id": "redacted-ashare-stream-refresh-partial-201", "requested_date": null, "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "arguments": {}, "priority": "high"}], "filtered_keys": [], "forced_gap_keys": ["limit_up_sectors"], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.602, "event": "executions", "run_id": "redacted-ashare-stream-refresh-partial-201", "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 1.3, "arguments": {}, "status": "partial", "partial": true, "as_of_date": null, "retrieved_at": null, "datum_count": 201, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.608, "event": "executions", "run_id": "redacted-ashare-stream-refresh-success-0", "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 0.0, "arguments": {}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.61, "event": "llm", "run_id": "redacted-ashare-stream-refresh-success-0", "node": "supervisor", "phase": "replan", "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: 代码级补齐 Critic 缺口工具: ['limit_up_sectors']
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.61, "event": "plan", "run_id": "redacted-ashare-stream-refresh-success-0", "requested_date": null, "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "arguments": {}, "priority": "high"}], "filtered_keys": [], "forced_gap_keys": ["limit_up_sectors"], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.612, "event": "executions", "run_id": "redacted-ashare-stream-refresh-success-0", "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 1.2, "arguments": {}, "status": "partial", "partial": true, "as_of_date": null, "retrieved_at": null, "datum_count": 201, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.618, "event": "executions", "run_id": "redacted-ashare-stream-refresh-success-1", "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 0.1, "arguments": {}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 1, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.619, "event": "llm", "run_id": "redacted-ashare-stream-refresh-success-1", "node": "supervisor", "phase": "replan", "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: 代码级补齐 Critic 缺口工具: ['limit_up_sectors']
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.62, "event": "plan", "run_id": "redacted-ashare-stream-refresh-success-1", "requested_date": null, "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "arguments": {}, "priority": "high"}], "filtered_keys": [], "forced_gap_keys": ["limit_up_sectors"], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.621, "event": "executions", "run_id": "redacted-ashare-stream-refresh-success-1", "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 1.3, "arguments": {}, "status": "partial", "partial": true, "as_of_date": null, "retrieved_at": null, "datum_count": 201, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.72, "event": "executions", "run_id": null, "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 47.4, "arguments": {}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}, {"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "tool": "get_limit_up_count", "duration_ms": 46.5, "arguments": {}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.813, "event": "executions", "run_id": null, "category": "technical", "results": [{"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "tool": "list_limit_up_sectors", "duration_ms": 43.6, "arguments": {}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}, {"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "tool": "get_limit_up_count", "duration_ms": 46.2, "arguments": {}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+WARNING  app.research.reasoning:reasoning.py:592 Reasoning 报告存在 2 条无效 evidence 引用
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.956, "event": "llm", "run_id": null, "node": "critic", "phase": null, "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: pass (reason: <redacted len=31>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.956, "event": "critic", "run_id": null, "verdict": "pass", "reason": "<redacted len=17>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 0, "referenced_missing": [], "other_shown": 1, "other_total": 1, "datums_omitted": 0, "results_omitted": 0, "kept": [{"id": "technical-58e74920441933cd", "reason": "<redacted len=14>"}], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": [{"id": "technical-58e74920441933cd", "tool_key": null, "operation_id": "get_market_quotes", "source_tool": "get_market_quotes"}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.961, "event": "llm", "run_id": null, "node": "critic", "phase": null, "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+ERROR    app.graph.nodes.critic:critic.py:1162 Critic: 代码级校验产出 1 条 issue（['unsupported_claim']），本轮不可能判 pass
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: revise (reason: <redacted len=9>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.961, "event": "critic", "run_id": null, "verdict": "revise", "reason": "<redacted len=16>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": ["<redacted len=23>"], "issues": [{"kind": "unsupported_claim", "severity": "high", "action": "remove_or_qualify", "claim": "<redacted len=23>", "rationale": "<redacted len=18>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": ["invalid_reference"]}], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 0, "referenced_missing": [], "other_shown": 1, "other_total": 1, "datums_omitted": 0, "results_omitted": 0, "kept": [{"id": "technical-58e74920441933cd", "reason": "<redacted len=14>"}], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": [{"id": "technical-58e74920441933cd", "tool_key": null, "operation_id": "get_market_quotes", "source_tool": "get_market_quotes"}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.964, "event": "run_start", "run_id": "redacted-ashare-stream-pass", "question": "<redacted len=26>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.964, "event": "critic", "run_id": "redacted-ashare-stream-pass", "verdict": "pass", "reason": "<redacted len=17>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.964, "event": "route", "run_id": "redacted-ashare-stream-pass", "verdict": "pass", "decision": "end", "reason": "audit_passed", "rewrite_count": 1, "research_round_count": 1, "revision_count": 2, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": null, "tool_calls_remaining": null, "required_tool_calls": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": ""}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.964, "event": "delivery", "run_id": "redacted-ashare-stream-pass", "delivery_status": "verified", "persisted": false, "sink": "sync", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=26>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.966, "event": "run_start", "run_id": "redacted-ashare-stream-research_more", "question": "<redacted len=26>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.966, "event": "critic", "run_id": "redacted-ashare-stream-research_more", "verdict": "research_more", "reason": "<redacted len=17>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "claim": "<redacted len=26>", "rationale": "<redacted len=26>", "required_tool_keys": [], "required_coverage": {"arguments": {"query": "<redacted len=10>", "q": "<redacted len=10>", "other": "<redacted>"}}, "reason_codes": ["unknown_date"]}], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.966, "event": "route", "run_id": "redacted-ashare-stream-research_more", "verdict": "research_more", "decision": "finalize_audit", "reason": "research_budget_exhausted", "rewrite_count": 1, "research_round_count": 1, "revision_count": 2, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "research_budget_exhausted"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.966, "event": "finalize", "run_id": "redacted-ashare-stream-research_more", "final_audit_status": "research_exhausted", "delivery_status": "blocked", "reason": "<redacted len=18>", "unresolved_issues": ["<redacted len=68>"], "blocked_reason": "research_budget_exhausted", "research_round_count": 1, "rewrite_count": 1, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": []}
+WARNING  app.graph.nodes.finalize:finalize.py:186 finalize_audit: delivery_status=blocked final_audit_status=research_exhausted（不持久化，errors=0）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.966, "event": "delivery", "run_id": "redacted-ashare-stream-research_more", "delivery_status": "blocked", "persisted": false, "sink": "sync", "error_count": 0, "final_audit_status": "research_exhausted", "delivery_reason": "<redacted len=135>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "research_budget_exhausted", "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "reason_codes": ["unknown_date"]}], "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.969, "event": "run_start", "run_id": "redacted-ashare-stream-revise", "question": "<redacted len=26>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.969, "event": "critic", "run_id": "redacted-ashare-stream-revise", "verdict": "revise", "reason": "<redacted len=17>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "claim": "<redacted len=26>", "rationale": "<redacted len=26>", "required_tool_keys": [], "required_coverage": {"arguments": {"query": "<redacted len=10>", "q": "<redacted len=10>", "other": "<redacted>"}}, "reason_codes": ["unknown_date"]}], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.969, "event": "route", "run_id": "redacted-ashare-stream-revise", "verdict": "revise", "decision": "finalize_audit", "reason": "rewrite_budget_exhausted", "rewrite_count": 1, "research_round_count": 1, "revision_count": 2, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "rewrite_budget_exhausted"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.969, "event": "finalize", "run_id": "redacted-ashare-stream-revise", "final_audit_status": "revise_exhausted", "delivery_status": "blocked", "reason": "<redacted len=18>", "unresolved_issues": ["<redacted len=68>"], "blocked_reason": "rewrite_budget_exhausted", "research_round_count": 1, "rewrite_count": 1, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": []}
+WARNING  app.graph.nodes.finalize:finalize.py:186 finalize_audit: delivery_status=blocked final_audit_status=revise_exhausted（不持久化，errors=0）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.97, "event": "delivery", "run_id": "redacted-ashare-stream-revise", "delivery_status": "blocked", "persisted": false, "sink": "sync", "error_count": 0, "final_audit_status": "revise_exhausted", "delivery_reason": "<redacted len=134>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "rewrite_budget_exhausted", "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "reason_codes": ["unknown_date"]}], "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.972, "event": "run_start", "run_id": "redacted-ashare-stream-error", "question": "<redacted len=26>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.972, "event": "critic", "run_id": "redacted-ashare-stream-error", "verdict": "error", "reason": "<redacted len=17>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "claim": "<redacted len=26>", "rationale": "<redacted len=26>", "required_tool_keys": [], "required_coverage": {"arguments": {"query": "<redacted len=10>", "q": "<redacted len=10>", "other": "<redacted>"}}, "reason_codes": ["unknown_date"]}], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.972, "event": "route", "run_id": "redacted-ashare-stream-error", "verdict": "error", "decision": "finalize_audit", "reason": "critic_error", "rewrite_count": 1, "research_round_count": 1, "revision_count": 2, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "critic_error"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.972, "event": "finalize", "run_id": "redacted-ashare-stream-error", "final_audit_status": "error", "delivery_status": "failed", "reason": "<redacted len=18>", "unresolved_issues": ["<redacted len=68>"], "blocked_reason": "critic_error", "research_round_count": 1, "rewrite_count": 1, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": []}
+WARNING  app.graph.nodes.finalize:finalize.py:186 finalize_audit: delivery_status=failed final_audit_status=error（不持久化，errors=0）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.972, "event": "delivery", "run_id": "redacted-ashare-stream-error", "delivery_status": "failed", "persisted": false, "sink": "sync", "error_count": 1, "final_audit_status": "error", "delivery_reason": "<redacted len=122>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "critic_error", "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "reason_codes": ["unknown_date"]}], "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.977, "event": "llm", "run_id": "redacted-ashare-stream-parse-error", "node": "critic", "phase": null, "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+ERROR    app.graph.nodes.critic:critic.py:1255 Critic LLM 输出不可用，安全终止: LLMOutputError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688306.978, "event": "critic", "run_id": "redacted-ashare-stream-parse-error", "verdict": "error", "reason": "<redacted len=17>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {}, "evidence_identity": []}
+INFO     app.gateway.http_client:http_client.py:161 HTTP call search_stocks attempt=1 attempt_timeout_ms=30000 remaining_budget_ms=none canonical_argument_summary={'q': '<redacted>'} transport_argument_summary={'q': '<redacted>'}
+INFO     httpx:_client.py:1740 HTTP Request: GET <redacted-url> "HTTP/1.1 422 Unprocessable Entity"
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_market_quotes attempt=1 attempt_timeout_ms=1000 remaining_budget_ms=1000 canonical_argument_summary={'symbols': {'type': 'array', 'count': 1}} transport_argument_summary={'symbols': {'type': 'string', 'count': 1}}
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_market_quotes attempt=1 attempt_timeout_ms=1000 remaining_budget_ms=1000 canonical_argument_summary={'symbols': {'type': 'array', 'count': 3}} transport_argument_summary={'symbols': {'type': 'string', 'count': 3}}
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_ashare_sentiment attempt=1 attempt_timeout_ms=30 remaining_budget_ms=30 canonical_argument_summary={} transport_argument_summary={}
+WARNING  app.gateway.mcp_client:mcp_client.py:278 MCP call get_ashare_sentiment attempt 1/3 timed out attempt_timeout_ms=30 remaining_budget_ms=30
+WARNING  app.gateway.mcp_client:mcp_client.py:304 MCP call get_ashare_sentiment retry skipped retry_skipped_reason=deadline_exhausted remaining_budget_ms=0
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_limit_up_count attempt=1 attempt_timeout_ms=30 remaining_budget_ms=30 canonical_argument_summary={} transport_argument_summary={}
+WARNING  app.gateway.mcp_client:mcp_client.py:278 MCP call get_limit_up_count attempt 1/3 timed out attempt_timeout_ms=30 remaining_budget_ms=30
+WARNING  app.gateway.mcp_client:mcp_client.py:304 MCP call get_limit_up_count retry skipped retry_skipped_reason=deadline_exhausted remaining_budget_ms=0
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_market_quotes attempt=1 attempt_timeout_ms=1000 remaining_budget_ms=1000 canonical_argument_summary={'symbols': {'type': 'array', 'count': 1}} transport_argument_summary={'symbols': {'type': 'array', 'count': 1}}
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_market_quotes attempt=1 attempt_timeout_ms=1000 remaining_budget_ms=1000 canonical_argument_summary={'symbols': {'type': 'array', 'count': 3}} transport_argument_summary={'symbols': {'type': 'array', 'count': 3}}
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_ashare_sentiment attempt=1 attempt_timeout_ms=30 remaining_budget_ms=30 canonical_argument_summary={} transport_argument_summary={}
+WARNING  app.gateway.mcp_client:mcp_client.py:278 MCP call get_ashare_sentiment attempt 1/3 timed out attempt_timeout_ms=30 remaining_budget_ms=30
+WARNING  app.gateway.mcp_client:mcp_client.py:304 MCP call get_ashare_sentiment retry skipped retry_skipped_reason=deadline_exhausted remaining_budget_ms=0
+INFO     app.gateway.mcp_client:mcp_client.py:237 MCP call get_limit_up_count attempt=1 attempt_timeout_ms=30 remaining_budget_ms=30 canonical_argument_summary={} transport_argument_summary={}
+WARNING  app.gateway.mcp_client:mcp_client.py:278 MCP call get_limit_up_count attempt 1/3 timed out attempt_timeout_ms=30 remaining_budget_ms=30
+WARNING  app.gateway.mcp_client:mcp_client.py:304 MCP call get_limit_up_count retry skipped retry_skipped_reason=deadline_exhausted remaining_budget_ms=0
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.141, "event": "run_start", "run_id": null, "question": "<redacted len=8>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.141, "event": "llm", "run_id": null, "node": "supervisor", "phase": "replan", "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: 代码级补齐 Critic 缺口工具: ['quote']
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.142, "event": "plan", "run_id": null, "requested_date": null, "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "arguments": {"symbols": ["600519"]}, "priority": "high"}], "filtered_keys": [], "forced_gap_keys": ["quote"], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.146, "event": "llm", "run_id": null, "node": "critic", "phase": null, "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+ERROR    app.graph.nodes.critic:critic.py:1162 Critic: 代码级校验产出 2 条 issue（['unsupported_claim', 'missing_evidence']），本轮不可能判 pass
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: research_more (reason: <redacted len=4>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.146, "event": "critic", "run_id": null, "verdict": "research_more", "reason": "<redacted len=16>", "missing_points": ["<redacted len=10>"], "missing_tool_keys": [], "unsupported_claims": ["<redacted len=10>"], "issues": [{"kind": "unsupported_claim", "severity": "high", "action": "remove_or_qualify", "claim": "<redacted len=10>", "rationale": "<redacted len=30>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": []}, {"kind": "missing_evidence", "severity": "medium", "action": "research_more", "claim": "<redacted len=10>", "rationale": "<redacted len=71>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": ["missing_reference"]}], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 0, "referenced_missing": [], "other_shown": 0, "other_total": 0, "datums_omitted": 0, "results_omitted": 0, "kept": [], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.15, "event": "llm", "run_id": null, "node": "critic", "phase": null, "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+ERROR    app.graph.nodes.critic:critic.py:1162 Critic: 代码级校验产出 2 条 issue（['unsupported_claim', 'missing_evidence']），本轮不可能判 pass
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: research_more (reason: <redacted len=4>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.15, "event": "critic", "run_id": null, "verdict": "research_more", "reason": "<redacted len=16>", "missing_points": ["<redacted len=8>"], "missing_tool_keys": [], "unsupported_claims": ["<redacted len=8>"], "issues": [{"kind": "unsupported_claim", "severity": "high", "action": "remove_or_qualify", "claim": "<redacted len=8>", "rationale": "<redacted len=30>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": []}, {"kind": "missing_evidence", "severity": "medium", "action": "research_more", "claim": "<redacted len=8>", "rationale": "<redacted len=71>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": ["missing_reference"]}], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 0, "referenced_missing": [], "other_shown": 0, "other_total": 0, "datums_omitted": 0, "results_omitted": 0, "kept": [], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.154, "event": "llm", "run_id": null, "node": "critic", "phase": null, "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+ERROR    app.graph.nodes.critic:critic.py:1162 Critic: 代码级校验产出 2 条 issue（['unsupported_claim', 'missing_evidence']），本轮不可能判 pass
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: research_more (reason: <redacted len=4>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.154, "event": "critic", "run_id": null, "verdict": "research_more", "reason": "<redacted len=16>", "missing_points": ["<redacted len=9>"], "missing_tool_keys": [], "unsupported_claims": ["<redacted len=9>"], "issues": [{"kind": "unsupported_claim", "severity": "high", "action": "remove_or_qualify", "claim": "<redacted len=9>", "rationale": "<redacted len=30>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": []}, {"kind": "missing_evidence", "severity": "medium", "action": "research_more", "claim": "<redacted len=9>", "rationale": "<redacted len=71>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": ["missing_reference"]}], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 0, "referenced_missing": [], "other_shown": 0, "other_total": 0, "datums_omitted": 0, "results_omitted": 0, "kept": [], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.158, "event": "llm", "run_id": "redacted-ashare-stream-research-allowed", "node": "critic", "phase": null, "model": "gpt-5-mini", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: research_more (reason: <redacted len=4>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.158, "event": "critic", "run_id": "redacted-ashare-stream-research-allowed", "verdict": "research_more", "reason": "<redacted len=16>", "missing_points": [], "missing_tool_keys": ["quote"], "unsupported_claims": [], "issues": [{"kind": "missing_evidence", "severity": "medium", "action": "research_more", "claim": "<redacted len=0>", "rationale": "<redacted len=0>", "required_tool_keys": ["quote"], "required_coverage": {"allow_partial": false}, "reason_codes": []}], "verdict_conflicts": [], "gap_key_decisions": [{"key": "quote", "decision": "kept", "reason": "executable"}], "gap_raw": ["quote"], "gap_kept": ["quote"], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 0, "referenced_missing": [], "other_shown": 0, "other_total": 0, "datums_omitted": 0, "results_omitted": 0, "kept": [], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.159, "event": "route", "run_id": "redacted-ashare-stream-research-allowed", "verdict": "research_more", "decision": "supervisor", "reason": "research_allowed", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": 119.99864879999996, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [{"key": "quote", "decision": "kept", "reason": "executable"}], "executable_gap_steps": [], "blocked_reason": ""}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.161, "event": "route", "run_id": "redacted-ashare-stream-sync", "verdict": "research_more", "decision": "finalize_audit", "reason": "research_budget_exhausted", "rewrite_count": 0, "research_round_count": 1, "revision_count": 1, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "research_budget_exhausted"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.162, "event": "finalize", "run_id": "redacted-ashare-stream-sync", "final_audit_status": "research_exhausted", "delivery_status": "blocked", "reason": "<redacted len=18>", "unresolved_issues": ["<redacted len=63>"], "blocked_reason": "research_budget_exhausted", "research_round_count": 1, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": []}
+WARNING  app.graph.nodes.finalize:finalize.py:186 finalize_audit: delivery_status=blocked final_audit_status=research_exhausted（不持久化，errors=0）
+INFO     app.main:main.py:212 Received question=<redacted len=21> (len=21) domain=a_share conv_id=<redacted len=0>
+WARNING  app.main:main.py:233 Research blocked for <redacted len=21> (final_audit_status=research_exhausted)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.162, "event": "delivery", "run_id": "redacted-ashare-stream-sync", "delivery_status": "blocked", "persisted": false, "sink": "sync", "error_count": 0, "final_audit_status": "research_exhausted", "delivery_reason": "<redacted len=125>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "research_budget_exhausted", "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "reason_codes": ["unknown_date"]}], "error_category": "audit"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.164, "event": "route", "run_id": "redacted-ashare-stream-sse", "verdict": "research_more", "decision": "finalize_audit", "reason": "research_budget_exhausted", "rewrite_count": 0, "research_round_count": 1, "revision_count": 1, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "research_budget_exhausted"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.164, "event": "finalize", "run_id": "redacted-ashare-stream-sse", "final_audit_status": "research_exhausted", "delivery_status": "blocked", "reason": "<redacted len=18>", "unresolved_issues": ["<redacted len=63>"], "blocked_reason": "research_budget_exhausted", "research_round_count": 1, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": []}
+WARNING  app.graph.nodes.finalize:finalize.py:186 finalize_audit: delivery_status=blocked final_audit_status=research_exhausted（不持久化，errors=0）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.164, "event": "run_start", "run_id": "eca57814cf2d", "question": "<redacted len=21>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+WARNING  app.main:main.py:529 Stream research blocked for <redacted len=21> (final_audit_status=research_exhausted)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.165, "event": "delivery", "run_id": "redacted-ashare-stream-sse", "delivery_status": "blocked", "persisted": false, "sink": "sse", "error_count": 0, "final_audit_status": "research_exhausted", "delivery_reason": "<redacted len=125>", "research_round_count": 1, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "research_budget_exhausted", "issues": [{"kind": "missing_evidence", "severity": "high", "action": "research_more", "reason_codes": ["unknown_date"]}], "error_category": null}
+WARNING  app.agent.persistence:persistence.py:122 persist_research: delivery_status=blocked/final_audit_status=revise_exhausted/verdict=revise，跳过 memory、对话轮次与当日状态（question=<redacted len=12> errors=0）
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=7> → c0751132
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.239, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=7> → 6d95f5f5
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.279, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+WARNING  app.agent.persistence:persistence.py:122 persist_research: delivery_status=None/final_audit_status=None/verdict=None，跳过 memory、对话轮次与当日状态（question=<redacted len=5> errors=1）
+WARNING  app.agent.persistence:persistence.py:160 Research save failed (non-fatal): OperationalError
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=False): OperationalError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.314, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "OperationalError"}
+INFO     app.detector.anomaly:anomaly.py:431 Anomaly detected: oi_spike [critical] openInterest=1200000000.00 threshold=10.0 大规模新增杠杆头寸，随时可能引发连锁清算
+INFO     app.detector.anomaly:anomaly.py:453 Detected 1 anomalies out of 2 tool results
+WARNING  app.research.reasoning:reasoning.py:592 Reasoning 报告存在 1 条无效 evidence 引用
+WARNING  app.research.reasoning:reasoning.py:592 Reasoning 报告存在 1 条无效 evidence 引用
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.517, "event": "llm", "run_id": null, "node": "reasoning", "phase": "initial", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": null}
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=low rewrites=0/1 research_rounds=0/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.53, "event": "llm", "run_id": "run-stage4", "node": "critic", "phase": null, "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+ERROR    app.graph.nodes.critic:critic.py:1162 Critic: 代码级校验产出 2 条 issue（['unsupported_claim', 'unsupported_claim']），本轮不可能判 pass
+ERROR    app.graph.nodes.critic:critic.py:956 Critic 裁决与 issue action 冲突，按更保守路径路由: [{'kind': 'verdict_vs_actions', 'model_verdict': 'pass', 'action_verdict': 'revise', 'resolved': 'revise'}]
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: revise (reason: <redacted len=4>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.531, "event": "critic", "run_id": "run-stage4", "verdict": "revise", "reason": "<redacted len=16>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": ["<redacted len=49>", "<redacted len=11>"], "issues": [{"kind": "unsupported_claim", "severity": "high", "action": "remove_or_qualify", "claim": "<redacted len=49>", "rationale": "<redacted len=40>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": ["invalid_reference"]}, {"kind": "unsupported_claim", "severity": "high", "action": "remove_or_qualify", "claim": "<redacted len=11>", "rationale": "<redacted len=80>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": ["invalid_reference"]}], "verdict_conflicts": [{"kind": "verdict_vs_actions", "model_verdict": "pass", "action_verdict": "revise", "resolved": "revise"}], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 0, "referenced_missing": ["technical-999"], "other_shown": 1, "other_total": 1, "datums_omitted": 0, "results_omitted": 0, "kept": [{"id": "technical-001", "reason": "<redacted len=14>"}], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": [{"id": "technical-001", "tool_key": null, "operation_id": "get_market_quotes", "source_tool": "get_market_quotes"}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.534, "event": "llm", "run_id": "run-stage4", "node": "critic", "phase": null, "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: pass (reason: <redacted len=4>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.535, "event": "critic", "run_id": "run-stage4", "verdict": "pass", "reason": "<redacted len=16>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 1, "referenced_missing": [], "other_shown": 0, "other_total": 0, "datums_omitted": 0, "results_omitted": 0, "kept": [{"id": "technical-001", "reason": "<redacted len=16>"}], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": [{"id": "technical-001", "tool_key": null, "operation_id": "get_market_quotes", "source_tool": "get_market_quotes"}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.538, "event": "llm", "run_id": "run-stage4", "node": "critic", "phase": null, "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: pass (reason: <redacted len=4>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.538, "event": "critic", "run_id": "run-stage4", "verdict": "pass", "reason": "<redacted len=16>", "missing_points": [], "missing_tool_keys": [], "unsupported_claims": [], "issues": [], "verdict_conflicts": [], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [{"field": "what_happened", "shown": 2000, "total": 2010, "reason": "<redacted len=16>"}], "evidence": {"referenced_shown": 0, "referenced_missing": [], "other_shown": 0, "other_total": 0, "datums_omitted": 0, "results_omitted": 0, "kept": [], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.562, "event": "run_start", "run_id": null, "question": "<redacted len=12>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.562, "event": "plan", "run_id": null, "requested_date": null, "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.562, "event": "run_start", "run_id": null, "question": "<redacted len=12>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.562, "event": "plan", "run_id": null, "requested_date": null, "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.567, "event": "llm", "run_id": null, "node": "reasoning", "phase": "rewrite", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": null}
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=medium rewrites=1/1 research_rounds=0/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.568, "event": "llm", "run_id": null, "node": "reasoning", "phase": "research_followup", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": null}
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=medium rewrites=0/1 research_rounds=0/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.568, "event": "llm", "run_id": null, "node": "reasoning", "phase": "initial", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": null}
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=medium rewrites=0/1 research_rounds=0/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.573, "event": "llm", "run_id": null, "node": "reasoning", "phase": "rewrite", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": null}
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=medium rewrites=1/1 research_rounds=1/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.576, "event": "route", "run_id": "r1", "verdict": "revise", "decision": "finalize_audit", "reason": "rewrite_budget_exhausted", "rewrite_count": 1, "research_round_count": 0, "revision_count": 1, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": null, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "rewrite_budget_exhausted"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.578, "event": "executions", "run_id": "r1", "category": "technical", "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": 42.0, "arguments": {"symbols": ["000300"]}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.578, "event": "llm", "run_id": "r1", "node": "critic", "phase": null, "model": "m", "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "duration_ms": 1234.6}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.579, "event": "llm", "run_id": "r1", "node": "supervisor", "phase": null, "model": null, "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": null}
+INFO     app.graph.tool_runtime:tool_runtime.py:709 Internal tool us_fundamentals: AAPL_FRESH_X → 3 entries
+WARNING  app.graph.tool_runtime:tool_runtime.py:721 Internal tool us_fundamentals failed error_type=RuntimeError
+INFO     app.graph.tool_runtime:tool_runtime.py:756 Internal tool us_filings_recent: AAPL_FIL_X → 1 filings
+WARNING  app.graph.tool_runtime:tool_runtime.py:768 Internal tool us_filings_recent failed error_type=RuntimeError
+INFO     app.graph.tool_runtime:tool_runtime.py:709 Internal tool us_fundamentals: MSFT_CACHE_XYZ → 2 entries
+INFO     app.graph.tool_runtime:tool_runtime.py:380 Cache hit for internal_us_fundamentals
+WARNING  app.graph.nodes.analysts.base:base.py:217 sentiment: state 缺少 budget_deadline，预算退回按本节点起算（每次节点调用重置，旧行为）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.667, "event": "executions", "run_id": null, "category": "sentiment", "results": [{"tool_key": "xq_discussions", "operation_id": "list_stock_discussions", "source_tool": "list_stock_discussions", "tool": "list_stock_discussions", "duration_ms": 0.0, "arguments": {"symbol": "SH600519"}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 2, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.market_plan:market_plan.py:177 市场级最低证据集用代码口径覆盖 planner 的 quote 参数：{'symbols': ['600519']} → {'symbols': ['000300']}
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: 无）
+WARNING  app.graph.market_plan:market_plan.py:204 市场级问题：从计划中剔除 1 个必然被跳过的步骤（需要 symbol 却拿不到 symbol）: ['overview']
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: ['overview']）
+WARNING  app.graph.nodes.analysts.base:base.py:217 technical: state 缺少 budget_deadline，预算退回按本节点起算（每次节点调用重置，旧行为）
+WARNING  app.graph.nodes.analysts.base:base.py:299 technical 跳过重复 tool_call quote（同签名已在本次 route 中出现）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.673, "event": "executions", "run_id": null, "category": "technical", "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": 0.0, "arguments": {"symbols": ["SH000001", "SZ399001"]}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.gateway.http_client:http_client.py:161 HTTP call get_market_quotes attempt=1 attempt_timeout_ms=30000 remaining_budget_ms=none canonical_argument_summary={'symbols': {'type': 'array', 'count': 2}} transport_argument_summary={'symbols': {'type': 'string', 'count': 2}}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.68, "event": "executions", "run_id": "r1", "category": null, "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": null, "arguments": {"symbols": ["000300"]}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 0, "note": "<redacted len=0>", "cache": null}]}
+WARNING  app.research.reasoning:reasoning.py:154 检测到重复 evidence id dup-001（source_tool=a 与 b），将按 (id, source_tool) 退化匹配以避免证据错配
+WARNING  app.research.reasoning:reasoning.py:592 Reasoning 报告存在 3 条无效 evidence 引用
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.698, "event": "route", "run_id": "stage3-budget", "verdict": "research_more", "decision": "finalize_audit", "reason": "tool_call_budget_insufficient", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": 119.99998689999984, "required_minimum": 60.0, "tool_calls_remaining": 0, "required_tool_calls": 1, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "tool_call_budget_insufficient"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.7, "event": "route", "run_id": "stage3-gap", "verdict": "research_more", "decision": "finalize_audit", "reason": "no_executable_gap_steps", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 1, "max_research_rounds": 1, "budget_remaining": 299.9999888000002, "required_minimum": 60.0, "tool_calls_remaining": 12, "required_tool_calls": 1, "gap_key_decisions": [{"key": "not_visible", "decision": "dropped", "reason": "not_visible"}], "executable_gap_steps": [], "blocked_reason": "no_executable_gap_steps"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.702, "event": "run_start", "run_id": "stage3-chain", "question": "<redacted len=0>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.702, "event": "route", "run_id": "stage3-chain", "verdict": "", "decision": "finalize_audit", "reason": "no_executable_gap_steps", "rewrite_count": 0, "research_round_count": 0, "revision_count": 0, "max_rewrites": 0, "max_research_rounds": 0, "budget_remaining": 12.0, "required_minimum": 60.0, "tool_calls_remaining": null, "required_tool_calls": null, "gap_key_decisions": [{"key": "x", "decision": "dropped", "reason": "not_visible"}], "executable_gap_steps": [], "blocked_reason": "no_executable_gap_steps"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.702, "event": "finalize", "run_id": "stage3-chain", "final_audit_status": "research_exhausted", "delivery_status": "blocked", "reason": "<redacted len=16>", "unresolved_issues": [], "blocked_reason": "no_executable_gap_steps", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.702, "event": "delivery", "run_id": "stage3-chain", "delivery_status": "blocked", "persisted": false, "sink": "sync", "error_count": 0, "final_audit_status": "research_exhausted", "delivery_reason": "<redacted len=1>", "research_round_count": 1, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     app.main:main.py:710 Streaming question=<redacted len=10> domain=None conv_id=<redacted len=11>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.736, "event": "run_start", "run_id": "5ff33b67551e", "question": "<redacted len=10>", "explicit_domain": null, "conversation_id": "<redacted len=11>"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=10> → 945c7d2a
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.75, "event": "persistence", "run_id": "sse-stage4", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.75, "event": "delivery", "run_id": "sse-stage4", "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=4>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     app.main:main.py:212 Received question=<redacted len=10> (len=10) domain=None conv_id=<redacted len=11>
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=10> → 9f663cab
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.76, "event": "persistence", "run_id": "api-stage4", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.761, "event": "delivery", "run_id": "api-stage4", "delivery_status": "verified", "persisted": true, "sink": "sync", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=4>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=15> → 9d96f2a2
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.798, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+WARNING  app.agent.persistence:persistence.py:122 persist_research: delivery_status=blocked/final_audit_status=revise_exhausted/verdict=revise，跳过 memory、对话轮次与当日状态（question=<redacted len=14> errors=0）
+WARNING  app.agent.persistence:persistence.py:122 persist_research: delivery_status=degraded/final_audit_status=research_exhausted/verdict=research_more，跳过 memory、对话轮次与当日状态（question=<redacted len=15> errors=0）
+WARNING  app.agent.persistence:persistence.py:122 persist_research: delivery_status=failed/final_audit_status=error/verdict=error，跳过 memory、对话轮次与当日状态（question=<redacted len=13> errors=0）
+WARNING  app.agent.persistence:persistence.py:160 Research save failed (non-fatal): OSError
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=False): OSError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.957, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "OSError"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=22> → 8ee1203a
+WARNING  app.agent.persistence:persistence.py:167 Turn save failed (non-fatal): OSError
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=False): OSError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688307.996, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "OSError"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=22> → c37cd059
+WARNING  app.agent.persistence:persistence.py:173 Daily state save failed (non-fatal): OSError
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=False): OSError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.033, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "OSError"}
+INFO     app.main:main.py:212 Received question=<redacted len=1> (len=1) domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.04, "event": "delivery", "run_id": null, "delivery_status": "degraded", "persisted": false, "sink": "sync", "error_count": 0, "final_audit_status": "revise_exhausted", "delivery_reason": "<redacted len=9>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     app.main:main.py:212 Received question=<redacted len=1> (len=1) domain=None conv_id=<redacted len=0>
+ERROR    app.main:main.py:268 Research produced no report for <redacted len=1> (error_count=1)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.043, "event": "delivery", "run_id": null, "delivery_status": "failed", "persisted": false, "sink": "sync", "error_count": 0, "final_audit_status": "error", "delivery_reason": "<redacted len=11>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": "no_report"}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 502 Bad Gateway"
+INFO     app.main:main.py:212 Received question=<redacted len=1> (len=1) domain=None conv_id=<redacted len=0>
+WARNING  app.main:main.py:311 Research exceeded 0s budget: <redacted len=1>
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 504 Gateway Timeout"
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.071, "event": "run_start", "run_id": "c0767ea93983", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.072, "event": "delivery", "run_id": "c0767ea93983", "delivery_status": "failed", "persisted": false, "sink": "sse", "error_count": 0, "final_audit_status": "error", "delivery_reason": "<redacted len=11>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=1> → e74d7f60
+WARNING  app.agent.persistence:persistence.py:167 Turn save failed (non-fatal): RuntimeError
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=False): RuntimeError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.107, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "RuntimeError"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → c29e0d67
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.278, "event": "persistence", "run_id": "run-4", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → c769b710
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.285, "event": "persistence", "run_id": "run-9", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 7e7d78f8
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.288, "event": "persistence", "run_id": "run-2", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 6ac62e31
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.304, "event": "persistence", "run_id": "run-1", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 409b3201
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.32, "event": "persistence", "run_id": "run-0", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 5eb2702f
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.335, "event": "persistence", "run_id": "run-6", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 0e7e01d7
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.35, "event": "persistence", "run_id": "run-3", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=4> → 7091440b
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.384, "event": "persistence", "run_id": "run-11", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=4> → 2c5f710c
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.412, "event": "persistence", "run_id": "run-10", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 691941b7
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.444, "event": "persistence", "run_id": "run-8", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 06a1af56
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.475, "event": "persistence", "run_id": "run-5", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → e61c8403
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.537, "event": "persistence", "run_id": "run-7", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 1af963bc
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.591, "event": "persistence", "run_id": "different-0", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → ee9c7289
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.598, "event": "persistence", "run_id": "different-4", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → b64e6534
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.613, "event": "persistence", "run_id": "different-5", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → bf16b64e
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.629, "event": "persistence", "run_id": "different-2", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 8a9628f1
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.644, "event": "persistence", "run_id": "different-3", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 36a52f7a
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.659, "event": "persistence", "run_id": "different-1", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → a794e9cc
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.69, "event": "persistence", "run_id": "different-6", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → e915230c
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.721, "event": "persistence", "run_id": "different-7", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=17> → 92a2a3c6
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.76, "event": "persistence", "run_id": "same-run", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.76, "event": "persistence", "run_id": "same-run", "attempt": 1, "max_attempts": 3, "outcome": "idempotent", "retryable": false, "idempotent": true, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.76, "event": "persistence", "run_id": "same-run", "attempt": 1, "max_attempts": 3, "outcome": "idempotent", "retryable": false, "idempotent": true, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.76, "event": "persistence", "run_id": "same-run", "attempt": 1, "max_attempts": 3, "outcome": "idempotent", "retryable": false, "idempotent": true, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.76, "event": "persistence", "run_id": "same-run", "attempt": 1, "max_attempts": 3, "outcome": "idempotent", "retryable": false, "idempotent": true, "error": "<redacted len=0>", "error_category": null}
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=True): OperationalError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.797, "event": "persistence", "run_id": "retry-run", "attempt": 1, "max_attempts": 3, "outcome": "retry", "retryable": true, "idempotent": false, "error": "<redacted len=0>", "error_category": "OperationalError"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=18> → ac418d62
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.8, "event": "persistence", "run_id": "retry-run", "attempt": 2, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.805, "event": "run_start", "run_id": "8d56e60a9326", "question": "<redacted len=3>", "explicit_domain": null, "conversation_id": "<redacted len=3>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.805, "event": "run_start", "run_id": "82165b06fc93", "question": "<redacted len=3>", "explicit_domain": null, "conversation_id": "<redacted len=3>"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 4f81cfda
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.813, "event": "persistence", "run_id": "8d56e60a9326", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.813, "event": "delivery", "run_id": "8d56e60a9326", "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=4>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → bb880d5d
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.815, "event": "persistence", "run_id": "82165b06fc93", "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.816, "event": "delivery", "run_id": "82165b06fc93", "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=4>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.818, "event": "run_start", "run_id": "38d5d708686b", "question": "<redacted len=6>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688308.818, "event": "delivery", "run_id": "38d5d708686b", "delivery_status": "failed", "persisted": false, "sink": "sse", "error_count": 0, "final_audit_status": "error", "delivery_reason": "<redacted len=11>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=3> → 819f3c3f
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=2> → 2e15b9ec
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=2> → e4e02b1c
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=7> → c3271fc0
+INFO     app.main:main.py:212 Received question=<redacted len=1> (len=1) domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.435, "event": "delivery", "run_id": "private-run-id", "delivery_status": "verified", "persisted": true, "sink": "sync", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=0>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask "HTTP/1.1 200 OK"
+INFO     app.main:main.py:710 Streaming question=<redacted len=1> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.437, "event": "run_start", "run_id": "d388c4c57135", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.437, "event": "delivery", "run_id": "d388c4c57135", "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=4>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.441, "event": "delivery", "run_id": "private-cli-run-id", "delivery_status": "verified", "persisted": true, "sink": "cli", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=0>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.443, "event": "run_start", "run_id": "run-safe", "question": "<redacted len=41>", "conversation_id": "<redacted len=18>", "error": "<redacted len=41>"}
+WARNING  app.main:main.py:173 POST /api/ask rejected: empty or non-string question (type=list, keys=['question'])
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.444, "event": "executions", "run_id": "run-safe", "results": [{"tool_key": "news", "status": "success", "arguments": {"query": "<redacted len=10>"}}]}
+WARNING  app.agent.persistence:persistence.py:167 Turn save failed (non-fatal): OperationalError
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/6 failed (retryable=False): OperationalError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.446, "event": "persistence", "run_id": "non-tx-run", "attempt": 1, "max_attempts": 6, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "OperationalError"}
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=True): OperationalError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.48, "event": "persistence", "run_id": "retry-run", "attempt": 1, "max_attempts": 3, "outcome": "retry", "retryable": true, "idempotent": false, "error": "<redacted len=0>", "error_category": "OperationalError"}
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 2/3 failed (retryable=True): OperationalError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.48, "event": "persistence", "run_id": "retry-run", "attempt": 2, "max_attempts": 3, "outcome": "retry", "retryable": true, "idempotent": false, "error": "<redacted len=0>", "error_category": "OperationalError"}
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 3/3 failed (retryable=False): OperationalError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.48, "event": "persistence", "run_id": "retry-run", "attempt": 3, "max_attempts": 3, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "OperationalError"}
+WARNING  app.agent.persistence:persistence.py:186 Persistence attempt 1/3 failed (retryable=False): OperationalError
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688309.537, "event": "persistence", "run_id": "retry-run", "attempt": 1, "max_attempts": 3, "outcome": "failed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": "OperationalError"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=13> → 656eb9c7
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2025-01-02
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.168, "event": "persistence", "run_id": "safe-run", "attempt": 1, "max_attempts": 2, "outcome": "retry", "retryable": true, "idempotent": false, "error": "<redacted len=53>", "error_category": "OperationalError"}
+INFO     app.main:main.py:710 Streaming question=<redacted len=10> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.172, "event": "run_start", "run_id": "bf8280d3c188", "question": "<redacted len=10>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=10> → 467fc664
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.18, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.18, "event": "delivery", "run_id": null, "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=2>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     app.main:main.py:710 Streaming question=<redacted len=1> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.183, "event": "run_start", "run_id": "392353c17c60", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+WARNING  app.main:main.py:529 Stream research blocked for <redacted len=1> (final_audit_status=research_exhausted)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.184, "event": "delivery", "run_id": null, "delivery_status": "blocked", "persisted": false, "sink": "sse", "error_count": 1, "final_audit_status": "research_exhausted", "delivery_reason": "<redacted len=56>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "research_budget_exhausted", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     app.main:main.py:710 Streaming question=<redacted len=1> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.187, "event": "run_start", "run_id": "a6a74590df73", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+ERROR    app.main:main.py:562 Stream research produced no report for <redacted len=1> (error_count=1)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.188, "event": "delivery", "run_id": null, "delivery_status": "failed", "persisted": false, "sink": "sse", "error_count": 0, "final_audit_status": "error", "delivery_reason": "<redacted len=29>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "audit_error", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     app.main:main.py:710 Streaming question=<redacted len=10> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688312.191, "event": "run_start", "run_id": "ba97127d6a76", "question": "<redacted len=10>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+WARNING  app.main:main.py:615 Stream research exceeded 1s budget for: <redacted len=10>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.2, "event": "delivery", "run_id": "ba97127d6a76", "delivery_status": "failed", "persisted": false, "sink": "sse", "error_count": 0, "final_audit_status": "error", "delivery_reason": "<redacted len=7>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": "timeout"}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     app.main:main.py:710 Streaming question=<redacted len=1> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.204, "event": "run_start", "run_id": "e7863d342f48", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=1> → e8a7df54
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-11
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.215, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.215, "event": "delivery", "run_id": null, "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=2>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 200 OK"
+INFO     app.main:main.py:710 Streaming question=<redacted len=1> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.219, "event": "run_start", "run_id": "ed6fbdbf1fa3", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.219, "event": "delivery", "run_id": "ed6fbdbf1fa3", "delivery_status": "failed", "persisted": false, "sink": "sse", "error_count": 0, "final_audit_status": "error", "delivery_reason": "<redacted len=7>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null}
+ERROR    app.main:main.py:736 Internal error during streaming research: RuntimeError
+INFO     httpx2:_client.py:1085 HTTP Request: POST http://testserver/api/ask/stream "HTTP/1.1 500 Internal Server Error"
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.246, "event": "run_start", "run_id": "9a4d41f143f3", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.894, "event": "run_start", "run_id": null, "question": "<redacted len=9>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.894, "event": "llm", "run_id": null, "node": "supervisor", "phase": "replan", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: 代码级补齐 Critic 缺口工具: ['limit_up_count']
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.894, "event": "plan", "run_id": null, "requested_date": "2026-10-11", "as_of_date": "2026-10-09", "market_closed": true, "intent_domain": "a_share", "intent_task": "<redacted len=16>", "steps": [{"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "arguments": {}, "priority": "high"}, {"tool_key": "sentiment", "operation_id": "get_ashare_sentiment", "source_tool": "get_ashare_sentiment", "arguments": {}, "priority": "medium"}], "filtered_keys": [], "forced_gap_keys": ["limit_up_count"], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.896, "event": "run_start", "run_id": null, "question": "<redacted len=9>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.896, "event": "llm", "run_id": null, "node": "supervisor", "phase": "initial", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.897, "event": "plan", "run_id": null, "requested_date": "2026-10-11", "as_of_date": "2026-10-09", "market_closed": true, "intent_domain": "a_share", "intent_task": "<redacted len=16>", "steps": [{"tool_key": "sentiment", "operation_id": "get_ashare_sentiment", "source_tool": "get_ashare_sentiment", "arguments": {}, "priority": "medium"}], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.898, "event": "run_start", "run_id": null, "question": "<redacted len=9>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.898, "event": "llm", "run_id": null, "node": "supervisor", "phase": "replan", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:330 Supervisor: 回环轮丢弃已拿到数据的重复步骤: ['sentiment']
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: 代码级补齐 Critic 缺口工具: ['limit_up_count']
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.899, "event": "plan", "run_id": null, "requested_date": "2026-10-11", "as_of_date": "2026-10-09", "market_closed": true, "intent_domain": "a_share", "intent_task": "<redacted len=16>", "steps": [{"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "arguments": {}, "priority": "high"}], "filtered_keys": [], "forced_gap_keys": ["limit_up_count"], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.924, "event": "run_start", "run_id": null, "question": "<redacted len=9>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.925, "event": "plan", "run_id": null, "requested_date": null, "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": [], "unexecutable_keys": []}
+WARNING  app.gateway.tool_registry:tool_registry.py:808 registry_text: no tools for domains=['bogus'] — returning health tools only
+INFO     app.graph.tool_runtime:tool_runtime.py:365 Skipping duplicate call get_market_quotes (already executed this run)
+INFO     app.graph.tool_runtime:tool_runtime.py:365 Skipping duplicate call get_market_quotes (already executed this run)
+WARNING  app.graph.nodes.analysts.base:base.py:217 technical: state 缺少 budget_deadline，预算退回按本节点起算（每次节点调用重置，旧行为）
+WARNING  app.graph.nodes.analysts.base:base.py:299 technical 跳过重复 tool_call quote（同签名已在本次 route 中出现）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.957, "event": "executions", "run_id": null, "category": "technical", "results": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": 0.1, "arguments": {"symbols": ["600519"]}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 1, "note": "<redacted len=0>", "cache": null}, {"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "tool": "get_market_quotes", "duration_ms": 0.1, "arguments": {"symbols": ["000001"]}, "status": "success", "partial": false, "as_of_date": null, "retrieved_at": null, "datum_count": 1, "note": "<redacted len=0>", "cache": null}]}
+INFO     app.graph.tool_runtime:tool_runtime.py:637 Internal tool news_search: fetched 4 entries (status=ok)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.973, "event": "llm", "run_id": null, "node": "supervisor", "phase": "replan", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: 代码级补齐 Critic 缺口工具: ['limit_up_pool']
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.975, "event": "llm", "run_id": null, "node": "supervisor", "phase": "replan", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.977, "event": "run_start", "run_id": null, "question": "<redacted len=10>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.977, "event": "plan", "run_id": null, "requested_date": "2026-10-03", "as_of_date": "2026-09-30", "market_closed": true, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.979, "event": "run_start", "run_id": null, "question": "<redacted len=15>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.979, "event": "llm", "run_id": null, "node": "supervisor", "phase": "initial", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.market_plan:market_plan.py:209 A 股市场级最低证据集已注入: ['quote', 'sentiment', 'limit_up_count', 'limit_up_sectors', 'telegraph']（剔除必然跳过的步骤: 无）
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.98, "event": "plan", "run_id": null, "requested_date": "2027-01-05", "as_of_date": null, "market_closed": null, "intent_domain": "a_share", "intent_task": "<redacted len=14>", "steps": [{"tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes", "arguments": {"symbols": ["000300"]}, "priority": "high"}, {"tool_key": "sentiment", "operation_id": "get_ashare_sentiment", "source_tool": "get_ashare_sentiment", "arguments": {}, "priority": "high"}, {"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "arguments": {}, "priority": "high"}, {"tool_key": "limit_up_sectors", "operation_id": "list_limit_up_sectors", "source_tool": "list_limit_up_sectors", "arguments": {}, "priority": "high"}, {"tool_key": "telegraph", "operation_id": "internal_market_telegraph", "source_tool": "internal_market_telegraph", "arguments": {}, "priority": "high"}], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": ["quote", "sentiment", "limit_up_count", "limit_up_sectors", "telegraph"], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.982, "event": "run_start", "run_id": null, "question": "<redacted len=8>", "explicit_domain": "crypto", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.982, "event": "llm", "run_id": null, "node": "supervisor", "phase": "initial", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688313.982, "event": "plan", "run_id": null, "requested_date": "2026-10-10", "as_of_date": null, "market_closed": null, "intent_domain": "crypto", "intent_task": "<redacted len=14>", "steps": [], "filtered_keys": [], "forced_gap_keys": [], "prefix_keys": [], "unexecutable_keys": []}
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688314.015, "event": "llm", "run_id": null, "node": "reasoning", "phase": "initial", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+WARNING  app.graph.nodes.reasoning:reasoning.py:183 Evidence gate: has_evidence=False, report degraded to confidence=low
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=low rewrites=0/1 research_rounds=0/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688314.023, "event": "llm", "run_id": null, "node": "reasoning", "phase": "initial", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+WARNING  app.graph.nodes.reasoning:reasoning.py:183 Evidence gate: has_evidence=False, report degraded to confidence=low
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=low rewrites=0/1 research_rounds=0/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688314.031, "event": "llm", "run_id": null, "node": "reasoning", "phase": "initial", "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+WARNING  app.graph.nodes.reasoning:reasoning.py:183 Evidence gate: has_evidence=False, report degraded to confidence=low
+INFO     app.graph.nodes.reasoning:reasoning.py:191 Reasoning completed: confidence=low rewrites=0/1 research_rounds=0/1
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688314.037, "event": "llm", "run_id": null, "node": "critic", "phase": null, "model": "qwen3.7-flash", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+ERROR    app.graph.nodes.critic:critic.py:1162 Critic: 代码级校验产出 1 条 issue（['missing_evidence']），本轮不可能判 pass
+ERROR    app.graph.nodes.critic:critic.py:956 Critic 裁决与 issue action 冲突，按更保守路径路由: [{'kind': 'verdict_vs_actions', 'model_verdict': 'pass', 'action_verdict': 'research_more', 'resolved': 'research_more'}]
+INFO     app.graph.nodes.critic:critic.py:1214 Critic verdict: research_more (reason: <redacted len=2>)
+INFO     app.graph.run_log:run_log.py:223 {"ts": 1791688314.038, "event": "critic", "run_id": null, "verdict": "research_more", "reason": "<redacted len=16>", "missing_points": ["<redacted len=13>"], "missing_tool_keys": [], "unsupported_claims": [], "issues": [{"kind": "missing_evidence", "severity": "medium", "action": "research_more", "claim": "<redacted len=13>", "rationale": "<redacted len=69>", "required_tool_keys": [], "required_coverage": {}, "reason_codes": ["stale_date"]}], "verdict_conflicts": [{"kind": "verdict_vs_actions", "model_verdict": "pass", "action_verdict": "research_more", "resolved": "research_more"}], "gap_key_decisions": [], "gap_raw": [], "gap_kept": [], "gap_dropped": [], "context_truncation": {"report_fields": [], "evidence": {"referenced_shown": 1, "referenced_missing": [], "other_shown": 0, "other_total": 0, "datums_omitted": 0, "results_omitted": 0, "kept": [{"id": "quote-001", "reason": "<redacted len=16>"}, {"metric": "change_pct", "reason": "<redacted len=14>"}], "omitted": [], "_dropped_arg_keys": ["allowed_ids", "allowed_aliases"]}}, "evidence_identity": [{"id": "quote-001", "tool_key": "quote", "operation_id": "get_market_quotes", "source_tool": "get_market_quotes"}]}
+INFO     app.graph.tool_runtime:tool_runtime.py:380 Cache hit for k

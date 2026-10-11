@@ -63,6 +63,9 @@ class ToolCallPlan(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     purpose: str
     priority: Literal["high", "medium", "low"] = "medium"
+    #: Force a fresh Gateway fetch when a prior partial/low-coverage result
+    #: must be re-collected instead of served from cache.
+    refresh: bool = False
 
 
 class ResearchPlan(BaseModel):

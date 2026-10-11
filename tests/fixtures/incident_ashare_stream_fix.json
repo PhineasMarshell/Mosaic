@@ -1,0 +1,12 @@
+{
+  "run_id": "redacted-ashare-stream",
+  "quote_attempts": [
+    {"tool": "get_market_quotes", "arguments": {"symbols": ["000300"]}, "gateway_error": "redacted"},
+    {"tool": "get_market_quotes", "arguments": {"symbols": ["SH000001", "SZ399001", "SZ399006"]}, "gateway_error": "redacted"}
+  ],
+  "timeouts": ["get_ashare_sentiment", "get_limit_up_count"],
+  "partial": {"tool": "list_limit_up_sectors", "status": "partial", "datum_count": 201},
+  "forged_evidence_ids": ["technical-001", "technical-004", "E999"],
+  "expected_delivery_status": "blocked",
+  "expected_persistence": false
+}

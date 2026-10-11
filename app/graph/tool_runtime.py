@@ -15,6 +15,7 @@ analyst 节点通过此层执行分配给自己的工具。
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
@@ -284,8 +285,9 @@ class ToolRuntime:
             session["gateway"] = gateway
             try:
                 await gateway.__aenter__()
-            except Exception:
+            except BaseException:
                 session["gateway"] = None
+                await gateway.__aexit__(None, None, None)
                 raise
             if self.settings.market_gateway_mode.lower() == "mcp":
                 session["available"] = {tool.name for tool in gateway.tools}
@@ -303,7 +305,7 @@ class ToolRuntime:
         try:
             await gateway.__aexit__(None, None, None)
         except Exception as exc:
-            logger.warning("Gateway client close failed: %s", exc)
+            logger.warning("Gateway client close failed error_type=%s", type(exc).__name__)
 
     # ------------------------------------------------------------------ #
     # 公共 API                                                            #
@@ -320,6 +322,7 @@ class ToolRuntime:
         arguments: dict,
         called_signatures: set[str],
         deadline: float | None = None,
+        refresh: bool = False,
     ) -> ToolResult:
         """执行单个工具调用。
 
@@ -354,7 +357,11 @@ class ToolRuntime:
         # T27：同一次运行里同签名已真实执行过 → 明确跳过（partial + note）。
         # 旧实现这里 return None 被调用方当成"无缓存"，同签名第 3 次调用
         # 会**绕过缓存**再打一次真实网关——与"去重"意图相反。
-        if signature in called_signatures:
+        # A research_more step marked refresh is an explicit request for a
+        # fresh upstream read.  It must bypass both the same-run duplicate
+        # guard and the shared cache; otherwise a partial/empty result can be
+        # reported as "already executed" forever.
+        if signature in called_signatures and not refresh:
             logger.info("Skipping duplicate call %s (already executed this run)", tool_name)
             return ToolResult(
                 tool=tool_name,
@@ -368,7 +375,7 @@ class ToolRuntime:
             )
 
         # 检查缓存命中
-        cached = self._check_cache(tool_name, arguments, called_signatures, signature)
+        cached = None if refresh else self._check_cache(tool_name, arguments, called_signatures, signature)
         if cached is not None:
             logger.info("Cache hit for %s", tool_name)
             cached.operation_id = cached.operation_id or tool_name
@@ -376,7 +383,36 @@ class ToolRuntime:
             return cached
 
         # 执行真实调用
-        result = await self._do_execute(tool_name, arguments, deadline=deadline)
+        # External gateway adapters already receive a fresh request whenever
+        # the outer cache/duplicate guards are bypassed.  Pass the explicit
+        # flag only to the internal adapter, whose per-tool caches live below
+        # ``_do_execute``.  Keeping the external call shape compatible also
+        # preserves lightweight gateway doubles used by integrations.
+        is_internal = False
+        try:
+            is_internal = getattr(resolve_tool_by_name(tool_name), "http_method", None) == "INTERNAL"
+        except Exception:
+            pass
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            return ToolResult(
+                tool=tool_name, arguments=arguments, status=STATUS_ERROR,
+                normalized=[], error="budget exhausted before tool execution",
+            )
+        execution = (
+            self._do_execute(tool_name, arguments, deadline=deadline, refresh=True)
+            if refresh and is_internal else self._do_execute(tool_name, arguments, deadline=deadline)
+        )
+        try:
+            # Include lazy connection/handshake and internal adapters in the
+            # same wall-clock budget as the upstream request.
+            async with asyncio.timeout(remaining):
+                result = await execution
+        except TimeoutError:
+            return ToolResult(
+                tool=tool_name, arguments=arguments, status=STATUS_ERROR,
+                normalized=[], error="budget exhausted during tool execution",
+            )
         # Keep trace fields present even when a Gateway/mock implementation
         # constructs an older ToolResult shape.
         result.operation_id = result.operation_id or tool_name
@@ -400,6 +436,8 @@ class ToolRuntime:
             return
         # T5：原始条数必须在切片 / 追加 note **之前**取，note 自身不算进计数。
         original_count = len(result.normalized)
+        result.source_datum_count = original_count
+        result.source_partial = result.partial or result.status == STATUS_PARTIAL
         # 保留**末尾** 200：K 线按时间升序，末尾才是最新数据；
         # 旧实现 [:200] 保留最旧，note 却写"保留最近 200"。
         kept = result.normalized[-200:]
@@ -441,18 +479,27 @@ class ToolRuntime:
             )
             logger.info("HK context injected: %d entries from eastmoney", len(normalized))
         except Exception as exc:
-            logger.warning("HK context injection failed (non-fatal): %s", exc)
+            logger.warning("HK context injection failed (non-fatal) error_type=%s", type(exc).__name__)
 
     # ------------------------------------------------------------------ #
     # 内部实现                                                             #
     # ------------------------------------------------------------------ #
 
-    async def _do_execute(self, tool_name: str, arguments: dict, deadline: float | None = None) -> ToolResult:
+    async def _do_execute(
+        self,
+        tool_name: str,
+        arguments: dict,
+        deadline: float | None = None,
+        *,
+        refresh: bool = False,
+    ) -> ToolResult:
         """单次工具调用的核心逻辑。"""
         # 内部工具直连（不走 Gateway）—— 必须在会话分支之前 return，
         # 只用内部工具的 analyst 不得触发建连（T18b）
         meta = resolve_tool_by_name(tool_name)
         if getattr(meta, "http_method", None) == "INTERNAL":
+            if refresh:
+                return await self._execute_internal(tool_name, arguments, refresh=True)
             return await self._execute_internal(tool_name, arguments)
 
         # T18：gateway_session 打开期间复用同一个客户端；T18b：按需建连；
@@ -525,7 +572,7 @@ class ToolRuntime:
 
         return ALL_TOOLS
 
-    async def _execute_internal(self, tool_name: str, arguments: dict) -> ToolResult:
+    async def _execute_internal(self, tool_name: str, arguments: dict, *, refresh: bool = False) -> ToolResult:
         """执行内部工具（不走 Gateway，直连外部 API）。"""
         if tool_name == "internal_hk_northbound":
             try:
@@ -539,7 +586,7 @@ class ToolRuntime:
                     normalized=normalized,
                 )
             except Exception as exc:
-                logger.warning("Internal tool hk_northbound failed: %s", exc)
+                logger.warning("Internal tool hk_northbound failed error_type=%s", type(exc).__name__)
                 return ToolResult(
                     tool="hk_northbound_daily",
                     arguments=arguments,
@@ -564,7 +611,7 @@ class ToolRuntime:
                     normalized=normalized,
                 )
             except Exception as exc:
-                logger.warning("Internal tool hk_index failed: %s", exc)
+                logger.warning("Internal tool hk_index failed error_type=%s", type(exc).__name__)
                 return ToolResult(
                     tool="hk_index_snapshot",
                     arguments=arguments,
@@ -575,7 +622,7 @@ class ToolRuntime:
 
         if tool_name == "news_search":
             cache_key = _make_cache_key(tool_name, arguments)
-            cached = market_cache.get(cache_key)
+            cached = None if refresh else market_cache.get(cache_key)
             if cached is not None:
                 logger.info("Cache hit for news_search")
                 return cached
@@ -612,7 +659,7 @@ class ToolRuntime:
                     market_cache.set(cache_key, result, ttl=ttl)
                 return result
             except Exception as exc:
-                logger.warning("Internal tool news_search failed: %s", exc)
+                logger.warning("Internal tool news_search failed error_type=%s", type(exc).__name__)
                 return ToolResult(
                     tool="news_search",
                     arguments=arguments,
@@ -622,13 +669,13 @@ class ToolRuntime:
                 )
 
         if tool_name == "internal_symbol_news":
-            return await self._run_internal_symbol_news(arguments)
+            return await self._run_internal_symbol_news(arguments, refresh=refresh)
 
         if tool_name == "internal_market_telegraph":
-            return await self._run_internal_market_telegraph(arguments)
+            return await self._run_internal_market_telegraph(arguments, refresh=refresh)
 
         if tool_name == "internal_news_digest":
-            return await self._run_internal_news_digest(arguments)
+            return await self._run_internal_news_digest(arguments, refresh=refresh)
 
         if tool_name == "internal_us_fundamentals":
             # SEC 公平访问政策门闩：未声明访问身份不得发起任何网络请求
@@ -641,7 +688,7 @@ class ToolRuntime:
                     error=_SEC_EDGAR_CONTACT_MISSING,
                 )
             cache_key = _make_cache_key(tool_name, arguments)
-            cached = market_cache.get(cache_key)
+            cached = None if refresh else market_cache.get(cache_key)
             if cached is not None:
                 logger.info("Cache hit for us_fundamentals")
                 return cached
@@ -671,7 +718,7 @@ class ToolRuntime:
                     market_cache.set(cache_key, result, ttl=_US_FUNDAMENTALS_TTL_SECONDS)
                 return result
             except Exception as exc:
-                logger.warning("Internal tool us_fundamentals failed: %s", exc)
+                logger.warning("Internal tool us_fundamentals failed error_type=%s", type(exc).__name__)
                 return ToolResult(
                     tool="us_fundamentals",
                     arguments=arguments,
@@ -690,7 +737,7 @@ class ToolRuntime:
                     error=_SEC_EDGAR_CONTACT_MISSING,
                 )
             cache_key = _make_cache_key(tool_name, arguments)
-            cached = market_cache.get(cache_key)
+            cached = None if refresh else market_cache.get(cache_key)
             if cached is not None:
                 logger.info("Cache hit for us_filings_recent")
                 return cached
@@ -718,7 +765,7 @@ class ToolRuntime:
                     market_cache.set(cache_key, result, ttl=_US_FILINGS_TTL_SECONDS)
                 return result
             except Exception as exc:
-                logger.warning("Internal tool us_filings_recent failed: %s", exc)
+                logger.warning("Internal tool us_filings_recent failed error_type=%s", type(exc).__name__)
                 return ToolResult(
                     tool="us_filings_recent",
                     arguments=arguments,
@@ -757,14 +804,14 @@ class ToolRuntime:
             market_cache.set(_CODE_NAME_CACHE_KEY, code_map, ttl=self.settings.news_code_name_ttl_seconds)
             return str(code_map.get(symbol6, ""))
         except Exception as exc:  # noqa: BLE001 名称表失败不阻塞主路
-            logger.warning("Internal tool news: code_name map fetch failed (non-fatal): %s", exc)
+            logger.warning("Internal tool news: code_name map fetch failed (non-fatal) error_type=%s", type(exc).__name__)
             return ""
 
-    async def _run_internal_symbol_news(self, arguments: dict) -> ToolResult:
+    async def _run_internal_symbol_news(self, arguments: dict, *, refresh: bool = False) -> ToolResult:
         """internal_symbol_news — A 股个股新闻聚合（东财个股新闻 + Google 资讯）。"""
         tool = "symbol_news"
         cache_key = _make_cache_key("internal_symbol_news", arguments)
-        cached = market_cache.get(cache_key)
+        cached = None if refresh else market_cache.get(cache_key)
         if cached is not None:
             logger.info("Cache hit for internal_symbol_news")
             return cached
@@ -798,7 +845,7 @@ class ToolRuntime:
         east_out = outcomes[0]
         if isinstance(east_out, BaseException):
             sources_failed.append("eastmoney")
-            logger.warning("Internal tool internal_symbol_news: eastmoney failed: %s", east_out)
+            logger.warning("Internal tool internal_symbol_news: eastmoney failed error_type=%s", type(east_out).__name__)
         else:
             sources_ok.append("eastmoney")
             east_items = east_out
@@ -806,7 +853,7 @@ class ToolRuntime:
             google_out = outcomes[1]
             if isinstance(google_out, BaseException):
                 sources_failed.append("google")
-                logger.warning("Internal tool internal_symbol_news: google rss failed: %s", google_out)
+                logger.warning("Internal tool internal_symbol_news: google rss failed error_type=%s", type(google_out).__name__)
             else:
                 sources_ok.append("google")
                 google_items = google_out
@@ -866,11 +913,11 @@ class ToolRuntime:
             market_cache.set(cache_key, result, ttl=self.settings.news_symbol_ttl_seconds)
         return result
 
-    async def _run_internal_market_telegraph(self, arguments: dict) -> ToolResult:
+    async def _run_internal_market_telegraph(self, arguments: dict, *, refresh: bool = False) -> ToolResult:
         """internal_market_telegraph — 财联社电报快讯（全市场最新电报流）。"""
         tool = "telegraph"
         cache_key = _make_cache_key("internal_market_telegraph", arguments)
-        cached = market_cache.get(cache_key)
+        cached = None if refresh else market_cache.get(cache_key)
         if cached is not None:
             logger.info("Cache hit for %s", "internal_market_telegraph")
             return cached
@@ -880,7 +927,7 @@ class ToolRuntime:
         try:
             items = await fetch_telegraph(timeout=float(self.settings.news_source_timeout_seconds))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Internal tool telegraph failed: %s", exc)
+            logger.warning("Internal tool telegraph failed error_type=%s", type(exc).__name__)
             return ToolResult(
                 tool=tool,
                 arguments=arguments,
@@ -927,11 +974,11 @@ class ToolRuntime:
             market_cache.set(cache_key, result, ttl=self.settings.news_telegraph_ttl_seconds)
         return result
 
-    async def _run_internal_news_digest(self, arguments: dict) -> ToolResult:
+    async def _run_internal_news_digest(self, arguments: dict, *, refresh: bool = False) -> ToolResult:
         """internal_news_digest — 跨市场主题/事件聚合（Google 资讯 + DDGS）。"""
         tool = "news_digest"
         cache_key = _make_cache_key("internal_news_digest", arguments)
-        cached = market_cache.get(cache_key)
+        cached = None if refresh else market_cache.get(cache_key)
         if cached is not None:
             logger.info("Cache hit for %s", "internal_news_digest")
             return cached
@@ -963,13 +1010,13 @@ class ToolRuntime:
         )
         if isinstance(google_out, BaseException):
             sources_failed.append("google")
-            logger.warning("Internal tool news_digest: google rss failed: %s", google_out)
+            logger.warning("Internal tool news_digest: google rss failed error_type=%s", type(google_out).__name__)
         else:
             sources_ok.append("google")
             google_items = google_out
         if isinstance(ddgs_out, BaseException):
             sources_failed.append("ddgs")
-            logger.warning("Internal tool news_digest: ddgs failed: %s", ddgs_out)
+            logger.warning("Internal tool news_digest: ddgs failed error_type=%s", type(ddgs_out).__name__)
         else:
             sources_ok.append("ddgs")
             ddgs_items = ddgs_out
@@ -1016,7 +1063,11 @@ class ToolRuntime:
             note=note,
         )
         logger.info(
-            "Internal tool news_digest: %r → kept %d/%d (status=%s)", query, len(kept), total_before_dedup, status
+            "Internal tool news_digest: query_len=%d → kept %d/%d (status=%s)",
+            len(query),
+            len(kept),
+            total_before_dedup,
+            status,
         )
         if status != STATUS_ERROR:
             market_cache.set(cache_key, result, ttl=self.settings.news_digest_ttl_seconds)

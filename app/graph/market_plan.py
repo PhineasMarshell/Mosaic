@@ -21,8 +21,8 @@ import logging
 import re
 from typing import Any
 
-from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
 from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, semantic_signature
+from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,11 @@ def is_market_level_question(intent: ResearchIntent | Any, question: str) -> boo
         return False
     if getattr(intent, "task", None) not in MARKET_TASKS:
         return False
-    return _STOCK_CODE_RE.search(question or "") is None
+    from app.gateway.stock_codes import STOCK_CODE_MAP_A_SHARE
+
+    return _STOCK_CODE_RE.search(question or "") is None and not any(
+        name in (question or "") and symbol.startswith(("SH", "SZ")) for name, symbol in STOCK_CODE_MAP_A_SHARE.items()
+    )
 
 
 def _in_registry(tool_key: str, registry: str) -> bool:
@@ -95,9 +99,12 @@ def unexecutable_steps(plan: ResearchPlan, question: str) -> list[str]:
     ``arguments`` 里没有 ``symbol``，且问题里也抽不出 6 位代码 → analyst 会
     打一条 warning 后 ``continue``。这类 step 留在计划里只会制造假覆盖。
     """
+    from app.gateway.stock_codes import STOCK_CODE_MAP_A_SHARE
     from app.gateway.tool_registry import resolve_tool
 
-    has_code_in_question = _STOCK_CODE_RE.search(question or "") is not None
+    has_code_in_question = _STOCK_CODE_RE.search(question or "") is not None or any(
+        name in (question or "") and symbol.startswith(("SH", "SZ")) for name, symbol in STOCK_CODE_MAP_A_SHARE.items()
+    )
     dropped: list[str] = []
     for step in plan.steps:
         try:

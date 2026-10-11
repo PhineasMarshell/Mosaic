@@ -163,13 +163,19 @@ class SupervisorNode:
         # 无法执行的 LLM 规划。
         critique = state.get("critique") if isinstance(state, dict) else getattr(state, "critique", None)
         results = state.get("results", []) if isinstance(state, dict) else getattr(state, "results", [])
-        preflight = gap_key_decision(
-            critique,
-            registry,
-            results,
-            max_keys=getattr(self.settings, "gap_max_steps", 3),
-        ) if critique else None
-        verdict = str(critique.get("verdict", "") if isinstance(critique, dict) else getattr(critique, "verdict", "")).lower()
+        preflight = (
+            gap_key_decision(
+                critique,
+                registry,
+                results,
+                max_keys=getattr(self.settings, "gap_max_steps", 3),
+            )
+            if critique
+            else None
+        )
+        verdict = str(
+            critique.get("verdict", "") if isinstance(critique, dict) else getattr(critique, "verdict", "")
+        ).lower()
         if preflight and verdict == "research_more" and preflight.raw and not preflight.kept:
             from app.models.research import ResearchIntent
 
@@ -318,7 +324,8 @@ class SupervisorNode:
                 decision.reason_counts(),
             )
 
-        plan.steps, dropped_repeat = drop_repeat_steps(plan.steps, results)
+        coverage_specs = coverage_requirements(critique)
+        plan.steps, dropped_repeat = drop_repeat_steps(plan.steps, results, coverage_specs)
         if dropped_repeat:
             logger.info("Supervisor: 回环轮丢弃已拿到数据的重复步骤: %s", dropped_repeat)
 
@@ -331,7 +338,7 @@ class SupervisorNode:
             question=question,
             # 逐条 issue 的覆盖要求（含互相冲突的 arguments 变体）：每个尚未被满足的
             # 变体各补一条独立步骤，让"同一工具、不同参数"的多次调用真实进入计划。
-            requirements=coverage_requirements(critique),
+            requirements=coverage_specs,
             results=results,
         )
         # Gap steps are appended after the initial plan pass.  Apply the same
@@ -342,7 +349,11 @@ class SupervisorNode:
         self._last_forced_gap = list(forced_gap)
         prior_disposition = []
         if critique is not None:
-            raw_prior = critique.get("gap_key_decisions", []) if isinstance(critique, dict) else getattr(critique, "gap_key_decisions", [])
+            raw_prior = (
+                critique.get("gap_key_decisions", [])
+                if isinstance(critique, dict)
+                else getattr(critique, "gap_key_decisions", [])
+            )
             prior_disposition = list(raw_prior or [])
         planned_gap = [step.tool_key for step in plan.steps if step.tool_key in gap_keys]
         current_disposition = decision.as_state()

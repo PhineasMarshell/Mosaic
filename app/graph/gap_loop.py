@@ -32,8 +32,9 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.models.research import ToolCallPlan
 from app.gateway.arguments import canonicalize_tool_arguments, semantic_signature
+from app.gateway.tool_registry import resolve_tool
+from app.models.research import ToolCallPlan
 
 #: 视为"拿到过调用结果"的状态 —— error 不算，允许回环轮重试失败的工具
 _DONE_STATUSES = ("success", "partial")
@@ -109,6 +110,9 @@ def coverage_records(results: Any) -> list[ExecutionCoverage]:
     for r in results or []:
         status = str(_field(r, "status", "") or "")
         normalized = _field(r, "normalized", []) or []
+        source_count = _field(r, "source_datum_count")
+        source_partial = _field(r, "source_partial")
+        local_truncation = source_count is not None
         tool_name = str(_field(r, "tool", "") or "")
         args = dict(_field(r, "arguments", {}) or {})
         try:
@@ -120,9 +124,9 @@ def coverage_records(results: Any) -> list[ExecutionCoverage]:
                 tool_key=_field(r, "tool_key") or None,
                 tool_name=tool_name,
                 arguments=args,
-                status=status,
-                partial=bool(_field(r, "partial", False)),
-                datum_count=len(normalized),
+                status=("partial" if source_partial else "success") if local_truncation else status,
+                partial=bool(source_partial) if local_truncation else bool(_field(r, "partial", False)),
+                datum_count=source_count if local_truncation else len(normalized),
                 note=_field(r, "note"),
             )
         )
@@ -161,7 +165,7 @@ def judge_coverage(
         record.reason = "status_error"
         return record
 
-    if record.status == "partial" and not allow_partial:
+    if (record.status == "partial" or record.partial) and not allow_partial:
         record.satisfies = False
         record.reason = "status_partial"
         return record
@@ -231,16 +235,14 @@ def _key_satisfied(key: str, records: list[ExecutionCoverage], spec: dict[str, A
     if not variants:
         generic = {k: v for k, v in spec.items() if k != "argument_variants"}
         return any(judge_coverage(record, {key}, generic).satisfies for record in records)
-    return all(
-        _variant_satisfied(key, records, _with_key_policy(variant, spec)) for variant in variants
-    )
+    return all(_variant_satisfied(key, records, _with_key_policy(variant, spec)) for variant in variants)
 
 
 def satisfied_keys(
     results: Any,
     requirements: dict[str, dict[str, Any]] | None = None,
 ) -> set[str]:
-    """"已拿到充分证据"的 registry key 集合。
+    """ "已拿到充分证据"的 registry key 集合。
 
     与旧的 ``executed_keys`` 的区别就是本阶段的意义：
     - error → 不算（可重试）
@@ -380,9 +382,7 @@ def executed_keys(results: Any) -> set[str]:
     多个 registry key 复用时它会把兄弟 key 的缺口误判成"已满足"（阶段 2 修掉的
     真实缺陷）。证据充分性判据只有一个：``satisfied_keys(results, requirements)``。
     """
-    raise NotImplementedError(
-        "executed_keys() 已删除（阶段 6）：证据充分性请用 satisfied_keys(results, requirements)"
-    )
+    raise NotImplementedError("executed_keys() 已删除（阶段 6）：证据充分性请用 satisfied_keys(results, requirements)")
 
 
 def allowed_keys(registry: str) -> set[str]:
@@ -448,11 +448,20 @@ def _args_subset(planned: dict, executed: dict) -> bool:
     return True
 
 
-def is_repeat_step(step: ToolCallPlan, results: Any) -> bool:
+def is_repeat_step(
+    step: ToolCallPlan,
+    results: Any,
+    requirements: dict[str, dict[str, Any]] | None = None,
+) -> bool:
     """该 step 是否为「同工具同参数已经调过、且拿到过结果」的重复。
 
     这里用 operationId 是**正确的**：它回答的是"要不要再调一次"，不是"证据够不够"。
     """
+    # ``refresh`` is an explicit Critic/Supervisor instruction.  Even a
+    # successful prior call must not make a refresh step disappear during
+    # route de-duplication; the caller asked to re-read the upstream source.
+    if bool(_field(step, "refresh", False)):
+        return False
     from app.gateway.tool_registry import resolve_tool
 
     try:
@@ -463,17 +472,41 @@ def is_repeat_step(step: ToolCallPlan, results: Any) -> bool:
         planned = canonicalize_tool_arguments(meta.tool_name, dict(step.arguments or {}))
     except Exception:
         planned = dict(step.arguments or {})
+    # When a Critic supplied coverage requirements, a prior call may only be
+    # dropped if it actually satisfies the requirement.  This keeps partial,
+    # empty, low-count, or wrong-argument results retryable.
+    required = requirements.get(step.tool_key, {}) if requirements is not None else None
+    records = coverage_records(results) if required is not None else None
     for args in executed_index(results).get(meta.tool_name, []):
         try:
             executed = canonicalize_tool_arguments(meta.tool_name, dict(args or {}))
         except Exception:
             executed = dict(args or {})
         if _args_subset(planned, executed):
-            return True
+            if required is None:
+                return True
+            for record in records or []:
+                if record.tool_name != meta.tool_name:
+                    continue
+                if not _args_subset(planned, record.arguments):
+                    continue
+                if required.get("argument_variants"):
+                    if any(
+                        _variant_satisfied(step.tool_key, [record], _with_key_policy(v, required))
+                        for v in required["argument_variants"]
+                    ):
+                        return True
+                elif judge_coverage(record, {step.tool_key}, required).satisfies:
+                    return True
+            return False
     return False
 
 
-def drop_repeat_steps(steps: list[ToolCallPlan], results: Any) -> tuple[list[ToolCallPlan], list[str]]:
+def drop_repeat_steps(
+    steps: list[ToolCallPlan],
+    results: Any,
+    requirements: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[ToolCallPlan], list[str]]:
     """丢掉重复步骤 → (保留的 steps, 被丢弃的 tool_key 列表)。"""
     kept: list[ToolCallPlan] = []
     dropped: list[str] = []
@@ -483,7 +516,7 @@ def drop_repeat_steps(steps: list[ToolCallPlan], results: Any) -> tuple[list[Too
             step.arguments = canonicalize_tool_arguments(meta.tool_name, dict(step.arguments or {}))
         except Exception:
             pass
-        if is_repeat_step(step, results):
+        if is_repeat_step(step, results, requirements):
             dropped.append(step.tool_key)
         else:
             kept.append(step)
@@ -681,25 +714,24 @@ def append_gap_steps(
         variants = spec.get("argument_variants")
         if variants:
             # key 级 allow_partial 禁令同样下压到变体：被禁令挡下的变体必须继续补研究
-            specs = [
-                v for v in variants if not _variant_satisfied(key, records, _with_key_policy(v, spec))
-            ]
+            specs = [v for v in variants if not _variant_satisfied(key, records, _with_key_policy(v, spec))]
         else:
             specs = [None]
         for variant in specs:
             if len(forced) >= max_gap_steps:
                 break
             if variant is None:
-                if key in present:
+                if requirements is None and key in present:
                     continue
-                arguments: dict[str, Any] = {}
+                # A kept gap key with no explicit coverage variant still needs
+                # a retry when the existing plan contains the same key (for
+                # example a previous partial result). Reuse its canonical args.
+                existing = next((s for s in steps if s.tool_key == key), None)
+                arguments = dict(existing.arguments or {}) if existing is not None else {}
             else:
                 arguments = dict(variant.get("arguments") or {})
                 signature = _variant_signature(arguments)
-                if any(
-                    s.tool_key == key and _variant_signature(dict(s.arguments or {})) == signature
-                    for s in forced
-                ):
+                if any(s.tool_key == key and _variant_signature(dict(s.arguments or {})) == signature for s in forced):
                     continue
             if meta.tool_name.startswith(_QUERY_TOOL_PREFIXES):
                 arguments.setdefault("query", question)
@@ -712,17 +744,31 @@ def append_gap_steps(
             except Exception:
                 continue
             signature = semantic_signature(key, arguments)
-            if any(semantic_signature(s.tool_key, dict(s.arguments or {})) == signature for s in steps + forced):
+            # With coverage-aware requirements, an identical existing step may
+            # be the low-coverage/partial execution that caused this gap. Keep
+            # the retry step.  The forced list itself is still deduplicated by
+            # variant above. Legacy calls retain idempotent behaviour.
+            if requirements is None and any(
+                semantic_signature(s.tool_key, dict(s.arguments or {})) == signature for s in steps + forced
+            ):
                 continue
             forced.append(
                 ToolCallPlan(
                     tool_key=key,
                     arguments=arguments,
-                    purpose="Critic 指出的证据缺口（代码级补齐）",
+                    purpose=(
+                        "Critic 指出的证据缺口（覆盖不足重拉，代码级补齐）"
+                        if key in present
+                        else "Critic 指出的证据缺口（代码级补齐）"
+                    ),
                     priority="high",
+                    refresh=bool(requirements is not None),
                 )
             )
             present.add(key)
+    if requirements is not None and forced:
+        forced_signatures = {semantic_signature(s.tool_key, dict(s.arguments or {})) for s in forced}
+        steps = [s for s in steps if semantic_signature(s.tool_key, dict(s.arguments or {})) not in forced_signatures]
     merged = forced + list(steps)
     selected = merged[:max_steps]
     return selected, [s.tool_key for s in forced if s in selected]

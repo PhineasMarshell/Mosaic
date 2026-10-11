@@ -68,9 +68,9 @@ _SENSITIVE_FIELDS = {
     "error",
     "errors",
     "delivery_reason",
-    "blocked_reason",
     "note",
     "claim",
+    "rationale",
     "missing_points",
     "unsupported_claims",
     "intent_task",
@@ -80,7 +80,38 @@ _SENSITIVE_FIELDS = {
     "content",
     "prompt",
     "keywords",
+    "q",
+    "keyword",
+    "description",
+    "reason",
 }
+
+_ROUTE_REASON_CODES = frozenset({
+    "audit_passed", "revise_allowed", "research_allowed", "research_budget_available",
+    "already_satisfied", "not_visible", "budget_truncated", "duplicated", "invalid", "executable",
+})
+
+_BLOCKED_REASONS = frozenset(
+    {
+        "research_budget_exhausted",
+        "rewrite_budget_exhausted",
+        "no_executable_gap_steps",
+        "time_budget_insufficient",
+        "tool_call_budget_insufficient",
+        "no_report_to_revise",
+        "critic_error",
+        "audit_error",
+        "unknown_verdict",
+        "budget_truncated",
+    }
+)
+
+
+def _safe_blocked_reason(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    return text if text in _BLOCKED_REASONS else redact_text(text)
 
 
 def _redact_sensitive(value: Any) -> Any:
@@ -140,16 +171,32 @@ def sanitize(value: Any, _depth: int = 0) -> Any:
         return [sanitize(v, _depth + 1) for v in clip_list(list(value))]
     if isinstance(value, dict):
         # 与 clip_args 同一语义：键数有上限，省略的键名显式标出来
+        from app.gateway.arguments import redact_audit_arguments
+
+        if "arguments" in value:
+            value = {**value, "arguments": redact_audit_arguments(value["arguments"])}
         # 工具执行行是固定的小 schema；保留其全部诊断字段（尤其是
         # datum_count / duration_ms / partial），否则普通字典的键数截断会让
         # 回放误判工具没有返回数据。
-        if "tool_key" in value and "status" in value:
+        if ("tool_key" in value and "status" in value) or ("kind" in value and "action" in value):
             return {
-                k: _redact_sensitive(v) if str(k) in _SENSITIVE_FIELDS else sanitize(v, _depth + 1)
+                k: _safe_blocked_reason(v)
+                if str(k) == "blocked_reason"
+                else v
+                if str(k) == "reason" and isinstance(v, str) and v in _BLOCKED_REASONS | _ROUTE_REASON_CODES
+                else _redact_sensitive(v)
+                if str(k) in _SENSITIVE_FIELDS
+                else sanitize(v, _depth + 1)
                 for k, v in value.items()
             }
         return {
-            k: _redact_sensitive(v) if str(k) in _SENSITIVE_FIELDS else sanitize(v, _depth + 1)
+            k: _safe_blocked_reason(v)
+            if str(k) == "blocked_reason"
+            else v
+            if str(k) == "reason" and isinstance(v, str) and v in _BLOCKED_REASONS | _ROUTE_REASON_CODES
+            else _redact_sensitive(v)
+            if str(k) in _SENSITIVE_FIELDS
+            else sanitize(v, _depth + 1)
             for k, v in clip_args(value).items()
         }
     return value
@@ -161,7 +208,18 @@ def emit(event: str, *, run_id: str | None = None, level: int = logging.INFO, **
     所有字段先过 ``sanitize``：调用点忘了截断也不会泄漏大文本 / 完整会话史。
     """
     payload = {"ts": round(time.time(), 3), "event": event, "run_id": run_id}
-    payload.update({k: _redact_sensitive(v) if k in _SENSITIVE_FIELDS else sanitize(v) for k, v in fields.items()})
+    payload.update(
+        {
+            k: _safe_blocked_reason(v)
+            if k == "blocked_reason"
+            else v
+            if k == "reason" and isinstance(v, str) and v in _BLOCKED_REASONS | _ROUTE_REASON_CODES
+            else _redact_sensitive(v)
+            if k in _SENSITIVE_FIELDS
+            else sanitize(v)
+            for k, v in fields.items()
+        }
+    )
     logger.log(level, json.dumps(payload, ensure_ascii=False, default=str))
     return payload
 
@@ -180,7 +238,8 @@ def _run_id_of(state: Any) -> str | None:
 
 
 def _verdict_of(critique: Any) -> str:
-    return str(_field(critique, "verdict", "") or "").strip().lower()
+    verdict = str(_field(critique, "verdict", "") or "").strip().lower()
+    return verdict if verdict in {"", "pass", "revise", "research_more", "error"} else "invalid"
 
 
 # ------------------------------------------------------------------ #
@@ -220,8 +279,8 @@ def log_plan(
     - ``unexecutable_keys``：计划里被剔除的、需要 symbol 却拿不到 symbol 的
       step（旧行为是执行层静默跳过 → 假覆盖）。
     """
-    from app.gateway.tool_registry import resolve_tool
     from app.gateway.arguments import canonicalize_tool_arguments
+    from app.gateway.tool_registry import resolve_tool
 
     steps: list[dict] = []
     for step in _field(plan, "steps", []) or []:
@@ -332,8 +391,10 @@ def log_critic(
                 "severity": _field(i, "severity"),
                 "action": _field(i, "action"),
                 "claim": clip(_field(i, "claim")),
+                "rationale": clip(_field(i, "rationale")),
                 "required_tool_keys": clip_list(_field(i, "required_tool_keys")),
                 "required_coverage": _field(i, "required_coverage", {}) or {},
+                "reason_codes": _field(i, "reason_codes", []) or [],
             }
             for i in issues
         ],
@@ -480,6 +541,11 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
         gap_key_decisions=_field(state, "gap_key_decisions", []) or [],
         executable_gap_steps=_field(state, "executable_gap_steps", []) or [],
         blocked_reason=clip(_field(state, "blocked_reason", "")),
+        issues=[
+            {"kind": _field(i, "kind"), "severity": _field(i, "severity"),
+             "action": _field(i, "action"), "reason_codes": _field(i, "reason_codes", []) or []}
+            for i in (_field(_field(state, "critique"), "issues", []) or [])
+        ],
         error_category=_field(state, "error_category"),
     )
 

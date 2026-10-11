@@ -1,0 +1,41 @@
+........................................................................ [  6%]
+........................................................................ [ 12%]
+........................................................................ [ 19%]
+........................................................................ [ 25%]
+........................................................................ [ 32%]
+........................................................................ [ 38%]
+........................................................................ [ 44%]
+........................................................................ [ 51%]
+........................................................................ [ 57%]
+........................................................................ [ 64%]
+........................................................................ [ 70%]
+........................................................................ [ 76%]
+........................................................................ [ 83%]
+........................................................................ [ 89%]
+..........F............................................................. [ 96%]
+...........................................                              [100%]
+================================== FAILURES ===================================
+_____________ test_planner_ignoring_gap_still_gets_tool_in_route ______________
+tests\test_supervisor_gap_loop.py:245: in test_planner_ignoring_gap_still_gets_tool_in_route
+    assert _PLAIN_TOOL.key not in routed
+E   AssertionError: assert 'sentiment' not in ['limit_up_count', 'sentiment']
+E    +  where 'sentiment' = <app.gateway.tool_registry.ToolMeta object at 0x0000021DC79186D0>.key
+---------------------------- Captured stdout call -----------------------------
+[03:06:35] INFO run_log: {"ts": 1791687995.665, "event": "run_start", "run_id": null, "question": "<redacted len=9>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+[03:06:35] INFO run_log: {"ts": 1791687995.666, "event": "llm", "run_id": null, "node": "supervisor", "phase": "replan", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+[03:06:35] INFO supervisor: Supervisor: ���뼶���� Critic ȱ�ڹ���: ['limit_up_count']
+[03:06:35] INFO run_log: {"ts": 1791687995.666, "event": "plan", "run_id": null, "requested_date": "2026-10-11", "as_of_date": "2026-10-09", "market_closed": true, "intent_domain": "a_share", "intent_task": "<redacted len=16>", "steps": [{"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "arguments": {}, "priority": "high"}, {"tool_key": "sentiment", "operation_id": "get_ashare_sentiment", "source_tool": "get_ashare_sentiment", "arguments": {}, "priority": "medium"}], "filtered_keys": [], "forced_gap_keys": ["limit_up_count"], "prefix_keys": [], "unexecutable_keys": []}
+------------------------------ Captured log call ------------------------------
+INFO     app.graph.run_log:run_log.py:211 {"ts": 1791687995.665, "event": "run_start", "run_id": null, "question": "<redacted len=9>", "explicit_domain": "a_share", "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:211 {"ts": 1791687995.666, "event": "llm", "run_id": null, "node": "supervisor", "phase": "replan", "model": "test-model", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "duration_ms": 0.0}
+INFO     app.graph.nodes.supervisor:supervisor.py:348 Supervisor: ���뼶���� Critic ȱ�ڹ���: ['limit_up_count']
+INFO     app.graph.run_log:run_log.py:211 {"ts": 1791687995.666, "event": "plan", "run_id": null, "requested_date": "2026-10-11", "as_of_date": "2026-10-09", "market_closed": true, "intent_domain": "a_share", "intent_task": "<redacted len=16>", "steps": [{"tool_key": "limit_up_count", "operation_id": "get_limit_up_count", "source_tool": "get_limit_up_count", "arguments": {}, "priority": "high"}, {"tool_key": "sentiment", "operation_id": "get_ashare_sentiment", "source_tool": "get_ashare_sentiment", "arguments": {}, "priority": "medium"}], "filtered_keys": [], "forced_gap_keys": ["limit_up_count"], "prefix_keys": [], "unexecutable_keys": []}
+============================== warnings summary ===============================
+.venv\Lib\site-packages\starlette\testclient.py:53
+  D:\Mosaic\.venv\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_supervisor_gap_loop.py::test_planner_ignoring_gap_still_gets_tool_in_route
+1 failed, 1122 passed, 1 warning in 21.46s

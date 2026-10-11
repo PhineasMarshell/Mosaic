@@ -19,7 +19,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import get_default_environment, stdio_client
 
 from app.config import Settings
-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments
+from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, summarize_arguments
 from app.gateway.normalizer import normalize_tool_result
 from app.gateway.tool_registry import resolve_tool_by_name
 
@@ -61,6 +61,44 @@ class MarketGatewayClient:
         self.stack = AsyncExitStack()
         self.session: ClientSession | None = None
         self.tools: list[Any] = []
+
+    def _input_schema(self, tool_name: str) -> dict[str, Any] | None:
+        """Return the discovered MCP input schema for ``tool_name``.
+
+        MCP SDK versions expose the field as either ``inputSchema`` or
+        ``input_schema``.  Keep this lookup at the transport boundary so the
+        planner/state always retain the canonical list form.
+        """
+        for tool in self.tools or []:
+            name = getattr(tool, "name", None)
+            if name != tool_name and isinstance(tool, dict):
+                name = tool.get("name")
+            if name != tool_name:
+                continue
+            schema = getattr(tool, "inputSchema", None)
+            if schema is None:
+                schema = getattr(tool, "input_schema", None)
+            if schema is None and isinstance(tool, dict):
+                schema = tool.get("inputSchema") or tool.get("input_schema")
+            return schema if isinstance(schema, dict) else None
+        return None
+
+    def _encode_transport_arguments(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Encode canonical arguments according to the discovered MCP schema."""
+        encoded = dict(arguments)
+        if tool_name != "get_market_quotes" or "symbols" not in encoded:
+            return encoded
+        schema = self._input_schema(tool_name) or {}
+        properties = schema.get("properties") if isinstance(schema, dict) else None
+        symbol_schema = properties.get("symbols") if isinstance(properties, dict) else None
+        schema_type = symbol_schema.get("type") if isinstance(symbol_schema, dict) else None
+        if schema_type == "array":
+            return encoded
+        # Current Gateway contract is a string; unknown schemas use that
+        # contract for backwards compatibility.  The canonical list remains
+        # untouched in ToolResult/logging.
+        encoded["symbols"] = ",".join(encoded["symbols"])
+        return encoded
 
     async def __aenter__(self):
         await self.connect()
@@ -133,7 +171,7 @@ class MarketGatewayClient:
                 raise MCPConnectionError(f"MCP list_tools timed out (command: {launch})") from None
             except Exception as exc:
                 raise MCPConnectionError(f"MCP list_tools failed: {exc} (command: {launch})") from exc
-        except MCPConnectionError:
+        except (MCPConnectionError, asyncio.CancelledError):
             # 任何连接阶段失败：先回收已进入的资源（含 stdio 子进程），再向上抛。
             await self.close()
             raise
@@ -145,7 +183,7 @@ class MarketGatewayClient:
             # 握手超时）会留下 stdio 子进程不被回收。
             await self.stack.aclose()
         except Exception as exc:
-            logger.warning("MCP close cleanup failed: %s", exc)
+            logger.warning("MCP close cleanup failed error_type=%s", type(exc).__name__)
         finally:
             self.session = None
             self.tools = []
@@ -180,17 +218,35 @@ class MarketGatewayClient:
         max_attempts = self.settings.max_retry_per_tool + 1
 
         for attempt in range(max_attempts):
-            # T23：与 HTTP client 相同的预算语义——总预算用尽就不再重试。
-            if deadline is not None and deadline - time.monotonic() <= 0:
-                logger.warning("MCP call %s stopped: budget exhausted before attempt %d", tool_name, attempt + 1)
-                reason = "budget exhausted: no time left for another attempt"
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                logger.warning(
+                    "MCP call %s stopped: attempt=%d remaining_budget_ms=0 retry_skipped_reason=deadline_exhausted",
+                    tool_name,
+                    attempt + 1,
+                )
+                reason = f"budget exhausted: no time left for attempt {attempt + 1} of {tool_name}"
                 if last_error:
                     reason = f"{last_error}; {reason}"
                 return normalize_tool_result(tool_name, arguments, None, error=reason)
             try:
+                attempt_timeout = self.settings.research_timeout_seconds
+                if remaining is not None:
+                    attempt_timeout = min(attempt_timeout, max(remaining, 0.0))
+                transport_arguments = self._encode_transport_arguments(tool_name, arguments)
+                logger.info(
+                    "MCP call %s attempt=%d attempt_timeout_ms=%.0f remaining_budget_ms=%s "
+                    "canonical_argument_summary=%s transport_argument_summary=%s",
+                    tool_name,
+                    attempt + 1,
+                    attempt_timeout * 1000,
+                    "none" if remaining is None else f"{remaining * 1000:.0f}",
+                    summarize_arguments(arguments),
+                    summarize_arguments(transport_arguments),
+                )
                 result = await asyncio.wait_for(
-                    self.session.call_tool(tool_name, arguments=arguments),
-                    timeout=self.settings.research_timeout_seconds,
+                    self.session.call_tool(tool_name, arguments=transport_arguments),
+                    timeout=attempt_timeout,
                 )
                 if getattr(result, "is_error", False):
                     # MCP 规范里工具级失败是**带内** signalling：call_tool 会返回
@@ -201,9 +257,9 @@ class MarketGatewayClient:
                     # 重试只会白等一轮 research_timeout_seconds。
                     text = _mcp_result_to_text(result)
                     logger.warning(
-                        "MCP call %s returned a tool-level error: %s",
+                        "MCP call %s returned a tool-level error payload_len=%d",
                         tool_name,
-                        text[:200],
+                        len(text),
                     )
                     return normalize_tool_result(
                         tool_name,
@@ -214,28 +270,61 @@ class MarketGatewayClient:
                 raw = _mcp_result_to_json(result)
                 return normalize_tool_result(tool_name, arguments, raw)
             except TimeoutError:
-                last_error = f"Timeout after {self.settings.research_timeout_seconds}s"
+                last_error = (
+                    f"Timeout on {tool_name} attempt {attempt + 1} after "
+                    f"{attempt_timeout:.3f}s (remaining budget was "
+                    f"{'unknown' if remaining is None else f'{remaining:.3f}'}s)"
+                )
                 logger.warning(
-                    "MCP call %s attempt %d/%d timed out",
+                    "MCP call %s attempt %d/%d timed out attempt_timeout_ms=%.0f remaining_budget_ms=%s",
                     tool_name,
                     attempt + 1,
                     max_attempts,
+                    attempt_timeout * 1000,
+                    "none" if remaining is None else f"{max(remaining, 0) * 1000:.0f}",
                 )
             except MCPConnectionError:
                 # 连接级别错误不应该重试
                 raise
             except Exception as exc:
-                last_error = str(exc)
+                last_error = f"{type(exc).__name__}"
                 logger.warning(
-                    "MCP call %s attempt %d/%d failed: %s",
+                    "MCP call %s attempt %d/%d failed error_type=%s",
                     tool_name,
                     attempt + 1,
                     max_attempts,
-                    exc,
+                    type(exc).__name__,
                 )
 
             if attempt < max_attempts - 1:
-                await asyncio.sleep(0.5 * (attempt + 1))
+                backoff = 0.5 * (attempt + 1)
+                remaining_after = None if deadline is None else deadline - time.monotonic()
+                if remaining_after is not None:
+                    if remaining_after <= 0:
+                        logger.warning(
+                            "MCP call %s retry skipped retry_skipped_reason=deadline_exhausted remaining_budget_ms=0",
+                            tool_name,
+                        )
+                        return normalize_tool_result(
+                            tool_name,
+                            arguments,
+                            None,
+                            error=f"{last_error or 'MCP call failed'}; budget exhausted before retry",
+                        )
+                    if backoff > remaining_after:
+                        logger.info(
+                            "MCP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
+                            "remaining_budget_ms=%.0f",
+                            tool_name,
+                            remaining_after * 1000,
+                        )
+                        return normalize_tool_result(
+                            tool_name,
+                            arguments,
+                            None,
+                            error=f"{last_error or 'MCP call failed'}; budget exhausted before retry",
+                        )
+                await asyncio.sleep(backoff)
 
         return normalize_tool_result(
             tool_name,

@@ -239,6 +239,7 @@ async def ask(request: dict):
                 {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
                  "error_category": "audit",
                  "delivery_reason": result.delivery_reason, "critique": result.critique,
+                 "blocked_reason": result.blocked_reason,
                  "unresolved_issues": result.unresolved_issues},
                 delivery_status="blocked", persisted=False, sink="sync"
             )
@@ -252,6 +253,7 @@ async def ask(request: dict):
                     "unresolved_issues": result.unresolved_issues,
                     "errors": result.errors,
                     "delivery_status": "blocked",
+                    "blocked_reason": result.blocked_reason,
                     "final_audit_status": result.final_audit_status,
                     "delivery_reason": result.delivery_reason
                     or "研究未通过证据审计，未返回可信结论，请重试或缩小问题范围",
@@ -267,6 +269,7 @@ async def ask(request: dict):
             run_log.log_delivery(
                 {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
                  "error_category": "no_report",
+                 "blocked_reason": result.blocked_reason,
                  "delivery_reason": result.delivery_reason, "critique": result.critique,
                  "unresolved_issues": result.unresolved_issues},
                 delivery_status=str(delivery), persisted=False, sink="sync"
@@ -280,6 +283,7 @@ async def ask(request: dict):
                     "code": code,
                     "errors": result.errors,
                     "delivery_status": delivery,
+                    "blocked_reason": result.blocked_reason,
                     "final_audit_status": result.final_audit_status,
                     "delivery_reason": result.delivery_reason,
                     "critique": result.critique,
@@ -297,6 +301,7 @@ async def ask(request: dict):
         run_log.log_delivery(
             {"run_id": result.run_id, "final_audit_status": result.final_audit_status,
              "delivery_reason": result.delivery_reason, "critique": result.critique,
+             "blocked_reason": result.blocked_reason,
              "unresolved_issues": result.unresolved_issues},
             delivery_status=str(delivery), persisted=persisted, sink="sync"
         )
@@ -515,6 +520,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             "final_audit_status": result.final_audit_status,
             "delivery_status": result.delivery_status,
             "delivery_reason": result.delivery_reason,
+            "blocked_reason": result.blocked_reason,
             "unresolved_issues": result.unresolved_issues,
         }
         if result.report is None:
@@ -538,6 +544,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                     {
                         "error": "研究未通过证据审计，未返回可信结论",
                         "code": "blocked",
+                        "blocked_reason": result.blocked_reason,
                         "question": question,
                         "delivery_status": "blocked",
                         "final_audit_status": result.final_audit_status,

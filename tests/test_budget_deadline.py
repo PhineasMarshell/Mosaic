@@ -87,15 +87,17 @@ async def test_deadline_derived_from_investigation_budget_deadline():
     assert out["findings"][0]["failed"] is False
 
 
-async def test_expired_investigation_deadline_issues_immediate_deadline():
-    """调查预算已耗尽 → 下发的 deadline 在过去，gateway 侧应立即以预算用尽收尾。"""
+async def test_expired_investigation_deadline_skips_gateway():
+    """调查预算已耗尽 → 运行时直接收尾，不再建连或请求网关。"""
     node = TechnicalAnalystNode(Settings())
     node._runtime._gateway_class = lambda: _RecordingGateway
 
     out = await node(_state(budget_deadline=time.monotonic() - 1.0))
 
-    assert _RecordingGateway.deadlines
-    assert _RecordingGateway.deadlines[0] <= time.monotonic()
+    assert _RecordingGateway.deadlines == []
+    assert out["results"][0].status == "error"
+    assert out["results"][0].normalized == []
+    assert "budget exhausted" in out["results"][0].error
     # 超预算必须降级，不许炸整条链（规则 6）
     assert out["findings"][0]["failed"] is False
 

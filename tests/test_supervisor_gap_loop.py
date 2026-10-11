@@ -27,6 +27,7 @@ import types
 
 import pytest
 
+from app.gateway.normalizer import normalize_tool_result
 from app.gateway.tool_registry import ALL_TOOLS, registry_text
 from app.graph.nodes.supervisor import SupervisorNode
 from app.models.market import ToolResult
@@ -235,7 +236,7 @@ async def test_planner_ignoring_gap_still_gets_tool_in_route():
             "missing_points": [_GAP_TEXT],
             "missing_tool_keys": [gap_meta.key],
         },
-        [_result(_PLAIN_TOOL.tool_name, "success", {"symbol": "600519"})],
+        [normalize_tool_result(_PLAIN_TOOL.tool_name, {"symbol": "600519"}, {"up_count": 1})],
     )
 
     out = await node(state)
