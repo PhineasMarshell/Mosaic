@@ -96,6 +96,7 @@ class MarketAnalystNode:
             from app.research.evidence import build_evidence
 
             evidence_items = build_evidence(results, id_prefix=self.category, stable_ids=True)
+            transport_failed = any(bool(getattr(result, "transport_exception", False)) for result in results)
 
             return {
                 "results": results,
@@ -104,12 +105,12 @@ class MarketAnalystNode:
                         "analyst": self.category,
                         "digest": self._make_digest(tools_used, results),
                         "tools_used": tools_used,
-                        "failed": False,
+                        "failed": transport_failed,
                     }
                 ],
                 "evidence": evidence_items,
                 "cache_stats": cache_stats,
-                "errors": [],  # always present — reducer appends on merge
+                "errors": [f"{self.category} analysis failed: gateway transport error"] if transport_failed else [],
             }
 
         except Exception as exc:

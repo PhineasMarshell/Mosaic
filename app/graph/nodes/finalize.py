@@ -28,6 +28,7 @@ from typing import Any, Literal
 
 from app.agent.evidence_gate import match_claims_to_evidence
 from app.graph import run_log
+from app.graph.budget import elapsed_ms
 
 logger = logging.getLogger(__name__)
 
@@ -481,6 +482,11 @@ class FinalizeAuditNode:
 
             unresolved = list(dict.fromkeys(unresolved_issue_summary(critique) + degraded_issues))
             gap_decisions = s.get("gap_key_decisions") or _field(critique, "gap_key_decisions", []) or []
+            terminal_codes = list(dict.fromkeys([*(s.get("reason_codes") or []), *degraded_codes]))
+            if blocked_reason and blocked_reason not in terminal_codes and delivery_status != "verified":
+                terminal_codes.append(str(blocked_reason))
+            elapsed = elapsed_ms(s)
+            s["elapsed_ms"] = elapsed
             run_log.log_finalize(
                 s,
                 final_audit_status=audit_status,
@@ -493,7 +499,7 @@ class FinalizeAuditNode:
                 remaining_budget=remaining_budget,
                 gap_key_decisions=gap_decisions,
                 executable_gap_steps=s.get("executable_gap_steps"),
-                reason_codes=degraded_codes,
+                reason_codes=terminal_codes,
             )
             if delivery_status != "verified":
                 logger.warning(
@@ -510,13 +516,14 @@ class FinalizeAuditNode:
                 "blocked_reason": blocked_reason,
                 "remaining_budget": remaining_budget,
                 "unresolved_issues": unresolved,
-                "reason_codes": degraded_codes,
+                "reason_codes": terminal_codes,
+                "elapsed_ms": elapsed,
             }
             # blocked / failed 时**清空正文报告**：未经审计的报告不允许作为结论返回。
             # 失败原因留在 critique（reviewer 可读）与 final_audit_status 里。
             if delivery_status == "degraded":
                 out["report"] = degraded_report
-                out["degraded_reason_codes"] = degraded_codes
+                out["degraded_reason_codes"] = terminal_codes
             elif delivery_status != "verified" and s.get("report") is not None:
                 out["report"] = None
             return out

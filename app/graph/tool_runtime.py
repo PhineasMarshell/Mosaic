@@ -372,6 +372,8 @@ class ToolRuntime:
                 partial=True,
                 note="重复调用已跳过：同签名工具本次运行已执行过，结果已在 state 中",
                 normalized=[],
+                cache_hit=False,
+                refresh_requested=False,
             )
 
         # 检查缓存命中
@@ -380,6 +382,8 @@ class ToolRuntime:
             logger.info("Cache hit for %s", tool_name)
             cached.operation_id = cached.operation_id or tool_name
             cached.arguments = arguments
+            cached.cache_hit = True
+            cached.refresh_requested = False
             return cached
 
         # 执行真实调用
@@ -399,6 +403,8 @@ class ToolRuntime:
                 tool=tool_name, arguments=arguments, status=STATUS_ERROR,
                 normalized=[], error="budget exhausted before tool execution",
                 reason_codes=["deadline_exhausted"],
+                cache_hit=False,
+                refresh_requested=refresh,
             )
         execution = (
             self._do_execute(tool_name, arguments, deadline=deadline, refresh=True)
@@ -414,11 +420,30 @@ class ToolRuntime:
                 tool=tool_name, arguments=arguments, status=STATUS_ERROR,
                 normalized=[], error="budget exhausted during tool execution",
                 reason_codes=["deadline_exhausted", "gateway_timeout"],
+                cache_hit=False,
+                refresh_requested=refresh,
+            )
+        except Exception as exc:
+            # A transport/connection exception must remain a zero-datum error;
+            # optional Gateway sources may be unavailable without aborting the
+            # entire graph or causing a secondary terminal exception.
+            return ToolResult(
+                tool=tool_name,
+                arguments=arguments,
+                status=STATUS_ERROR,
+                normalized=[],
+                error=f"Gateway transport failed: {type(exc).__name__}",
+                reason_codes=["gateway_transport_error"],
+                cache_hit=False,
+                refresh_requested=refresh,
+                transport_exception=True,
             )
         # Keep trace fields present even when a Gateway/mock implementation
         # constructs an older ToolResult shape.
         result.operation_id = result.operation_id or tool_name
         result.arguments = arguments
+        result.cache_hit = False
+        result.refresh_requested = bool(refresh)
 
         # 只缓存成功/部分成功的结果。T5：缓存里存**深拷贝**，使后续 truncate
         # 对工作对象的原地改写不会污染缓存（旧实现存同一实例，truncate 会改到缓存）。
@@ -539,6 +564,7 @@ class ToolRuntime:
                 status=STATUS_ERROR,
                 normalized=[],
                 error=f"Tool not available: {tool_name}",
+                reason_codes=["gateway_tool_unavailable"],
             )
 
         return await gateway.call(tool_name, arguments, deadline=deadline)

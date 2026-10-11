@@ -123,6 +123,7 @@ class ResearchState(BaseModel):
     #: SSE 路径写入；research_more 回环时**覆盖**（标量字段无 reducer，正是想要的语义——
     #: 第二轮 analyst 不能重新获得一整份预算）。
     budget_deadline: float | None = None
+    started_at: float | None = None
 
     # ── Supervisor 产出 ──
     intent: object | None = None
@@ -173,6 +174,9 @@ class ResearchState(BaseModel):
     #: 终态机器可读原因码，供 sync/SSE 与 delivery 日志保持一致。
     reason_codes: list[str] = []
     degraded_reason_codes: list[str] = []
+    elapsed_ms: float | None = None
+    exception_type: str | None = None
+    stage: str | None = None
 
     # ── 并行写入字段（必须 reducer）──
     #: T16：evidence 按 id、findings 按 analyst 去重（回环覆盖，保留最新）

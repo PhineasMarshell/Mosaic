@@ -64,6 +64,7 @@ class Orchestrator:
             # T23b：预算按"整次调查"起算——research_more 回环的第二轮 analyst
             # 读到的是同一个截止时刻，不会重新获得一整份 research_budget_seconds
             budget_deadline=time.monotonic() + self.settings.research_budget_seconds,
+            started_at=time.monotonic(),
         )
         run_log.log_run_start(state)
         stage = "graph_build"
@@ -95,6 +96,12 @@ class Orchestrator:
                     "errors": list(snapshot.get("errors") or []) + [error_category],
                 }
             )
+            started = snapshot.get("started_at")
+            if started is not None:
+                try:
+                    snapshot["elapsed_ms"] = round(max(0.0, time.monotonic() - float(started)) * 1000, 1)
+                except (TypeError, ValueError):
+                    pass
             return snapshot
 
         def _record_failed_terminal(snapshot: dict, reason_codes: list[str]) -> None:
@@ -139,6 +146,34 @@ class Orchestrator:
                 codes,
             )
             raise
+        except TimeoutError:
+            # A stage timeout is a terminal research failure, not an exception
+            # that callers should reinterpret as a successful/empty report.
+            codes = ["timeout", "research_deadline_exhausted"]
+            snapshot = _terminal_snapshot(
+                final_audit_status="error",
+                delivery_reason="研究超出总预算",
+                error_category="timeout",
+                exception_type="TimeoutError",
+                reason_codes=codes,
+            )
+            snapshot["remaining_budget"] = 0.0
+            _record_failed_terminal(snapshot, codes)
+            return ResearchResponse(
+                question=question,
+                report=None,
+                errors=["research deadline exhausted"],
+                reason_codes=codes,
+                final_audit_status="error",
+                delivery_status="failed",
+                delivery_reason="研究超出总预算",
+                persisted=False,
+                run_id=run_id,
+                stage=stage,
+                exception_type="TimeoutError",
+                elapsed_ms=round((time.monotonic() - float(state.started_at or time.monotonic())) * 1000, 1),
+                remaining_budget=0.0,
+            )
         except Exception as exc:
             # 上游/图组装异常也必须留下终态失败事件，不能只返回 HTTP 错误。
             error_type = type(exc).__name__

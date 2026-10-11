@@ -1,3 +1,4 @@
+import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -136,6 +137,12 @@ class ResearchResponse(BaseModel):
     #: critic / route / finalize / delivery 七条结构化日志串起来；对外 JSON 响应里
     #: 会被 exclude 掉（main.py 传 model_dump(exclude={"run_id"})），落库记录里保留。
     run_id: str | None = None
+    #: 终态诊断字段。正常 verified 响应可以为空；timeout/failed 必须保留，
+    #: 便于 sync、SSE 和脱敏运行日志对齐同一失败原因。
+    stage: str | None = None
+    exception_type: str | None = None
+    elapsed_ms: float | None = None
+    remaining_budget: float | None = None
 
 
 def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) -> tuple[str, str, str, Any]:
@@ -257,6 +264,19 @@ def build_response_from_state(
             # 检测失败不能静默：报告照常产出，但错误必须可见（规则 6）
             errors.append(f"Anomaly detection failed: {exc}")
 
+    elapsed = state.get("elapsed_ms")
+    if elapsed is None and state.get("started_at") is not None:
+        try:
+            elapsed = round(max(0.0, time.monotonic() - float(state["started_at"])) * 1000, 1)
+        except (TypeError, ValueError):
+            elapsed = None
+    remaining = state.get("remaining_budget")
+    if remaining is None and state.get("budget_deadline") is not None:
+        try:
+            remaining = round(float(state["budget_deadline"]) - time.monotonic(), 3)
+        except (TypeError, ValueError):
+            remaining = None
+
     return ResearchResponse(
         question=question,
         requested_date=state.get("requested_date") or (report.requested_date if hasattr(report, "requested_date") else report.get("requested_date") if isinstance(report, dict) else None),
@@ -281,6 +301,10 @@ def build_response_from_state(
         blocked_reason=blocked_reason,
         persisted=state.get("persisted"),
         run_id=state.get("run_id"),
+        stage=state.get("stage"),
+        exception_type=state.get("exception_type"),
+        remaining_budget=remaining,
+        elapsed_ms=elapsed,
     )
 
 

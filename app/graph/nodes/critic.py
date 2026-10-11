@@ -31,6 +31,7 @@ from app.agent.evidence_gate import match_claims_to_evidence
 from app.config import Settings
 from app.errors import LLMOutputError
 from app.graph import run_log
+from app.graph.budget import StageBudgetExceeded, run_stage
 from app.graph.gap_loop import (
     allowed_keys,
     classify_missing_tool_keys,
@@ -432,6 +433,8 @@ def _format_evidence_for_review(
     referenced_ids=(),
     *,
     presentation_aliases: dict[str, str] | None = None,
+    max_unreferenced: int | None = None,
+    max_datums_per_tool: int = 10,
 ) -> tuple[str, dict]:
     """格式化证据用于审查，返回 ``(文本, 统计/截断记录)``。
 
@@ -522,7 +525,8 @@ def _format_evidence_for_review(
     lines.append("")
     lines.append("=== 其余证据（摘要；未展示的内容不能据此判定为无证据）===")
     prioritized = sorted(enumerate(others), key=lambda pair: (_market_priority(pair[1]), pair[0]))
-    selected = [item for _, item in prioritized[:_MAX_UNREFERENCED_EVIDENCE_LINES]]
+    unreferenced_limit = _MAX_UNREFERENCED_EVIDENCE_LINES if max_unreferenced is None else max(1, int(max_unreferenced))
+    selected = [item for _, item in prioritized[:unreferenced_limit]]
     for item in selected:
         stats["other_shown"] += 1
         stats["kept"].append(
@@ -538,7 +542,8 @@ def _format_evidence_for_review(
 
     # 原始 normalized 数据摘要（按工具）——保留旧视图，但把省略量显式记下来。
     lines.append("")
-    lines.append("=== 原始 normalized 数据摘要（最多 20 个工具 × 10 条）===")
+    per_tool_limit = max(1, int(max_datums_per_tool))
+    lines.append(f"=== 原始 normalized 数据摘要（最多 20 个工具 × {per_tool_limit} 条）===")
     shown_tools = 0
     sorted_results = sorted(
         enumerate(results or []), key=lambda pair: (_market_priority({"source_tool": _field(pair[1], "tool")}), pair[0])
@@ -552,7 +557,7 @@ def _format_evidence_for_review(
         lines.append(
             f"  TOOL {_field(result, 'tool_key', '?')} | {_field(result, 'operation_id') or _field(result, 'tool')} {result_meta}"
         )
-        selected_datums = sorted(enumerate(normalized), key=lambda pair: (_market_priority(pair[1]), pair[0]))[:10]
+        selected_datums = sorted(enumerate(normalized), key=lambda pair: (_market_priority(pair[1]), pair[0]))[:per_tool_limit]
         for _, datum in selected_datums:
             metric = _field(datum, "metric", "?")
             value = str(_field(datum, "value", ""))[:80]
@@ -567,17 +572,17 @@ def _format_evidence_for_review(
             stats["kept"].append(
                 {"metric": metric, "reason": "market_minimum" if _market_priority(datum) < 3 else "tool_quota"}
             )
-        if len(normalized) > 10:
-            stats["datums_omitted"] += len(normalized) - 10
+        if len(normalized) > per_tool_limit:
+            stats["datums_omitted"] += len(normalized) - per_tool_limit
             stats["omitted"].append(
                 {
                     "kind": "datum",
                     "tool_key": _field(result, "tool_key"),
-                    "count": len(normalized) - 10,
+                    "count": len(normalized) - per_tool_limit,
                     "reason": "per_tool_datum_limit",
                 }
             )
-            lines.append(f"    …（该工具另有 {len(normalized) - 10} 条 datum 未展示）")
+            lines.append(f"    …（该工具另有 {len(normalized) - per_tool_limit} 条 datum 未展示）")
     total_tools = len(results or [])
     if total_tools > shown_tools:
         stats["results_omitted"] = total_tools - shown_tools
@@ -1186,6 +1191,8 @@ class CriticNode:
                 gate,
                 referenced_ids,
                 presentation_aliases=presentation_aliases,
+                max_unreferenced=int(getattr(self.settings, "critic_context_evidence_limit", 30) or 30),
+                max_datums_per_tool=int(getattr(self.settings, "critic_context_datums_per_tool", 6) or 6),
             )
 
             # Assemble prompt pieces
@@ -1268,7 +1275,7 @@ class CriticNode:
             prompt = translate_evidence_references(prompt, {real: alias for alias, real in presentation_aliases.items()})
 
             _llm_started = time.perf_counter()
-            response = await self.client.chat.completions.create(
+            request = self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 messages=[
                     {"role": "system", "content": "你是 Mosaic 的 Critic，只返回合法 JSON。"},
@@ -1276,6 +1283,13 @@ class CriticNode:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0,
+            )
+            response = await run_stage(
+                request,
+                state,
+                self.settings,
+                stage="critic",
+                reserve=float(getattr(self.settings, "finalize_min_budget_seconds", 2) or 2),
             )
             # 阶段 6：审计这次 LLM 调用的用量/耗时（指标数据源）。
             run_log.log_llm_call(
@@ -1456,6 +1470,22 @@ class CriticNode:
             return {
                 "critique": critique,
                 "errors": [f"Critic audit failed: {exc}"],
+            }
+        except StageBudgetExceeded:
+            critique = Critique(verdict="error", reason="critic budget unavailable")
+            run_log.log_critic(state, critique)
+            return {
+                "critique": critique,
+                "reason_codes": ["critic_budget_insufficient", "time_budget_insufficient"],
+                "errors": ["critic budget unavailable"],
+            }
+        except TimeoutError:
+            critique = Critique(verdict="error", reason="critic stage timed out")
+            run_log.log_critic(state, critique)
+            return {
+                "critique": critique,
+                "reason_codes": ["critic_timeout"],
+                "errors": ["critic stage timed out"],
             }
         except Exception as exc:
             logger.error("Critic node failed，安全终止 error_type=%s", type(exc).__name__)

@@ -65,3 +65,8 @@ class ToolResult(BaseModel):
     #: 阶段 6：本次执行的墙钟耗时（毫秒）。``None`` = 没有计时点（旧构造点 /
     #: 反序列化的历史结果），与"耗时 0ms"不同 —— 指标聚合要能区分两者。
     duration_ms: float | None = None
+    #: 运行级可观测性：命中共享缓存与真实上游响应必须可区分；refresh 请求
+    #: 永远把该字段置为 False，即使返回内容与旧缓存相同。
+    cache_hit: bool = False
+    refresh_requested: bool = False
+    transport_exception: bool = False

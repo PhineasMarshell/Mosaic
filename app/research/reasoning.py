@@ -47,6 +47,38 @@ def _ensure_list(val, default=None):
     return [val]
 
 
+def _compact_value(value: Any, limit: int = 500) -> Any:
+    """Keep prompt values bounded while leaving the evidence ledger intact."""
+    if isinstance(value, str):
+        return value if len(value) <= limit else value[:limit] + f"…(+{len(value) - limit})"
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+    except Exception:
+        text = str(value)
+    return text if len(text) <= limit else text[:limit] + f"…(+{len(text) - limit})"
+
+
+def _compact_normalized_data(results: list[ToolResult], *, per_tool: int = 24, total: int = 180) -> tuple[list[dict], dict]:
+    """Bound the data section independently from the evidence ledger."""
+    rows: list[dict] = []
+    omitted = 0
+    for result in results:
+        datums = list(result.normalized or [])
+        selected = datums[:per_tool]
+        if len(datums) > per_tool:
+            omitted += len(datums) - per_tool
+        for datum in selected:
+            row = datum.model_dump() if hasattr(datum, "model_dump") else dict(datum)
+            row["value"] = _compact_value(row.get("value"))
+            rows.append(row)
+    if len(rows) > total:
+        omitted += len(rows) - total
+        rows = rows[:total]
+    return rows, {"kept": len(rows), "omitted": omitted, "per_tool": per_tool, "total": total}
+
+
 def build_evidence_aliases(evidence: list[Evidence]) -> dict[str, str]:
     """Build deterministic short references for one evidence ledger.
 
@@ -393,7 +425,11 @@ class ReasoningEngine:
         planned_as_of_date: str | None = None,
         market_closed: bool | None = None,
     ) -> MarketIntelligence:
-        normalized_data = [datum.model_dump() for result in results for datum in result.normalized]
+        normalized_data, data_context_stats = _compact_normalized_data(
+            results,
+            per_tool=int(getattr(self.settings, "reasoning_context_datums_per_tool", 24) or 24),
+            total=int(getattr(self.settings, "reasoning_context_evidence_limit", 180) or 180),
+        )
 
         # 拼装 findings 段（放在 history_context 之前）
         parts: list[str] = []
@@ -426,6 +462,7 @@ class ReasoningEngine:
         evidence_payload = []
         for item in evidence:
             row = item.model_dump()
+            row["value"] = _compact_value(row.get("value"))
             real_id = str(row.get("id"))
             alias = next((alias for alias, rid in aliases.items() if rid == real_id), None)
             # Model-facing context contains only the short alias.  The real
@@ -445,6 +482,7 @@ class ReasoningEngine:
             evidence_alias_context=_alias_prompt_context(evidence, aliases),
             history_context=combined_context,
         )
+        prompt += "\n\nDATA_CONTEXT_LIMITS=" + json.dumps(data_context_stats, ensure_ascii=False)
         prompt = translate_evidence_references(prompt, {real: alias for alias, real in aliases.items()})
 
         _llm_started = time.perf_counter()

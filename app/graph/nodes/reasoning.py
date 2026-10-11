@@ -12,6 +12,7 @@ import logging
 
 from app.config import Settings
 from app.errors import LLMOutputError
+from app.graph.budget import StageBudgetExceeded, run_stage
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
 from app.models.response import MarketIntelligence
@@ -123,7 +124,12 @@ class ReasoningNode:
                 if all_evidence_items
                 else {}
             )
-            evidence_items, truncation = _select_evidence(all_evidence_items, state.get("report"))
+            evidence_items, truncation = _select_evidence(
+                all_evidence_items,
+                state.get("report"),
+                total_limit=int(getattr(self.settings, "reasoning_context_evidence_limit", 180) or 180),
+                per_tool=int(getattr(self.settings, "reasoning_context_datums_per_tool", 24) or 24),
+            )
             if truncation["omitted"]:
                 from app.graph import run_log
 
@@ -136,7 +142,7 @@ class ReasoningNode:
             evidence = [Evidence(**e) if isinstance(e, dict) else e for e in evidence_items]
 
             # 调用推理引擎
-            report: MarketIntelligence = await self._engine.reason(
+            request = self._engine.reason(
                 question=question,
                 results=results,
                 evidence=evidence,
@@ -150,6 +156,12 @@ class ReasoningNode:
                 market_closed=state.get("market_closed")
                 if state.get("market_closed") is not None
                 else _field(state.get("intent"), "market_closed"),
+            )
+            reserve = float(getattr(self.settings, "critic_min_budget_seconds", 15) or 15) + float(
+                getattr(self.settings, "finalize_min_budget_seconds", 2) or 2
+            )
+            report: MarketIntelligence = await run_stage(
+                request, state, self.settings, stage="reasoning", reserve=reserve
             )
             # 阶段 6：把这次推理的 LLM 用量/耗时写进运行日志（指标的数据源）。
             from app.graph import run_log
@@ -205,6 +217,18 @@ class ReasoningNode:
             if gate_errors:
                 out["errors"] = gate_errors
             return out
+        except StageBudgetExceeded:
+            return {
+                "report": None,
+                "reason_codes": ["reasoning_budget_insufficient", "time_budget_insufficient"],
+                "errors": ["reasoning budget unavailable"],
+            }
+        except TimeoutError:
+            return {
+                "report": None,
+                "reason_codes": ["reasoning_timeout"],
+                "errors": ["reasoning stage timed out"],
+            }
         except LLMOutputError as exc:
             logger.warning("Reasoning LLM output error: %s", type(exc).__name__)
             return {

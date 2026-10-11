@@ -12,6 +12,7 @@ from openai import AsyncOpenAI
 from app.agent.prompts_graph import PLANNER_PROMPT
 from app.config import Settings
 from app.gateway.tool_registry import registry_text
+from app.graph.budget import StageBudgetExceeded, run_stage
 from app.graph.gap_loop import (
     append_gap_steps,
     coverage_requirements,
@@ -129,6 +130,22 @@ class SupervisorNode:
                     for key in filtered_keys
                 ]
             return result
+        except StageBudgetExceeded:
+            return {
+                "route": [],
+                "finalize_after_gap": True,
+                "blocked_reason": "time_budget_insufficient",
+                "reason_codes": ["plan_budget_insufficient", "time_budget_insufficient"],
+                "errors": ["plan budget unavailable"],
+            }
+        except TimeoutError:
+            return {
+                "route": [],
+                "finalize_after_gap": True,
+                "blocked_reason": "time_budget_insufficient",
+                "reason_codes": ["plan_timeout", "time_budget_insufficient"],
+                "errors": ["plan stage timed out"],
+            }
         except Exception as exc:
             # 路由失败写进 errors，kernel 仍可继续尝试（只是没有显式路由）
             return {"errors": [f"Supervisor routing failed: {exc}"]}
@@ -216,7 +233,7 @@ class SupervisorNode:
         )
 
         _llm_started = time.perf_counter()
-        response = await self.client.chat.completions.create(
+        request = self.client.chat.completions.create(
             model=self.settings.openai_model,
             messages=[
                 {
@@ -232,6 +249,13 @@ class SupervisorNode:
             response_format={"type": "json_object"},
             temperature=0,
         )
+        reserve = (
+            float(getattr(self.settings, "tools_min_budget_seconds", 45) or 45)
+            + float(getattr(self.settings, "reasoning_min_budget_seconds", 15) or 15)
+            + float(getattr(self.settings, "critic_min_budget_seconds", 15) or 15)
+            + float(getattr(self.settings, "finalize_min_budget_seconds", 2) or 2)
+        )
+        response = await run_stage(request, state, self.settings, stage="plan", reserve=reserve)
         # 阶段 6：规划这次 LLM 调用的用量/耗时（指标数据源；回环轮记 phase=replan）。
         from app.graph import run_log
 

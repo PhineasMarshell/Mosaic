@@ -166,9 +166,23 @@ def _reason_codes_for_error(error: str | None) -> list[str]:
         codes.append("gateway_rate_limited")
     if "upstream" in text or "502" in text or "503" in text or "504" in text:
         codes.append("gateway_upstream_error")
+    # Cloudflare's 502 body can explicitly say that the origin response was
+    # incomplete without exposing an HTTP status to the MCP caller. Keep this
+    # distinct from a generic transport failure so route/finalize telemetry can
+    # explain the real upstream condition while still producing zero evidence.
+    if any(token in text for token in ("cloudflare", "origin", "incomplete response", "incomplete")):
+        codes.append("gateway_upstream_incomplete")
     if not codes:
         codes.append("gateway_error")
     return codes
+
+
+def _stable_reason_codes(tool: str, codes: list[str]) -> list[str]:
+    """Add the optional-evidence marker without changing data semantics."""
+    ordered = list(dict.fromkeys(codes))
+    if tool == "get_stock_abnormal_reasons" and "optional_evidence_unavailable" not in ordered:
+        ordered.append("optional_evidence_unavailable")
+    return ordered
 
 #: 阶段 3 ⑤：市场级聚合工具（情绪 / 涨停家数 / 涨停题材 / 全市场快讯）的
 #: 数据点代表"整个市场在某一天的横截面"。上游没给时间戳时，数据点就失去了
@@ -824,7 +838,7 @@ def normalize_tool_result(
             status="error",
             partial=False,
             error=error,
-            reason_codes=list(dict.fromkeys(reason_codes or _reason_codes_for_error(error))),
+            reason_codes=_stable_reason_codes(tool, list(dict.fromkeys(reason_codes or _reason_codes_for_error(error)))),
         )
 
     # T1：空载荷 / 裸标量都不是"数据"，必须判失败，而不是被归一化成成功证据。
@@ -846,8 +860,33 @@ def normalize_tool_result(
             normalized=[],
             note=_EMPTY_PAYLOAD_NOTE,
             error="Gateway returned no data (empty response)",
-            reason_codes=["empty_gateway_response"],
+            reason_codes=_stable_reason_codes(tool, ["empty_gateway_response"]),
         )
+
+    # Some HTTP/MCP adapters return a 200 envelope containing the upstream
+    # error instead of using an HTTP error status. Never flatten that envelope
+    # into ``code``/``message`` evidence; classify it at the transport boundary
+    # with the same stable reasons as an exception path.
+    if isinstance(raw, dict):
+        raw_code = str(raw.get("code") or raw.get("error_code") or "").casefold()
+        raw_message = str(raw.get("message") or raw.get("error") or "").casefold()
+        if raw_code in {"gateway_error", "upstream_error", "origin_error", "bad_gateway"} or any(
+            token in raw_message for token in ("cloudflare", "origin", "incomplete response", "upstream")
+        ):
+            text = str(raw.get("message") or raw.get("error") or raw_code or "gateway upstream error")
+            return ToolResult(
+                tool=tool,
+                operation_id=tool,
+                tool_key=tool_key,
+                arguments=arguments,
+                raw=None,
+                status="error",
+                partial=False,
+                normalized=[],
+                error="Gateway upstream returned an error envelope",
+                note=text[:200],
+                reason_codes=_stable_reason_codes(tool, _reason_codes_for_error(text)),
+            )
 
     if not isinstance(raw, (dict, list)):
         snippet = str(raw)[:200]
@@ -861,7 +900,7 @@ def normalize_tool_result(
             partial=False,
             normalized=[],
             error=f"Gateway returned a non-data scalar response: {snippet}",
-            reason_codes=["invalid_gateway_payload"],
+            reason_codes=_stable_reason_codes(tool, ["invalid_gateway_payload"]),
         )
 
     partial = find_partial(raw)
@@ -959,7 +998,7 @@ def normalize_tool_result(
             note=note or _EMPTY_PAYLOAD_NOTE,
             normalized=[],
             error="Gateway returned no extractable data (normalization produced zero items)",
-            reason_codes=["empty_normalized"],
+            reason_codes=_stable_reason_codes(tool, ["empty_normalized"]),
         )
 
     return ToolResult(

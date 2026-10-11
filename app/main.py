@@ -206,6 +206,7 @@ async def ask(request: dict):
     question, domain, conversation_id = _parse_ask_payload(request, "POST /api/ask")
     settings = _get_settings()
     request_run_id = run_log.new_run_id()
+    request_started_at = time.monotonic()
     orchestrator_ready = False
 
     try:
@@ -257,6 +258,12 @@ async def ask(request: dict):
                     "final_audit_status": result.final_audit_status,
                     "delivery_reason": result.delivery_reason
                     or "研究未通过证据审计，未返回可信结论，请重试或缩小问题范围",
+                    "reason_codes": result.reason_codes,
+                    "elapsed_ms": result.elapsed_ms,
+                    "remaining_budget": result.remaining_budget,
+                    "stage": result.stage,
+                    "exception_type": result.exception_type,
+                    "run_id": result.run_id,
                     "persisted": False,
                     "retryable": True,
                 },
@@ -286,6 +293,12 @@ async def ask(request: dict):
                     "blocked_reason": result.blocked_reason,
                     "final_audit_status": result.final_audit_status,
                     "delivery_reason": result.delivery_reason,
+                    "reason_codes": result.reason_codes,
+                    "elapsed_ms": result.elapsed_ms,
+                    "remaining_budget": result.remaining_budget,
+                    "stage": result.stage,
+                    "exception_type": result.exception_type,
+                    "run_id": result.run_id,
                     "critique": result.critique,
                     "unresolved_issues": result.unresolved_issues,
                     "persisted": False,
@@ -310,6 +323,7 @@ async def ask(request: dict):
         return JSONResponse(content=data)
     except TimeoutError:
         logger.warning("Research exceeded %ds budget: %s", settings.research_budget_seconds, run_log.redact_text(question))
+        timeout_codes = ["timeout", "research_deadline_exhausted"]
         return JSONResponse(
             status_code=504,
             content={
@@ -319,6 +333,12 @@ async def ask(request: dict):
                 "final_audit_status": "error",
                 "delivery_status": "failed",
                 "delivery_reason": "研究超出总预算",
+                "run_id": request_run_id,
+                "stage": "sync",
+                "exception_type": "TimeoutError",
+                "reason_codes": timeout_codes,
+                "elapsed_ms": round((time.monotonic() - request_started_at) * 1000, 1),
+                "remaining_budget": 0.0,
                 "unresolved_issues": [],
                 "persisted": False,
             },
@@ -326,6 +346,7 @@ async def ask(request: dict):
     except LLMOutputError as exc:
         # 必须排在 ValueError 之前 —— LLMOutputError 是 ValueError 的子类
         logger.error("Upstream LLM output unusable: %s", type(exc).__name__)
+        codes = ["llm_output_error"]
         return JSONResponse(
             status_code=502,
             content={
@@ -335,6 +356,12 @@ async def ask(request: dict):
                 "final_audit_status": "error",
                 "delivery_status": "failed",
                 "delivery_reason": "上游模型输出不可解析",
+                "run_id": request_run_id,
+                "stage": "sync",
+                "exception_type": type(exc).__name__,
+                "reason_codes": codes,
+                "elapsed_ms": round((time.monotonic() - request_started_at) * 1000, 1),
+                "remaining_budget": 0.0,
                 "unresolved_issues": [],
                 "persisted": False,
             },
@@ -363,6 +390,12 @@ async def ask(request: dict):
                 "final_audit_status": "error",
                 "delivery_status": "failed",
                 "delivery_reason": "研究流程发生内部异常",
+                "run_id": request_run_id,
+                "stage": "sync",
+                "exception_type": type(exc).__name__,
+                "reason_codes": ["research_error", type(exc).__name__],
+                "elapsed_ms": round((time.monotonic() - request_started_at) * 1000, 1),
+                "remaining_budget": 0.0,
                 "unresolved_issues": [],
                 "persisted": False,
             },
@@ -406,6 +439,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         "run_id": run_log.new_run_id(),
         # T23b：SSE 路径同样把整次调查的预算截止时刻写进 state（与 Orchestrator.run 对齐）
         "budget_deadline": time.monotonic() + budget,
+        "started_at": time.monotonic(),
     }
     requested_date, _ = requested_date_from_question(question)
     date_semantics = resolve_trading_date_semantics(question) if domain == "a_share" else None
@@ -419,12 +453,18 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
     )
     run_log.log_run_start(initial_state)
 
-    def _terminal_state(*, reason: str, audit: str = "error", error_category: str | None = None) -> dict:
+    def _terminal_state(*, reason: str, audit: str = "error", error_category: str | None = None,
+                       exception_type: str | None = None, reason_codes: list[str] | None = None) -> dict:
         return {
             **initial_state,
             "final_audit_status": audit,
             "delivery_reason": reason,
             "error_category": error_category,
+            "stage": "stream",
+            "exception_type": exception_type,
+            "reason_codes": list(reason_codes or []),
+            "elapsed_ms": round((time.monotonic() - float(initial_state["started_at"])) * 1000, 1),
+            "remaining_budget": 0.0 if error_category == "timeout" else None,
         }
 
     # The endpoint preflights graph construction, but retain a run-correlated
@@ -434,8 +474,13 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         graph = orchestrator._ensure_graph()
     except Exception as exc:
         logger.error("Stream graph initialization failed for: %s (%s)", run_log.redact_text(question), type(exc).__name__)
+        terminal = _terminal_state(
+            reason="研究流程发生内部异常",
+            exception_type=type(exc).__name__,
+            reason_codes=["research_error", type(exc).__name__],
+        )
         run_log.log_delivery(
-            _terminal_state(reason="研究流程发生内部异常"),
+            terminal,
             delivery_status="failed", persisted=False, sink="sse",
         )
         yield json_event("progress", {"step": "error", "message": "研究初始化失败，请重试"})
@@ -448,6 +493,12 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 "final_audit_status": "error",
                 "delivery_status": "failed",
                 "delivery_reason": "研究流程发生内部异常",
+                "run_id": initial_state["run_id"],
+                "stage": terminal["stage"],
+                "exception_type": terminal["exception_type"],
+                "reason_codes": terminal["reason_codes"],
+                "elapsed_ms": terminal["elapsed_ms"],
+                "remaining_budget": terminal["remaining_budget"],
                 "unresolved_issues": [],
                 "persisted": False,
             },
@@ -551,6 +602,12 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                         "delivery_status": "blocked",
                         "final_audit_status": result.final_audit_status,
                         "delivery_reason": result.delivery_reason,
+                        "reason_codes": result.reason_codes,
+                        "elapsed_ms": result.elapsed_ms,
+                        "remaining_budget": result.remaining_budget,
+                        "stage": result.stage,
+                        "exception_type": result.exception_type,
+                        "run_id": result.run_id,
                         "critique": result.critique,
                         "unresolved_issues": result.unresolved_issues,
                         "errors": result.errors,
@@ -575,6 +632,12 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                     "delivery_status": delivery,
                     "final_audit_status": result.final_audit_status,
                     "delivery_reason": result.delivery_reason,
+                    "reason_codes": result.reason_codes,
+                    "elapsed_ms": result.elapsed_ms,
+                    "remaining_budget": result.remaining_budget,
+                    "stage": result.stage,
+                    "exception_type": result.exception_type,
+                    "run_id": result.run_id,
                     "critique": result.critique,
                     "unresolved_issues": result.unresolved_issues,
                     "persisted": False,
@@ -609,14 +672,24 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         # Starlette closes the generator when an SSE client disconnects.  Keep
         # the original run_id and record the cancellation as a terminal event.
         run_log.log_delivery(
-            _terminal_state(reason="SSE 客户端断开连接"),
+            _terminal_state(reason="SSE 客户端断开连接", exception_type="CancelledError",
+                            reason_codes=["timeout", "research_cancelled"]),
             delivery_status="failed", persisted=False, sink="sse",
         )
         raise
     except (UpstreamTimeoutError, TimeoutError):
         logger.warning("Stream research exceeded %ds budget for: %s", budget, run_log.redact_text(question))
+        timeout_codes = ["timeout", "research_deadline_exhausted"]
+        terminal = _terminal_state(
+            reason="研究超出总预算", error_category="timeout", exception_type="UpstreamTimeoutError",
+            reason_codes=timeout_codes,
+        )
+        run_log.log_finalize(
+            terminal, final_audit_status="error", delivery_status="failed", reason="研究超出总预算",
+            blocked_reason="time_budget_insufficient", remaining_budget=0.0, reason_codes=timeout_codes,
+        )
         run_log.log_delivery(
-            _terminal_state(reason="研究超出总预算", error_category="timeout"),
+            terminal,
             delivery_status="failed", persisted=False, sink="sse",
         )
         yield json_event("progress", {"step": "error", "message": "研究超时，请重试"})
@@ -629,14 +702,23 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 "final_audit_status": "error",
                 "delivery_status": "failed",
                 "delivery_reason": "研究超出总预算",
+                "run_id": initial_state["run_id"],
+                "stage": "stream",
+                "exception_type": "UpstreamTimeoutError",
+                "reason_codes": timeout_codes,
+                "elapsed_ms": terminal["elapsed_ms"],
+                "remaining_budget": 0.0,
                 "unresolved_issues": [],
                 "persisted": False,
             },
         )
     except LLMOutputError as exc:
         logger.error("Stream research got unusable LLM output for: %s — %s", run_log.redact_text(question), type(exc).__name__)
+        codes = ["llm_output_error"]
+        terminal = _terminal_state(reason="上游模型输出不可解析", error_category="upstream",
+                                   exception_type=type(exc).__name__, reason_codes=codes)
         run_log.log_delivery(
-            _terminal_state(reason="上游模型输出不可解析", error_category="upstream"),
+            terminal,
             delivery_status="failed", persisted=False, sink="sse",
         )
         yield json_event("progress", {"step": "error", "message": "上游模型返回了无法解析的内容"})
@@ -649,14 +731,21 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 "final_audit_status": "error",
                 "delivery_status": "failed",
                 "delivery_reason": "上游模型输出不可解析",
+                "run_id": initial_state["run_id"],
+                "stage": "stream",
+                "exception_type": type(exc).__name__,
+                "reason_codes": codes,
                 "unresolved_issues": [],
                 "persisted": False,
             },
         )
     except Exception as exc:
         logger.error("Stream research failed for: %s (%s)", run_log.redact_text(question), type(exc).__name__)
+        codes = ["research_error", type(exc).__name__]
+        terminal = _terminal_state(reason="研究流程发生内部异常", error_category=type(exc).__name__,
+                                   exception_type=type(exc).__name__, reason_codes=codes)
         run_log.log_delivery(
-            _terminal_state(reason="研究流程发生内部异常", error_category=type(exc).__name__),
+            terminal,
             delivery_status="failed", persisted=False, sink="sse",
         )
         yield json_event(
@@ -675,6 +764,10 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 "final_audit_status": "error",
                 "delivery_status": "failed",
                 "delivery_reason": "研究流程发生内部异常",
+                "run_id": initial_state["run_id"],
+                "stage": "stream",
+                "exception_type": type(exc).__name__,
+                "reason_codes": codes,
                 "unresolved_issues": [],
                 "persisted": False,
             },

@@ -74,6 +74,19 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 90
     max_conversation_turns: int = 10
 
+    # P4：阶段级预算保留线。每次 LLM 调用都从同一个 research deadline
+    # 中扣除，并为后续阶段预留时间；这样 plan/tools/reasoning/critic/finalize
+    # 不会把总预算耗尽后才发现没有终态机会。
+    plan_min_budget_seconds: int = Field(default=20, ge=0, le=3_600)
+    tools_min_budget_seconds: int = Field(default=45, ge=0, le=3_600)
+    finalize_min_budget_seconds: int = Field(default=2, ge=0, le=600)
+    # P4：提示词展示上限。原始结果仍完整留在 state/evidence ledger；这里只限制
+    # 发给 LLM 的上下文，避免 sentiment 等大列表挤掉 reasoning/critic 预算。
+    reasoning_context_evidence_limit: int = Field(default=180, ge=20, le=2_000)
+    reasoning_context_datums_per_tool: int = Field(default=24, ge=4, le=200)
+    critic_context_evidence_limit: int = Field(default=30, ge=5, le=200)
+    critic_context_datums_per_tool: int = Field(default=6, ge=2, le=100)
+
     #: Market Memory 的 SQLite 路径。留空 = 默认落在"项目根/memory/memory.db"
     #: （本地开发的历史行为）。容器/只读代码目录部署时用 `MOSAIC_MEMORY_DB`
     #: 指到可写卷上，例如 `/data/memory.db`。
