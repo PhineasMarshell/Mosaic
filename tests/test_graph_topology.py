@@ -8,7 +8,6 @@
 - state reducer 并行写不丢数据（通过单元测试验证 by_category 工具分类覆盖）
 """
 
-import logging
 
 import pytest
 

@@ -66,29 +66,94 @@ class Orchestrator:
             budget_deadline=time.monotonic() + self.settings.research_budget_seconds,
         )
         run_log.log_run_start(state)
+        stage = "graph_build"
+
+        def _terminal_snapshot(*, final_audit_status: str, delivery_reason: str, error_category: str,
+                               exception_type: str, reason_codes: list[str]) -> dict:
+            """Return a log-safe dict for both dict and ResearchState inputs.
+
+            LangGraph may return the Pydantic state object directly.  Expanding
+            it with ``{**state}`` raises a second TypeError and hides the
+            original graph/Gateway failure, so this boundary always uses the
+            model's public serialization API.
+            """
+            if hasattr(state, "model_dump"):
+                snapshot = state.model_dump(mode="python", exclude_none=False)
+            elif isinstance(state, dict):
+                snapshot = dict(state)
+            else:
+                snapshot = {"run_id": run_id}
+            snapshot.update(
+                {
+                    "run_id": snapshot.get("run_id") or run_id,
+                    "final_audit_status": final_audit_status,
+                    "delivery_reason": delivery_reason,
+                    "error_category": error_category,
+                    "exception_type": exception_type,
+                    "stage": stage,
+                    "reason_codes": list(dict.fromkeys(reason_codes)),
+                    "errors": list(snapshot.get("errors") or []) + [error_category],
+                }
+            )
+            return snapshot
+
+        def _record_failed_terminal(snapshot: dict, reason_codes: list[str]) -> None:
+            # Logging must never replace the original exception.  The helper is
+            # deliberately best-effort while preserving a stable finalize and
+            # delivery event whenever the logger itself is healthy.
+            try:
+                run_log.log_finalize(
+                    snapshot,
+                    final_audit_status="error",
+                    delivery_status="failed",
+                    reason=str(snapshot.get("delivery_reason") or "research_failed"),
+                    reason_codes=reason_codes,
+                )
+                run_log.log_delivery(snapshot, delivery_status="failed", persisted=False, sink="sync")
+            except Exception:  # pragma: no cover - logging must not mask source errors
+                logger.exception("Failed to record terminal research error")
+
         try:
             graph = self._ensure_graph()
+            stage = "graph_invoke"
             result_state = await graph.ainvoke(
                 state,
                 config={"recursion_limit": self.settings.graph_recursion_limit},
             )
 
             # ── 从 state 组装 ResearchResponse（与 SSE 路径共用）────
+            stage = "response_build"
             result = build_response_from_state(result_state, question=question, conversation_id=conversation_id)
         except asyncio.CancelledError:
             # 外层总预算通过 wait_for 取消这里；保留同一个 run_id，避免
             # timeout 的 delivery 日志脱离 run_start 链路。
-            run_log.log_delivery(
-                {**state, "final_audit_status": "error", "delivery_reason": "研究任务已取消", "error_category": "timeout"},
-                delivery_status="failed", persisted=False, sink="sync",
+            codes = ["timeout", "research_cancelled"]
+            _record_failed_terminal(
+                _terminal_snapshot(
+                    final_audit_status="error",
+                    delivery_reason="研究任务已取消",
+                    error_category="timeout",
+                    exception_type="CancelledError",
+                    reason_codes=codes,
+                ),
+                codes,
             )
             raise
         except Exception as exc:
             # 上游/图组装异常也必须留下终态失败事件，不能只返回 HTTP 错误。
-            run_log.log_delivery(
-                {**state, "final_audit_status": "error", "delivery_reason": type(exc).__name__,
-                 "error_category": type(exc).__name__},
-                delivery_status="failed", persisted=False, sink="sync",
+            error_type = type(exc).__name__
+            codes = ["graph_node_error" if stage == "graph_invoke" else "research_error"]
+            if exc.__class__.__module__.startswith("app.gateway"):
+                codes.append("gateway_error")
+            _record_failed_terminal(
+                _terminal_snapshot(
+                    final_audit_status="error",
+                    delivery_reason=error_type,
+                    error_category=error_type,
+                    exception_type=error_type,
+                    reason_codes=codes,
+                ),
+                codes,
             )
             raise
 

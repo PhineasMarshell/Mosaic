@@ -345,6 +345,7 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
                 "arguments": clip_args(arguments),
                 "status": _field(r, "status"),
                 "partial": bool(_field(r, "partial", False)),
+                "reason_codes": _field(r, "reason_codes", []) or [],
                 "as_of_date": _field(r, "as_of_date"),
                 "retrieved_at": _field(r, "retrieved_at"),
                 "datum_count": len(normalized),
@@ -549,6 +550,8 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
             for i in (_field(_field(state, "critique"), "issues", []) or [])
         ],
         error_category=_field(state, "error_category"),
+        exception_type=_field(state, "exception_type"),
+        stage=_field(state, "stage"),
         reason_codes=_field(state, "reason_codes", []) or [],
     )
 

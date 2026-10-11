@@ -20,11 +20,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-import app.main as main
 import app.cli as cli
+import app.main as main
 from app.agent.persistence import persist_research
 from app.config import Settings
 from app.graph import run_log

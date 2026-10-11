@@ -22,7 +22,6 @@ from app.agent.persistence import persist_research
 from app.memory.storage import MarketMemory
 from app.models.response import MarketIntelligence, ResearchResponse, build_response_from_state
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTROLLED_TMP = REPO_ROOT / ".tmp" / "stage4-integration"
 

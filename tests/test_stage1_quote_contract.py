@@ -6,10 +6,10 @@ from app.agent.prompts_graph import PLANNER_PROMPT
 from app.config import Settings
 from app.gateway.arguments import canonicalize_tool_arguments, freeze_arguments, semantic_signature
 from app.gateway.http_client import MarketGatewayHttpClient
+from app.graph import run_log
 from app.graph.gap_loop import drop_repeat_steps
 from app.graph.market_plan import A_SHARE_BENCHMARK_SYMBOL, apply_market_summary_prefix
 from app.graph.nodes.analysts.technical import TechnicalAnalystNode
-from app.graph import run_log
 from app.models.market import NormalizedDatum, ToolResult
 from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
 

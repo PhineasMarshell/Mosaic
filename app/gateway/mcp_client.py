@@ -11,8 +11,10 @@ import json
 import logging
 import os
 import shlex
+import tempfile
 import time
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -108,13 +110,29 @@ class MarketGatewayClient:
         await self.close()
 
     @staticmethod
-    def _child_env() -> dict[str, str]:
+    def _child_env(settings: Settings | None = None) -> dict[str, str]:
         """构造 MCP 子进程环境：SDK 默认白名单 + 显式透传的代理变量。
 
         见 `PROXY_ENV_KEYS` 的说明：`env=None` 会让 SDK 丢掉代理变量，导致
         「必须走代理才能出网」的机器上 MCP 真实调用全部超时。
         """
         env = dict(get_default_environment())
+        configured = str(getattr(settings, "mcp_appdata_dir", "") or "").strip() if settings else ""
+        if not configured:
+            configured = str(Path.cwd() / ".tmp" / "iiix-appdata")
+        appdata = Path(configured).expanduser().resolve()
+        try:
+            appdata.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # A packaged/read-only cwd must still have a narrow writable
+            # fallback.  Never fall back to the user's roaming profile.
+            appdata = Path(tempfile.gettempdir()) / "mosaic-iiix-appdata"
+            appdata.mkdir(parents=True, exist_ok=True)
+            logger.warning("Configured MCP APPDATA is not writable; using temp log root=%s", appdata)
+        # iiix derives its log file from APPDATA.  Keep the override narrow to
+        # the spawned process and record the effective path for diagnostics.
+        env["APPDATA"] = str(appdata)
+        logger.info("MCP child APPDATA/log root=%s", appdata / "iiix" / "logs")
         for key in PROXY_ENV_KEYS:
             value = os.environ.get(key)
             if value:
@@ -126,7 +144,7 @@ class MarketGatewayClient:
         params = StdioServerParameters(
             command=self.settings.mcp_command,
             args=args,
-            env=self._child_env(),
+            env=self._child_env(self.settings),
         )
         # 报错时带上实际配置：MCP 故障的排查第一步永远是「到底起的是哪个二进制、
         # 用了什么参数」（例：0.8.0 起 `mcp serve` 被删，必须 `plugin serve`）。

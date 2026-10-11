@@ -46,6 +46,10 @@ class ToolResult(BaseModel):
     status: Status
     partial: bool = False
     error: str | None = None
+    #: Machine-readable transport/audit reasons.  Error results never become
+    #: evidence; callers can still distinguish timeout, deadline exhaustion,
+    #: and optional-source gaps without parsing free text.
+    reason_codes: list[str] = Field(default_factory=list)
     retrieved_at: str | None = None
     as_of_date: str | None = None
     authority: str | None = None

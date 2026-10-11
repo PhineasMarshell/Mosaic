@@ -1,13 +1,14 @@
 # P2 真实 Gateway/MCP/LLM 线上验收取证
 
-验收基线为 `main@08f7824`。本次没有 reset、revert、commit、push，没有修改 `.env`，也没有写入运行时 `memory.db`；临时 HTTP Settings 与 SSE 运行均未持久化可信结果。
+验收基线为 `main@c0142a5`。本次没有 reset、revert、commit、push，没有修改 `.env`，也没有写入运行时 `memory.db`；临时 HTTP Settings 与 SSE 运行均未持久化可信结果。
 
 ## 依赖结论
 
 - **LLM 可用**：`.env` 提供 key；DashScope OpenAI 兼容端点 `qwen3.7-flash` 的 JSON 探针成功（约 3.8 秒，返回合法 JSON）。
 - **HTTP Gateway 可用**：`/health`、`/market/health`、`/ashare-master/limit-up/count`、`/ashare-master/sentiment`、代码行情均返回 200；代码行情归一化后有 43 条 datum。
 - **MCP/iiix 不可用**：`iiix 0.8.4` 的 `whoami`、`plugin status`、`plugin verify market-gateway` 均在初始化日志时返回 `Access is denied`；Mosaic MCP spawn 失败为 `PermissionError [WinError 5]`。因此本次不能声称 MCP 真实链路通过，MCP 登录/鉴权状态也只能记为 unknown（CLI 尚未进入鉴权检查）。
-- **缺失/阻塞项**：MCP 进程需要能写入 `C:\Users\Phineas\AppData\Roaming\iiix\logs\iiix.log`（或提供可写日志目录/权限）；若运维改用 HTTP 模式，仍需保证 `MARKET_GATEWAY_HTTP_URL` 与 `MARKET_GATEWAY_API_KEY` 可注入。当前 LLM 的 `OPENAI_BASE_URL`、`OPENAI_MODEL`、`OPENAI_API_KEY` 已加载。
+- **P2 修复后的 MCP smoke**：将子进程 `APPDATA` 重定向到项目可写目录 `D:\Mosaic\.tmp\iiix-appdata` 后，`whoami` 与 `plugin status` 通过，`plugin verify market-gateway` 返回“Plugin 尚未安装”，Mosaic spawn 仍为 `MCPConnectionError`。因此仍不能声称 MCP 真实链路通过；实际日志根路径已记录在 JSONL，未扩大到用户目录。
+- **剩余阻塞项**：安装/授权 `market-gateway` iiix plugin 后重新执行 `plugin verify market-gateway` 与 Mosaic spawn；HTTP 模式仍需保证 `MARKET_GATEWAY_HTTP_URL` 与 `MARKET_GATEWAY_API_KEY` 可注入。当前 LLM 的 `OPENAI_BASE_URL`、`OPENAI_MODEL`、`OPENAI_API_KEY` 已加载。
 
 依赖检查与 schema 摘要保存在 `memory/p2-real-acceptance.jsonl` 的 `dependency_check` 记录中；完整 schema 来自本机 market-gateway OpenAPI 3.1 快照（43 paths）。
 
@@ -25,6 +26,17 @@
 | 真实 SSE | `2fe48662f659` | `failed / timeout` | 45 秒总 deadline；3 个 heartbeat，最终 result `code=timeout`、`persisted=false` |
 
 每个 run 的 `plan`、`executions`、LLM、Critic、route、Finalize、delivery 结构化事件均按 run_id 关联；自由文本和工具参数已脱敏。HTTP 请求摘要、status、normalized datum 数量、source/instrument/as_of_date/retrieved_at/partial 也已保存。
+
+## P2 修复后真实 smoke
+
+| 场景 | run_id | 结果 | 剩余阻塞 / 最小后续修复 |
+|---|---|---|---|
+| HTTP code-only quote `688981` | `b4e05a281df7` | success，43 datum | 无；继续由日期/标的门禁约束引用 |
+| HTTP `get_stock_abnormal_reasons`（`/market/abnormal-reasons`，30 日窗口） | `b4e05a281df7` | 两次 bounded timeout，error，0 datum，`gateway_timeout` | 雪球上游超时；安装/修复上游可用性，不能把失败当证据 |
+| Gateway deadline | `b4e05a281df7` | error，0 datum，`deadline_exhausted`，未生成 evidence | 无代码放宽；保留整次 deadline |
+| iiix whoami/status/verify + Mosaic MCP spawn | `d8096cf0a742` | whoami/status passed；verify “Plugin 尚未安装”；spawn failed | 安装并授权 market-gateway 后重跑；HTTP 成功不替代 MCP 成功 |
+
+上述事件已追加到 `memory/p2-real-acceptance.jsonl`，每个场景内部的 `run_start`、transport/status、delivery 与 scenario 记录使用同一 run_id；MCP 记录了实际可写日志根路径与失败原因码。
 
 ## 验收断言结果
 

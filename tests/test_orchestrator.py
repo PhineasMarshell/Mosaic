@@ -1,5 +1,7 @@
 """Orchestrator 对最终研究响应的组装测试。"""
 
+import asyncio
+import json
 import logging
 
 import pytest
@@ -16,6 +18,14 @@ class FakeGraph:
 
     async def ainvoke(self, state, config=None):
         return self.final_state
+
+
+class RaisingGraph:
+    def __init__(self, exc):
+        self.exc = exc
+
+    async def ainvoke(self, state, config=None):
+        raise self.exc
 
 
 def _report() -> MarketIntelligence:
@@ -83,3 +93,40 @@ async def test_orchestrator_marks_pass_run_as_verified(caplog):
     assert result.final_audit_status == "pass"
     assert result.report is not None
     assert not [r for r in caplog.records if "delivery_status" in r.message]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_research_state_exception_keeps_original_type_and_terminal_log(caplog):
+    """A graph exception must not be replaced by ``ResearchState is not a mapping``."""
+    original = RuntimeError("gateway node failed")
+    orchestrator = Orchestrator(Settings(_env_file=None))
+    orchestrator._graph = RaisingGraph(original)
+
+    caplog.set_level(logging.INFO, logger="app.graph.run_log")
+    with pytest.raises(RuntimeError, match="gateway node failed"):
+        await orchestrator.run("688981 行情")
+
+    events = [json.loads(record.message) for record in caplog.records if record.name == "app.graph.run_log"]
+    delivery = next(event for event in events if event.get("event") == "delivery")
+    finalize = next(event for event in events if event.get("event") == "finalize")
+    assert delivery["delivery_status"] == "failed"
+    assert delivery["exception_type"] == "RuntimeError"
+    assert delivery["stage"] == "graph_invoke"
+    assert "graph_node_error" in delivery["reason_codes"]
+    assert finalize["run_id"] == delivery["run_id"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_cancelled_research_state_has_timeout_terminal_log(caplog):
+    orchestrator = Orchestrator(Settings(_env_file=None))
+    orchestrator._graph = RaisingGraph(asyncio.CancelledError())
+
+    caplog.set_level(logging.INFO, logger="app.graph.run_log")
+    with pytest.raises(asyncio.CancelledError):
+        await orchestrator.run("今天 A 股发生了什么")
+
+    events = [json.loads(record.message) for record in caplog.records if record.name == "app.graph.run_log"]
+    delivery = next(event for event in events if event.get("event") == "delivery")
+    assert delivery["error_category"] == "timeout"
+    assert delivery["exception_type"] == "CancelledError"
+    assert set(("timeout", "research_cancelled")) <= set(delivery["reason_codes"])

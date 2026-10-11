@@ -98,6 +98,32 @@ async def test_incident_mcp_timeout_is_capped_by_deadline():
     assert "attempt 1" in (result.error or "")
 
 
+@pytest.mark.asyncio
+async def test_abnormal_reasons_gets_bounded_window_and_optional_error_code():
+    node = TechnicalAnalystNode(Settings(_env_file=None, research_budget_seconds=30))
+    seen = []
+
+    async def execute(tool, arguments, called_signatures, deadline=None, refresh=False):
+        seen.append(arguments)
+        return ToolResult(tool=tool, arguments=arguments, status="error", normalized=[], error="upstream timeout")
+
+    node._runtime.execute = execute
+    results = await node._execute_tools(
+        {
+            "question": "688981 异动原因",
+            "requested_date": "2026-10-09",
+            "planned_as_of_date": "2026-10-09",
+            "route": _route("abnormal_reasons", {"symbol": "SH688981"}),
+            "budget_deadline": time.monotonic() + 30,
+        },
+        set(),
+    )
+    assert seen[0]["start"] == "2026-09-09"
+    assert seen[0]["end"] == "2026-10-09"
+    assert results[0].status == "error"
+    assert "optional_evidence_unavailable" in results[0].reason_codes
+
+
 def test_incident_partial_sector_result_keeps_coverage_retry():
     critique = {
         "missing_tool_keys": ["limit_up_sectors"],

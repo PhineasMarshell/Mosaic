@@ -38,6 +38,8 @@ def test_live_replay_scenarios_are_correlated_and_redacted():
         "partial_refresh_truncated",
         "gateway_deadline",
         "sse_real",
+        "p2_fix_gateway_timeout",
+        "p2_fix_mcp_smoke",
     }
     assert expected <= scenarios.keys()
     assert all(scenarios[name].get("run_id") for name in expected)
@@ -88,6 +90,22 @@ def test_live_replay_preserves_blocking_and_transport_failures():
     assert sse["delivery_status"] == "failed"
     assert sse["persisted"] is False
     assert scenarios["sse_real"]["heartbeats"] >= 1
+
+    p2_gateway = scenarios["p2_fix_gateway_timeout"]
+    assert p2_gateway["result"]["status"] == "error"
+    assert p2_gateway["result"]["datum_count"] == 0
+    assert p2_gateway["result"]["reason_codes"]
+    assert p2_gateway["result"]["endpoint"] == "/market/abnormal-reasons"
+    assert p2_gateway["deadline_result"]["status"] == "error"
+    assert p2_gateway["deadline_result"]["datum_count"] == 0
+    assert p2_gateway["evidence_created"] is False
+
+    p2_mcp = scenarios["p2_fix_mcp_smoke"]
+    assert p2_mcp["status"]["whoami"] == "passed"
+    assert p2_mcp["status"]["plugin_status"] == "passed"
+    assert p2_mcp["status"]["plugin_verify"] == "failed"
+    assert p2_mcp["status"]["mosaic_spawn"].startswith("failed:")
+    assert p2_mcp["evidence_created"] is False
 
 
 def test_policy_replay_keeps_unverified_and_news_only_claims_blocked():

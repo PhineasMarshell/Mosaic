@@ -28,6 +28,8 @@ def replay() -> int:
         "partial_refresh_truncated",
         "gateway_deadline",
         "sse_real",
+        "p2_fix_gateway_timeout",
+        "p2_fix_mcp_smoke",
     }
     missing = sorted(required - scenarios)
     if missing:

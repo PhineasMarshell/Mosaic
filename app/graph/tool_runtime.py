@@ -398,6 +398,7 @@ class ToolRuntime:
             return ToolResult(
                 tool=tool_name, arguments=arguments, status=STATUS_ERROR,
                 normalized=[], error="budget exhausted before tool execution",
+                reason_codes=["deadline_exhausted"],
             )
         execution = (
             self._do_execute(tool_name, arguments, deadline=deadline, refresh=True)
@@ -412,6 +413,7 @@ class ToolRuntime:
             return ToolResult(
                 tool=tool_name, arguments=arguments, status=STATUS_ERROR,
                 normalized=[], error="budget exhausted during tool execution",
+                reason_codes=["deadline_exhausted", "gateway_timeout"],
             )
         # Keep trace fields present even when a Gateway/mock implementation
         # constructs an older ToolResult shape.

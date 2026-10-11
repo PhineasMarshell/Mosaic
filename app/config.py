@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     #: iiix CLI >= 0.8.0 的语法：`plugin serve <project-code>`。
     #: 旧语法 `mcp serve market-gateway` 在 0.8.0 已被删除（`iiix mcp` 不再存在）。
     mcp_args: str = "plugin serve market-gateway"
+    #: Writable per-project APPDATA root for iiix logs.  Empty uses
+    #: ``<project>/.tmp/iiix-appdata``; it avoids requiring access to the
+    #: user's roaming profile while keeping the child process scoped.
+    mcp_appdata_dir: str = ""
 
     #: 启动时是否对 Gateway 通道做一次自检（mcp 模式：spawn + 握手 + list_tools）。
     #: 背景：2026-10-06 事故——mcp 模式全部 Gateway 工具失败但启动无任何报错。

@@ -268,6 +268,20 @@ class MarketAnalystNode:
                     )
                 )
                 continue
+            # The upstream default is a long Xueqiu history (2024-01-01 to
+            # now), which is prone to real timeouts. Bound this optional
+            # evidence to the requested/as-of day while preserving explicit
+            # caller parameters and the absolute research deadline.
+            if meta.tool_name == "get_stock_abnormal_reasons":
+                target_date = state.get("planned_as_of_date") or state.get("as_of_date") or state.get("requested_date")
+                if isinstance(target_date, str):
+                    try:
+                        target = datetime.strptime(target_date, "%Y-%m-%d").date()
+                        arguments.setdefault("end", target.isoformat())
+                        arguments.setdefault("start", (target - timedelta(days=30)).isoformat())
+                    except ValueError:
+                        logger.warning("%s: invalid abnormal-reasons target date; keeping upstream defaults", self.category)
+                arguments = canonicalize_tool_arguments(meta.tool_name, arguments)
             # symbol 守卫（阶段 3 ④）：是否需要 symbol 由注册表元数据声明，
             # planner 没给 → 用问题里抽到的代码补，仍无则跳过。
             has_symbol = arguments.get("symbols") if meta.tool_name == "get_market_quotes" else arguments.get("symbol")
@@ -327,6 +341,10 @@ class MarketAnalystNode:
             # 反查只能拿到规范条目，会把兄弟 key 的缺口误判成"已满足"）。
             try:
                 result.tool_key = tool_key
+                if meta.tool_name == "get_stock_abnormal_reasons" and result.status == STATUS_ERROR:
+                    result.reason_codes = list(
+                        dict.fromkeys([*(result.reason_codes or []), "optional_evidence_unavailable"])
+                    )
                 # 阶段 6：单次工具耗时（指标数据源）。伪对象没有该字段时一并跳过。
                 result.duration_ms = round((time.monotonic() - exec_started) * 1000, 1)
             except Exception:  # noqa: BLE001 — 伪对象缺字段时不该炸掉整个 analyst

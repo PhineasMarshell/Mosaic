@@ -151,6 +151,25 @@ _LIST_CAP = 50
 #: 阶段 3 ⑤：空返回必须给出**可引用的原因**，不能只是"没有数据"。
 _EMPTY_PAYLOAD_NOTE = "上游返回空载荷（200 + 空 body / 空容器）：本次调用没有拿到任何数据"
 
+
+def _reason_codes_for_error(error: str | None) -> list[str]:
+    """Map transport errors to stable audit codes without exposing payloads."""
+    text = str(error or "").casefold()
+    codes: list[str] = []
+    if "budget exhausted" in text or "deadline" in text:
+        codes.append("deadline_exhausted")
+    if "timeout" in text or "timed out" in text:
+        codes.append("gateway_timeout")
+    if "authentication" in text or "permission" in text or "401" in text or "403" in text:
+        codes.append("gateway_auth_error")
+    if "429" in text or "rate limit" in text:
+        codes.append("gateway_rate_limited")
+    if "upstream" in text or "502" in text or "503" in text or "504" in text:
+        codes.append("gateway_upstream_error")
+    if not codes:
+        codes.append("gateway_error")
+    return codes
+
 #: 阶段 3 ⑤：市场级聚合工具（情绪 / 涨停家数 / 涨停题材 / 全市场快讯）的
 #: 数据点代表"整个市场在某一天的横截面"。上游没给时间戳时，数据点就失去了
 #: 日期锚点——报告于是可能拿一段旧数据声称"今日大盘上涨"（验收要求禁止）。
@@ -772,6 +791,7 @@ def normalize_tool_result(
     *,
     error: str | None = None,
     tool_key: str | None = None,
+    reason_codes: list[str] | None = None,
 ) -> ToolResult:
     """将 MCP/HTTP 返回的原始响应标准化。
 
@@ -804,6 +824,7 @@ def normalize_tool_result(
             status="error",
             partial=False,
             error=error,
+            reason_codes=list(dict.fromkeys(reason_codes or _reason_codes_for_error(error))),
         )
 
     # T1：空载荷 / 裸标量都不是"数据"，必须判失败，而不是被归一化成成功证据。
@@ -825,6 +846,7 @@ def normalize_tool_result(
             normalized=[],
             note=_EMPTY_PAYLOAD_NOTE,
             error="Gateway returned no data (empty response)",
+            reason_codes=["empty_gateway_response"],
         )
 
     if not isinstance(raw, (dict, list)):
@@ -839,6 +861,7 @@ def normalize_tool_result(
             partial=False,
             normalized=[],
             error=f"Gateway returned a non-data scalar response: {snippet}",
+            reason_codes=["invalid_gateway_payload"],
         )
 
     partial = find_partial(raw)
@@ -936,6 +959,7 @@ def normalize_tool_result(
             note=note or _EMPTY_PAYLOAD_NOTE,
             normalized=[],
             error="Gateway returned no extractable data (normalization produced zero items)",
+            reason_codes=["empty_normalized"],
         )
 
     return ToolResult(
