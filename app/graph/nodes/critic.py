@@ -159,6 +159,8 @@ _ISSUE_RULES = (
     "- 「工具执行过」不等于「证据已充分」：如果某个工具返回 partial、空列表，"
     "或参数不覆盖这条缺口，照样把它算作未满足的缺口。\n"
     "- 证据被上下文截断时，不要据此判定'无证据'——只标记你确实看到了的部分。\n"
+    "- 空的可选字段（why/strong_areas/what_changed/what_matters/risks/data_caveats）本身不是问题；\n"
+    "  休市或数据缺口的代码生成日期事实，以及‘未验证/无法确认/暂无可核验’限定语，也不构成 unsupported_claim。\n"
     "- status=partial、partial=true、缺日期锚点或 note 指明截断的证据不得支撑全市场或明确资金流向等强结论。\n"
     "- 没有完整同日上涨/下跌家数时，报告只能写无法确认，不能声称全市场全部上涨/下跌。\n"
     "- 因果、资金从一板块流向另一板块、跨市场带动，须有同日同标的/板块直接证据；否则要求改为可能/无法确认或删除。\n"
@@ -626,8 +628,9 @@ def _code_level_issues(report) -> list["AuditIssue"]:
     - 报告引用了证据账本中不存在的 evidence id（伪造引用）；
     - 报告对无校验源的实体断言"不存在 / 未上市"。
 
-    两者都取 ``remove_or_qualify`` → 派生 ``revise``，所以这类报告**不可能**
-    被判 pass。不写 ``errors``：审计没通过不是运行失败。
+    伪造引用与无依据的不存在断言取 ``remove_or_qualify``；未验证实体的
+    正向行情/事件断言取 ``research_more``。两类都让报告**不可能**直接 pass，
+    但只有需要新数据的正向断言才进入补查回环。不写 ``errors``：审计没通过不是运行失败。
     """
     issues: list[AuditIssue] = []
     for violation in _field(report, "evidence_violations", []) or []:
@@ -663,7 +666,7 @@ def _code_level_issues(report) -> list["AuditIssue"]:
             if name in nonexistence:
                 continue
             for sentence in re.split(r"[。！？；，,\n]|(?:但|然而)", text):
-                if name not in sentence or re.search(r"未验证|无法确认|尚不能确认|未能确认|有待确认", sentence):
+                if name not in sentence or _is_qualified_statement(sentence):
                     continue
                 market_claim = re.search(r"领涨|上涨|下跌|涨停|跌停|收涨|收跌", sentence)
                 event_claim = name in unverified and re.search(r"盈利|亏损|发布|宣布", sentence)
@@ -716,7 +719,37 @@ def _claim_evidence_issues(
         reasons = row["reason_codes"]
         if not reasons:
             continue
-        action = "research_more" if any(x in reasons for x in ("missing_reference", "unknown_date", "unknown_source", "stale_date", "invalid_evidence", "instrument_name_unknown", "conflicting_evidence")) else "remove_or_qualify"
+        # Calendar/data-gap statements and explicit uncertainty are claims
+        # about the limits of the investigation.  They do not need a market
+        # datum of their own.  This exemption is deliberately claim-scoped;
+        # an adjacent positive assertion is still audited normally.
+        if not row["evidence_ids"] and (
+            _is_qualified_statement(row["claim"])
+            or _is_structural_date_statement(
+                row["claim"],
+                requested_date=requested_date,
+                expected_date=expected_date,
+                market_closed=market_closed,
+            )
+        ):
+            continue
+        action = "research_more" if any(
+            x in reasons
+            for x in (
+                "missing_reference",
+                "unknown_date",
+                "unknown_source",
+                "stale_date",
+                "invalid_evidence",
+                "instrument_name_unknown",
+                "conflicting_evidence",
+                "partial_only",
+                "news_mention_not_price",
+                "unmatched_instrument",
+                "unmatched_subject",
+                "market_level_for_single_instrument",
+            )
+        ) else "remove_or_qualify"
         if "invalid_reference" in reasons:
             action = "remove_or_qualify"
         issues.append(
@@ -739,13 +772,150 @@ _BREADTH_RE = re.compile(
 _CAUSAL_RE = re.compile(r"(?:导致|带动|引发|造成)")
 _FLOW_RE = re.compile(r"资金.{0,24}(?:流向|转向|从.{1,20}流入)")
 _QUALIFIED_RE = re.compile(r"可能|或许|疑似|无法确认|尚不能确认|未能确认")
+_EXPLICIT_LIMITATION_RE = re.compile(
+    r"未验证|尚未验证|无法确认|尚不能确认|未能确认|有待确认|暂无可核验|尚无可核验|"
+    r"可能|或许|疑似|"
+    r"没有(?:对应)?证据|证据不足|数据缺口|无可用(?:交易日|行情)|行情未核实"
+)
+_MARKET_ASSERTION_RE = re.compile(r"领涨|上涨|下跌|涨停|跌停|收涨|收跌|突破|破位|主线|最强|全面反转")
+_STRUCTURAL_DATE_RE = re.compile(
+    r"休市|交易日|请求日|最近交易日|数据截至|market_closed|无可用交易日|"
+    r"暂无可核验行情|尚无可核验行情|行情未核实"
+)
+
+
+def _is_qualified_statement(text: str) -> bool:
+    """Return whether a sentence explicitly limits what is known.
+
+    A limitation is a safe observation in its own right.  It must not make a
+    neighbouring positive assertion safe, so callers apply this to one claim
+    or sentence at a time rather than to the whole report.
+    """
+    text = str(text or "").strip()
+    if not text or not _EXPLICIT_LIMITATION_RE.search(text):
+        return False
+    # Possibility words qualify the predicate directly (``可能全面上涨``).
+    possibility = re.search(r"可能|或许|疑似", text)
+    if possibility:
+        if _MARKET_ASSERTION_RE.search(text[: possibility.start()]):
+            return False
+        # A later positive clause separated by punctuation is a separate
+        # assertion; the earlier possibility word must not waive its audit.
+        suffix = text[possibility.end() :]
+        next_assertion = _MARKET_ASSERTION_RE.search(suffix)
+        if next_assertion and re.search(r"[,，;；。！？!?\n]", suffix[: next_assertion.start()]):
+            return False
+        return True
+    # ``未验证，无法确认其行情`` and ``行情暂无可核验`` contain market words but
+    # no positive predicate.  Keep ``今日领涨，但无法确认`` auditable: a positive
+    # predicate before the limitation is still an assertion.
+    first_limit = _EXPLICIT_LIMITATION_RE.search(text)
+    prefix = text[: first_limit.start()] if first_limit else text
+    return not _MARKET_ASSERTION_RE.search(prefix)
+
+
+def _is_structural_date_statement(
+    text: str,
+    *,
+    requested_date: str | None = None,
+    expected_date: str | None = None,
+    market_closed: bool | None = None,
+) -> bool:
+    """Recognize code-owned calendar/data-gap facts without treating them as market claims."""
+    text = str(text or "").strip()
+    if not text or not _STRUCTURAL_DATE_RE.search(text):
+        return False
+    if market_closed is not True and "休市" not in text and "market_closed" not in text:
+        return False
+    if _MARKET_ASSERTION_RE.search(text):
+        return False
+    # Date labels are useful corroboration, but do not require a particular
+    # spelling: Reasoning may use either the requested or planned date.
+    date_tokens = {str(value) for value in (requested_date, expected_date) if value}
+    return not date_tokens or any(token in text for token in date_tokens) or "休市" in text
+
+
+def _issue_is_empty_optional_field(issue: Any, report: Any) -> bool:
+    """Ignore a model complaint that merely observes an empty optional list.
+
+    Empty ``why``/``risks``/``what_matters`` fields are valid for a closed day
+    or a narrow answer.  This helper deliberately only accepts an explicit
+    field/empty marker pair; it never suppresses a claim about a missing
+    market datum or a named external fact.
+    """
+    claim = str(_field(issue, "claim", "") or "")
+    rationale = str(_field(issue, "rationale", "") or "")
+    text = f"{claim} {rationale}".lower()
+    if not re.search(r"空|为空|缺少|没有|未提供|未填写|empty|missing", text):
+        return False
+    optional_fields = {
+        "why": ("why", "原因分析", "原因"),
+        "strong_areas": ("strong_areas", "强势方向", "板块"),
+        "what_changed": ("what_changed", "与之前相比", "变化"),
+        "what_matters": ("what_matters", "后续关注点", "关注点"),
+        "risks": ("risks", "风险", "反证"),
+        "data_caveats": ("data_caveats", "数据口径", "时效说明"),
+    }
+    for key, labels in optional_fields.items():
+        value = _field(report, key, None)
+        if value not in (None, [], ""):
+            continue
+        if any(label.lower() in text for label in labels):
+            return True
+    return False
+
+
+def _issue_is_closed_day_gap(issue: Any, report: Any) -> bool:
+    """Treat a closed-day request's explicit data gap as a safe limitation."""
+    if _field(report, "market_closed", None) is not True:
+        return False
+    claim = str(_field(issue, "claim", "") or "")
+    rationale = str(_field(issue, "rationale", "") or "")
+    issue_text = f"{claim} {rationale}"
+    if not re.search(r"行情|市场数据|交易数据|quote|最近交易日|涨跌", issue_text, re.I):
+        return False
+    if not re.search(r"缺|没有|未提供|暂无|尚无|无法确认|未核实|data gap|missing", issue_text, re.I):
+        return False
+    report_text = entity_report_text(report)
+    return "休市" in report_text and not _MARKET_ASSERTION_RE.search(report_text)
+
+
+def _issue_is_qualified_entity(issue: Any, report: Any) -> bool:
+    """Ignore an entity issue when the report only records its uncertainty."""
+    names = [str(name) for name in (_field(report, "unverified_entities", []) or []) if str(name)]
+    if not names:
+        return False
+    report_text = entity_report_text(report)
+    segments = re.split(r"[。！？；，,\n]|(?:但|然而|不过)", report_text)
+    issue_text = f"{_field(issue, 'claim', '')} {_field(issue, 'rationale', '')}"
+    if not _is_qualified_statement(issue_text):
+        return False
+    return any(name in segment and _is_qualified_statement(segment) for name in names for segment in segments)
+
+
+def _dedupe_issues(issues: list["AuditIssue"]) -> list["AuditIssue"]:
+    """Keep one deterministic issue per claim/kind/action/reason tuple."""
+    out: list[AuditIssue] = []
+    seen: set[tuple[str, str, str, tuple[str, ...]]] = set()
+    for issue in issues:
+        key = (
+            issue.kind,
+            issue.action,
+            issue.claim.strip(),
+            tuple(sorted(issue.reason_codes)),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(issue)
+    return out
 
 
 def _coverage_issues(report, evidence) -> list["AuditIssue"]:
     """Reject market-wide and causal facts beyond the observable coverage."""
     items = list(evidence or [])
     text = entity_report_text(report)
-    segments = [part.strip() for part in re.split(r"[。！？；\n]", text) if part.strip()]
+    segments = [part.strip() for part in re.split(r"[。！？；，,\n]|(?:但|然而|不过)", text) if part.strip()]
     complete = [item for item in items if not _incomplete(item)]
     up = [item for item in complete if re.search(r"up_count|advancing|上涨家数", str(_field(item, "metric", "")), re.I)]
     down = [
@@ -760,17 +930,23 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
         claim_type = str(_field(claim, "claim_type", "other") or "other")
         ids = list(_field(claim, "evidence_ids", []) or [])
         if claim_text and claim_type in {"fact", "comparison", "causation", "structure"} and not ids:
+            if _is_qualified_statement(claim_text) or _is_structural_date_statement(claim_text):
+                continue
             issues.append(
                 AuditIssue(
-                    kind="unsupported_claim",
+                    kind="missing_evidence",
                     claim=claim_text[:200],
                     severity="high",
-                    action="remove_or_qualify",
-                    rationale="当前事实/比较/因果论断没有绑定真实 evidence id",
+                    action="research_more",
+                    rationale="当前事实/比较/因果论断没有绑定真实 evidence id，需要当前证据核查",
+                    required_tool_keys=[],
+                    reason_codes=["missing_reference"],
                 )
             )
     for segment in segments:
-        if _QUALIFIED_RE.search(segment):
+        # A limitation is safe only for this sentence/clause.  Do not let a
+        # report-wide caveat suppress another sentence's positive assertion.
+        if _is_qualified_statement(segment):
             continue
         if _BREADTH_RE.search(segment):
             opposing = down if "上涨" in segment else up
@@ -1122,6 +1298,7 @@ class CriticNode:
             # 阶段 1：模型不再"自由选择唯一动作"——新版 prompt 不再要求它给 verdict。
             # 这里先把 issues 单独校验出来（issues 是新的唯一事实来源），
             # 再据此派生 verdict；派生不出来且模型也没给 → 下面判 error，绝不伪造 pass。
+            benign_optional_only = False
             try:
                 # 传哨兵而不是 data.get("issues")：缺字段合法，显式 null 非法（见 parse_issues）。
                 issues = parse_issues(data.get("issues", _MISSING_FIELD))
@@ -1129,6 +1306,21 @@ class CriticNode:
                 # from unrestricted model text into replay logs.
                 for issue in issues:
                     issue.reason_codes = []
+                # Empty optional report sections are allowed.  Drop only a
+                # model issue that explicitly names such an empty field; all
+                # claim/data issues remain subject to the deterministic gates.
+                benign_optional_issues = [
+                    issue
+                    for issue in issues
+                    if _issue_is_empty_optional_field(issue, report)
+                    or _issue_is_closed_day_gap(issue, report)
+                    or _issue_is_qualified_entity(issue, report)
+                ]
+                if benign_optional_issues:
+                    issues = [issue for issue in issues if issue not in benign_optional_issues]
+                    benign_optional_only = not issues and not any(
+                        data.get(key) for key in ("missing_points", "missing_tool_keys", "unsupported_claims")
+                    )
             except ValidationError as exc:
                 logger.error("Critic issues 校验失败，安全终止: %s", type(exc).__name__)
                 critique = Critique(verdict="error", reason=f"Invalid critic payload: {exc}")
@@ -1164,7 +1356,13 @@ class CriticNode:
                     len(code_issues),
                     [i.kind for i in code_issues],
                 )
+            issues = _dedupe_issues(issues)
 
+            if raw_verdict in {"research_more", "revise"} and benign_optional_only:
+                # The only model issue was an empty optional field.  Real
+                # code-level/date/evidence issues were appended above and
+                # still force a non-pass verdict.
+                raw_verdict = "pass"
             if raw_verdict:
                 if raw_verdict not in _MODEL_VERDICTS:
                     # 非法 / 无法识别的 verdict：安全终止并记 errors，
