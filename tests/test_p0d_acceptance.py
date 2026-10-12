@@ -277,7 +277,10 @@ async def test_fixture_quote_attempts_and_both_timeout_tools_replay(schema_type)
         expected = sorted(row["arguments"]["symbols"])
         assert result.status == "success"
         assert result.arguments == {"symbols": expected}
-        assert calls[-1][1]["symbols"] == (expected if schema_type == "array" else ",".join(expected))
+        from app.gateway.arguments import quote_transport_symbols
+
+        encoded = quote_transport_symbols(expected)
+        assert calls[-1][1]["symbols"] == (encoded if schema_type == "array" else ",".join(encoded))
     for tool in FIXTURE["timeouts"]:
         started = time.monotonic()
         before = len(calls)
@@ -371,7 +374,7 @@ async def test_api_blocked_reason_and_replay_logs_match_route_and_finalize(sink,
             frames = [frame async for frame in main._stream_research(secret, "a_share")]
             results = [frame for frame in frames if "event: result" in frame]
             body = json.loads(next(line[6:] for line in results[-1].splitlines() if line.startswith("data: ")))
-    assert body["report"] is None if sink == "sync" else "report" not in body
+    assert body["report"] is None
     assert body["delivery_status"] == FIXTURE["expected_delivery_status"]
     assert body["persisted"] == FIXTURE["expected_persistence"]
     assert body["blocked_reason"] == "research_budget_exhausted"

@@ -309,26 +309,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
         # 使报告里的公司名可以对着证据校验，而不是凭模型记忆。
         instrument = _instrument_of(result)
         if result.status == "error":
-            evidence.append(
-                Evidence(
-                    id=f"{id_prefix}-{counter:03d}",
-                    source_tool=_operation_id(result),
-                    domain="unknown",
-                    metric="tool_status",
-                    value=f"Failed: {result.error or 'unknown error'}"[:200],
-                    timestamp=None,
-                    source=None,
-                    status="error",
-                    partial=False,
-                    note="",
-                    instrument=instrument,
-                    tool_key=getattr(result, "tool_key", None),
-                    operation_id=_operation_id(result),
-                )
-            )
-            if stable_ids:
-                _stabilize_result_ids(evidence[start_index:], result, id_prefix)
-            counter += 1
+            # Failed calls belong to execution diagnostics, never the evidence ledger.
             continue
 
         if result.status in ("success", "partial"):

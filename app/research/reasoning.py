@@ -405,6 +405,7 @@ class ReasoningEngine:
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
             timeout=settings.llm_timeout_seconds,
+            max_retries=0,
         )
         #: 阶段 6：最近一次 LLM 调用的用量与耗时（调用方读它 → run_log `llm` 事件）。
         #: ``None`` = 没量到（打桩客户端 / 端点不回 usage），与"用了 0 token"不同。
@@ -425,7 +426,7 @@ class ReasoningEngine:
         planned_as_of_date: str | None = None,
         market_closed: bool | None = None,
     ) -> MarketIntelligence:
-        normalized_data, data_context_stats = _compact_normalized_data(
+        _, data_context_stats = _compact_normalized_data(
             results,
             per_tool=int(getattr(self.settings, "reasoning_context_datums_per_tool", 24) or 24),
             total=int(getattr(self.settings, "reasoning_context_evidence_limit", 180) or 180),
@@ -461,7 +462,7 @@ class ReasoningEngine:
         combined_context = translate_evidence_references(combined_context, {real: alias for alias, real in aliases.items()})
         evidence_payload = []
         for item in evidence:
-            row = item.model_dump()
+            row = item.model_dump(exclude_none=True)
             row["value"] = _compact_value(row.get("value"))
             real_id = str(row.get("id"))
             alias = next((alias for alias, rid in aliases.items() if rid == real_id), None)
@@ -473,15 +474,20 @@ class ReasoningEngine:
             evidence_payload.append(row)
         prompt = REASONING_PROMPT.format(
             question=question,
-            data=json.dumps(normalized_data, ensure_ascii=False, default=str),
+            data=json.dumps([{"tool": r.tool, "status": r.status, "partial": r.partial,
+                             "datum_count": len(r.normalized), "reason_codes": r.reason_codes}
+                            for r in results], ensure_ascii=False, separators=(",", ":")),
             evidence=json.dumps(
                 evidence_payload,
                 ensure_ascii=False,
                 default=str,
+                separators=(",", ":"),
             ),
             evidence_alias_context=_alias_prompt_context(evidence, aliases),
             history_context=combined_context,
         )
+        prompt += "\n\n仅使用已展示的 evidence。最多 6 条核心 claims，每条给 claim_type、标的、日期和引用；缺失覆盖写 caveat，避免重复正文和复述 evidence 值。"
+        prompt += "\n对于仅询问单标的报价的问题：只写已返回 price 与实际观测日期的事实，解释和比较字段可留空；来源/可用性说明放 data_caveats，不生成额外市场判断。quote 的 price 不等同于任意历史日期收盘价。"
         prompt += "\n\nDATA_CONTEXT_LIMITS=" + json.dumps(data_context_stats, ensure_ascii=False)
         prompt = translate_evidence_references(prompt, {real: alias for alias, real in aliases.items()})
 

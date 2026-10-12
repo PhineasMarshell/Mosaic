@@ -208,6 +208,7 @@ class _RealNodesDriver:
                 delivery_status=delivery_status,
                 reason=reason,
             )
+            data.update(final_audit_status=audit_status, delivery_status=delivery_status)
 
         return data
 
@@ -287,7 +288,7 @@ def test_sync_ask_correlates_all_seven_events_with_one_run_id(monkeypatch, caplo
     assert ids["run_start"] == [state_run_id]
 
 
-def test_sync_ask_does_not_expose_run_id_to_the_client(monkeypatch):
+def test_sync_ask_exposes_correlated_run_id_to_the_client(monkeypatch):
     """run_id 只用于内部串联，不出现在成功响应的 JSON 里。"""
     _patch_fake_llm(monkeypatch, json.dumps({"issues": [], "reason": "证据充分"}))
 
@@ -300,7 +301,7 @@ def test_sync_ask_does_not_expose_run_id_to_the_client(monkeypatch):
 
     resp = TestClient(main.app).post("/api/ask", json={"question": "今天 A 股发生了什么？"})
     assert resp.status_code == 200, resp.text
-    assert "run_id" not in resp.json()
+    assert resp.json()["run_id"]
 
 
 def test_every_event_is_emitted_exactly_once_per_pass_run(caplog, monkeypatch):

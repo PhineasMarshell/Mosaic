@@ -22,9 +22,11 @@ import json
 import logging
 import time
 import uuid
+from contextvars import ContextVar
 from typing import Any
 
 logger = logging.getLogger("app.graph.run_log")
+request_run_id: ContextVar[str | None] = ContextVar("request_run_id", default=None)
 
 #: 单个文本字段的截断长度
 MAX_TEXT = 200
@@ -348,6 +350,10 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
                 "status": _field(r, "status"),
                 "partial": bool(_field(r, "partial", False)),
                 "reason_codes": _field(r, "reason_codes", []) or [],
+                "upstream_status": _field(r, "upstream_status"),
+                "attempts": _field(r, "attempts", []) or [],
+                "source": sorted({_field(d, "source") for d in normalized if _field(d, "source")}),
+                "instrument": sorted({_field(d, "instrument") for d in normalized if _field(d, "instrument")}),
                 "as_of_date": _field(r, "as_of_date"),
                 "retrieved_at": _field(r, "retrieved_at"),
                 "datum_count": len(normalized),
@@ -407,6 +413,12 @@ def log_critic(
         gap_kept=gap_kept,
         gap_dropped=gap_dropped,
         context_truncation=context_truncation or {},
+        claims=[
+            {"claim": _field(c, "claim"), "claim_type": _field(c, "claim_type"),
+             "evidence_ids": _field(c, "evidence_ids", []), "instrument": _field(c, "instrument"),
+             "as_of_date": _field(c, "as_of_date")}
+            for c in (_field(_field(state, "report"), "claims", []) or [])
+        ],
         evidence_identity=[
             {
                 "id": _field(e, "id"),

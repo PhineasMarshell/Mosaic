@@ -61,6 +61,7 @@ class SupervisorNode:
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
             timeout=settings.llm_timeout_seconds,
+            max_retries=0,
         )
         #: 阶段 0：最近一次 _plan 代码级补齐的缺口 key（写进 run log 的 plan 事件）
         self._last_forced_gap: list[str] = []
@@ -135,6 +136,7 @@ class SupervisorNode:
                 "route": [],
                 "finalize_after_gap": True,
                 "blocked_reason": "time_budget_insufficient",
+                "stage": "plan", "exception_type": "StageBudgetExceeded",
                 "reason_codes": ["plan_budget_insufficient", "time_budget_insufficient"],
                 "errors": ["plan budget unavailable"],
             }
@@ -143,6 +145,7 @@ class SupervisorNode:
                 "route": [],
                 "finalize_after_gap": True,
                 "blocked_reason": "time_budget_insufficient",
+                "stage": "plan", "exception_type": "TimeoutError",
                 "reason_codes": ["plan_timeout", "time_budget_insufficient"],
                 "errors": ["plan stage timed out"],
             }

@@ -74,13 +74,13 @@ async def test_deadline_derived_from_investigation_budget_deadline():
     node = TechnicalAnalystNode(Settings())
     node._runtime._gateway_class = lambda: _RecordingGateway
 
-    budget_deadline = time.monotonic() + 0.5  # 调查预算只剩 0.5s（已"过半"）
+    budget_deadline = time.monotonic() + 32.5  # 调查预算只剩 0.5s（已"过半"）
     out = await node(_state(budget_deadline))
 
     assert _RecordingGateway.deadlines, "deadline 未下发"
     issued = _RecordingGateway.deadlines[0]
     # 单工具均分：deadline ≈ 整次调查的截止时刻
-    assert issued <= budget_deadline + 0.5
+    assert issued <= budget_deadline - 32
     # 旧实现（本节点起算）：deadline ≈ now + 300s —— 用这条区分
     assert issued < time.monotonic() + Settings().research_budget_seconds / 2
     assert out["errors"] == []
@@ -112,7 +112,7 @@ async def test_missing_budget_deadline_falls_back_with_warning(caplog):
 
     issued = _RecordingGateway.deadlines[0]
     # 旧行为：单工具拿到接近全额 research_budget_seconds 的份额
-    assert issued > time.monotonic() + Settings().research_budget_seconds * 0.9
+    assert time.monotonic() < issued <= time.monotonic() + Settings().tools_phase_timeout_seconds
     assert any("budget_deadline" in r.message for r in caplog.records)
     assert out["errors"] == []
 

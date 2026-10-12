@@ -394,13 +394,13 @@ def _referenced_evidence_ids(report) -> list[str]:
 def _render_evidence_item(
     item,
     *,
-    value_limit: int = 500,
+    value_limit: int | None = 500,
     alias: str | None = None,
     alias_only: bool = False,
 ) -> str:
     """渲染一条证据（datum 原文 + 状态元信息）。"""
     value = str(_field(item, "value", ""))
-    if len(value) > value_limit:
+    if value_limit is not None and len(value) > value_limit:
         value = value[:value_limit] + "…"
     item_id = _field(item, "id", "?")
     ref = alias if alias_only and alias else (f"{alias} ({item_id})" if alias else item_id)
@@ -478,7 +478,27 @@ def _format_evidence_for_review(
             value = _field(gate, key, []) or []
             if value:
                 lines.append(f"  {key}={value}")
-        for quality in _field(gate, "evidence_quality", []) or []:
+        quality_rows = _field(gate, "evidence_quality", []) or []
+        referenced_quality = set(referenced_ids)
+        visible_quality = []
+        quality_groups: dict[tuple, int] = {}
+        shown_groups: dict[tuple, int] = {}
+        for quality in quality_rows:
+            group = (quality.get("tool_key"), tuple(quality.get("reason_codes") or []))
+            quality_groups[group] = quality_groups.get(group, 0) + 1
+            if str(quality.get("evidence_id")) in referenced_quality:
+                visible_quality.append(quality)
+            elif quality.get("reason_codes") and shown_groups.get(group, 0) < 2 and len(shown_groups) < 40:
+                visible_quality.append(quality)
+                shown_groups[group] = shown_groups.get(group, 0) + 1
+        for (tool_key, reasons), count in quality_groups.items():
+            lines.append(f"  QUALITY_GROUP tool_key={tool_key} reasons={list(reasons)} count={count}")
+        stats["quality_total"] = len(quality_rows)
+        stats["quality_shown"] = len(visible_quality)
+        stats["quality_omitted"] = len(quality_rows)-len(visible_quality)
+        if len(quality_rows) > len(visible_quality):
+            lines.append(f"  QUALITY 省略重复条目 {len(quality_rows)-len(visible_quality)} 条；引用条目完整保留，异常按工具/原因统计并展示样本。代码门禁仍检查完整账本。")
+        for quality in visible_quality:
             quality_id = str(quality.get("evidence_id", "?"))
             quality_ref = alias_by_real.get(quality_id, quality_id) if alias_only else quality_id
             lines.append(
@@ -516,7 +536,7 @@ def _format_evidence_for_review(
             stats["referenced_shown"] += 1
             stats["kept"].append({"id": eid, "reason": "report_reference"})
             lines.append(
-                f"  - {_render_evidence_item(item, alias=alias_by_real.get(eid), alias_only=alias_only)}"
+                f"  - {_render_evidence_item(item, value_limit=None, alias=alias_by_real.get(eid), alias_only=alias_only)}"
             )
 
     referenced_set = set(referenced)
@@ -1150,6 +1170,7 @@ class CriticNode:
             api_key=settings.openai_api_key,
             base_url=settings.openai_base_url,
             timeout=settings.llm_timeout_seconds,
+            max_retries=0,
         )
 
     async def __call__(self, state):
@@ -1476,6 +1497,7 @@ class CriticNode:
             run_log.log_critic(state, critique)
             return {
                 "critique": critique,
+                "stage": "critic", "exception_type": "StageBudgetExceeded",
                 "reason_codes": ["critic_budget_insufficient", "time_budget_insufficient"],
                 "errors": ["critic budget unavailable"],
             }
@@ -1484,6 +1506,7 @@ class CriticNode:
             run_log.log_critic(state, critique)
             return {
                 "critique": critique,
+                "stage": "critic", "exception_type": "TimeoutError",
                 "reason_codes": ["critic_timeout"],
                 "errors": ["critic stage timed out"],
             }

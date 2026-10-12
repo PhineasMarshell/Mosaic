@@ -114,6 +114,18 @@ def canonicalize_tool_arguments(tool_name: str, arguments: Any) -> dict[str, Any
     return result
 
 
+def quote_transport_symbols(symbols: list[str]) -> list[str]:
+    """Tencent requires an exchange prefix for known index codes.
+
+    Preserve canonical arguments and code-only equities; 000300 otherwise
+    becomes an empty quote rather than the requested CSI 300 index.
+    """
+    from app.gateway.stock_codes import INDEX_CODE_MAP_A_SHARE, _infer_index_exchange
+
+    indices = set(INDEX_CODE_MAP_A_SHARE.values())
+    return [f"{_infer_index_exchange(symbol)}{symbol}" if symbol in indices else symbol for symbol in symbols]
+
+
 def freeze_argument(value: Any) -> Any:
     """Recursively convert nested values into deterministic hashable values."""
     if isinstance(value, dict):

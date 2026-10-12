@@ -47,7 +47,7 @@ class Orchestrator:
             raise ValueError("question cannot be empty")
 
         # ── LangGraph 图调用 ────────────────────────────────
-        run_id = run_log.new_run_id()
+        run_id = run_log.request_run_id.get() or run_log.new_run_id()
         requested_date, _ = requested_date_from_question(question)
         date_semantics = resolve_trading_date_semantics(question) if domain == "a_share" else None
         state = ResearchState(
@@ -123,9 +123,10 @@ class Orchestrator:
         try:
             graph = self._ensure_graph()
             stage = "graph_invoke"
-            result_state = await graph.ainvoke(
-                state,
-                config={"recursion_limit": self.settings.graph_recursion_limit},
+            result_state = await asyncio.wait_for(
+                graph.ainvoke(state, config={"recursion_limit": self.settings.graph_recursion_limit}),
+                timeout=max(.001, self.settings.research_budget_seconds - min(self.settings.research_budget_seconds / 4,
+                                                                            self.settings.finalize_min_budget_seconds)),
             )
 
             # ── 从 state 组装 ResearchResponse（与 SSE 路径共用）────

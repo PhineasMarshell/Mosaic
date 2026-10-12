@@ -28,6 +28,8 @@
 3. 如需特殊解析逻辑，添加 extract_for_{domain} 钩子
 """
 
+import re
+from datetime import UTC, datetime
 from typing import Any
 
 from app.gateway.arguments import canonicalize_tool_arguments
@@ -158,7 +160,7 @@ def _reason_codes_for_error(error: str | None) -> list[str]:
     codes: list[str] = []
     if "budget exhausted" in text or "deadline" in text:
         codes.append("deadline_exhausted")
-    if "timeout" in text or "timed out" in text:
+    if "timeout" in text or "timed out" in text or "context deadline exceeded" in text:
         codes.append("gateway_timeout")
     if "authentication" in text or "permission" in text or "401" in text or "403" in text:
         codes.append("gateway_auth_error")
@@ -848,7 +850,13 @@ def normalize_tool_result(
     #   - str/int/bool/float 标量：通常是上游报错/繁忙文本（如 "Server busy"），
     #     以前在 else 分支被 str() 包成 metric="response" 的"证据"，Evidence Gate
     #     于是报 has_evidence=True，Reasoning LLM 在零数据点下撰写报告。
-    if raw is None or raw == [] or (isinstance(raw, dict) and not raw):
+    empty_collection = (
+        tool in {"get_market_quotes", "get_stock_abnormal_reasons"}
+        and isinstance(raw, dict)
+        and any(raw.get(key) == [] for key in ("items", "data", "rows") if key in raw)
+        and not any(raw.get(key) for key in ("items", "data", "rows"))
+    )
+    if raw is None or raw == "" or raw == [] or (isinstance(raw, dict) and not raw) or empty_collection:
         return ToolResult(
             tool=tool,
             operation_id=tool,
@@ -962,20 +970,35 @@ def normalize_tool_result(
             row_identity.setdefault(parent, {})["instrument"] = str(datum.value)
         elif key in {"name", "stock_name", "company_name", "security_name"} and datum.value:
             row_identity.setdefault(parent, {})["instrument_name"] = str(datum.value)
-        elif key in {"date", "trade_date", "trading_date", "as_of_date", "日期", "交易日期", "交易日"}:
-            if observed_date := normalize_date(datum.value):
+        elif key in {"date", "trade_date", "trading_date", "as_of_date", "日期", "交易日期", "交易日", "time", "datetime", "timestamp"}:
+            stamp = str(datum.value)
+            if tool == "get_market_quotes" and key == "time" and re.fullmatch(r"\d{14}", stamp):
+                try:
+                    stamp = datetime.strptime(stamp, "%Y%m%d%H%M%S").isoformat()
+                except ValueError:
+                    stamp = ""
+            if observed_date := normalize_date(stamp):
                 row_identity.setdefault(parent, {})["as_of_date"] = observed_date
+                row_identity[parent]["timestamp"] = stamp
     for datum in normalized:
         if "." not in datum.metric:
             continue
         parent = datum.metric.rsplit(".", 1)[0]
         identity = row_identity.get(parent, {})
+        # Quote book fields live below the returned security row. Resolve
+        # their own ancestor, never another row or a batched request target.
+        ancestor = parent
+        while not identity and "." in ancestor:
+            ancestor = ancestor.rsplit(".", 1)[0]
+            identity = row_identity.get(ancestor, {})
         if not datum.instrument and identity.get("instrument"):
             datum.instrument = identity["instrument"]
         if not datum.instrument_name and identity.get("instrument_name"):
             datum.instrument_name = identity["instrument_name"]
         if not datum.as_of_date and identity.get("as_of_date"):
             datum.as_of_date = identity["as_of_date"]
+        if not datum.timestamp and identity.get("timestamp"):
+            datum.timestamp = identity["timestamp"]
 
     # 阶段 3 ⑤：市场级工具的数据点必须能说清"这是哪一天的市场"。
     # 上游没给时间戳时逐条标注，避免报告拿无日期的旧数据声称"今日"。
@@ -1001,6 +1024,12 @@ def normalize_tool_result(
             reason_codes=_stable_reason_codes(tool, ["empty_normalized"]),
         )
 
+    retrieved_at = datetime.now(UTC).isoformat()
+    for datum in normalized:
+        datum.retrieved_at = retrieved_at
+        datum.as_of_date = datum.as_of_date or normalize_date(datum.timestamp)
+        datum.completeness = "partial" if partial else "complete"
+    observed_dates = {datum.as_of_date for datum in normalized if datum.as_of_date}
     return ToolResult(
         tool=tool,
         operation_id=tool,
@@ -1011,6 +1040,9 @@ def normalize_tool_result(
         partial=partial,
         note=note,
         normalized=normalized,
+        retrieved_at=retrieved_at,
+        as_of_date=next(iter(observed_dates)) if len(observed_dates) == 1 else None,
+        completeness="partial" if partial else "complete",
     )
 
 

@@ -14,7 +14,6 @@ import os
 import shlex
 import subprocess
 import tempfile
-import time
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
@@ -25,7 +24,7 @@ from mcp.client.stdio import _parse_line, get_default_environment, stdio_client
 from mcp.shared.message import SessionMessage
 
 from app.config import Settings
-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, summarize_arguments
+from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, quote_transport_symbols
 from app.gateway.normalizer import normalize_tool_result
 from app.gateway.tool_registry import resolve_tool_by_name
 
@@ -94,6 +93,7 @@ class MarketGatewayClient:
         encoded = dict(arguments)
         if tool_name != "get_market_quotes" or "symbols" not in encoded:
             return encoded
+        encoded["symbols"] = quote_transport_symbols(encoded["symbols"])
         schema = self._input_schema(tool_name) or {}
         properties = schema.get("properties") if isinstance(schema, dict) else None
         symbol_schema = properties.get("symbols") if isinstance(properties, dict) else None
@@ -136,11 +136,12 @@ class MarketGatewayClient:
         # iiix derives its log file from APPDATA.  Keep the override narrow to
         # the spawned process and record the effective path for diagnostics.
         env["APPDATA"] = str(appdata)
-        # iiix stores plugin bundles and cross-process locks under LOCALAPPDATA
-        # (APPDATA only controls its roaming log/auth root).  Keep installation,
-        # authorization locks, logs, and the spawned runtime inside the same
-        # project-writable directory.
-        env["LOCALAPPDATA"] = str(appdata)
+        # Installed plugin bundles belong to LOCALAPPDATA, independently of
+        # the writable log root. Redirecting both to an empty log directory
+        # makes a healthy installed plugin disappear at handshake time.
+        local_root = str(getattr(settings, "mcp_localappdata_dir", "") or "").strip() if settings else ""
+        if local_root:
+            env["LOCALAPPDATA"] = str(Path(local_root).resolve())
         logger.info("MCP child APPDATA/log root=%s", appdata / "iiix" / "logs")
         for key in PROXY_ENV_KEYS:
             value = os.environ.get(key)
@@ -324,124 +325,21 @@ class MarketGatewayClient:
                 tool_key=logical_key,
             )
 
-        last_error = None
-        max_attempts = self.settings.max_retry_per_tool + 1
+        from app.gateway.policy import observed_call, response_diagnostics
 
-        for attempt in range(max_attempts):
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
-                logger.warning(
-                    "MCP call %s stopped: attempt=%d remaining_budget_ms=0 retry_skipped_reason=deadline_exhausted",
-                    tool_name,
-                    attempt + 1,
-                )
-                reason = f"budget exhausted: no time left for attempt {attempt + 1} of {tool_name}"
-                if last_error:
-                    reason = f"{last_error}; {reason}"
-                return normalize_tool_result(tool_name, arguments, None, error=reason)
-            try:
-                attempt_timeout = self.settings.research_timeout_seconds
-                if remaining is not None:
-                    attempt_timeout = min(attempt_timeout, max(remaining, 0.0))
-                transport_arguments = self._encode_transport_arguments(tool_name, arguments)
-                logger.info(
-                    "MCP call %s attempt=%d attempt_timeout_ms=%.0f remaining_budget_ms=%s "
-                    "canonical_argument_summary=%s transport_argument_summary=%s",
-                    tool_name,
-                    attempt + 1,
-                    attempt_timeout * 1000,
-                    "none" if remaining is None else f"{remaining * 1000:.0f}",
-                    summarize_arguments(arguments),
-                    summarize_arguments(transport_arguments),
-                )
-                result = await asyncio.wait_for(
-                    self.session.call_tool(tool_name, arguments=transport_arguments),
-                    timeout=attempt_timeout,
-                )
-                if getattr(result, "is_error", False):
-                    # MCP 规范里工具级失败是**带内** signalling：call_tool 会返回
-                    # isError=True 而不是抛异常。这个标志以前从没被读过，于是
-                    # "Server Error: symbol KPEPE not supported" 这类上游错误会被
-                    # 归一化成 status="success" 的证据，直接喂给 Reasoning LLM。
-                    # 不重试：工具级错误通常是确定性的（symbol 错、参数非法），
-                    # 重试只会白等一轮 research_timeout_seconds。
-                    text = _mcp_result_to_text(result)
-                    logger.warning(
-                        "MCP call %s returned a tool-level error payload_len=%d",
-                        tool_name,
-                        len(text),
-                    )
-                    return normalize_tool_result(
-                        tool_name,
-                        arguments,
-                        None,
-                        error=text or f"MCP tool {tool_name} returned an error",
-                    )
-                raw = _mcp_result_to_json(result)
-                return normalize_tool_result(tool_name, arguments, raw)
-            except TimeoutError:
-                last_error = (
-                    f"Timeout on {tool_name} attempt {attempt + 1} after "
-                    f"{attempt_timeout:.3f}s (remaining budget was "
-                    f"{'unknown' if remaining is None else f'{remaining:.3f}'}s)"
-                )
-                logger.warning(
-                    "MCP call %s attempt %d/%d timed out attempt_timeout_ms=%.0f remaining_budget_ms=%s",
-                    tool_name,
-                    attempt + 1,
-                    max_attempts,
-                    attempt_timeout * 1000,
-                    "none" if remaining is None else f"{max(remaining, 0) * 1000:.0f}",
-                )
-            except MCPConnectionError:
-                # 连接级别错误不应该重试
-                raise
-            except Exception as exc:
-                last_error = f"{type(exc).__name__}"
-                logger.warning(
-                    "MCP call %s attempt %d/%d failed error_type=%s",
-                    tool_name,
-                    attempt + 1,
-                    max_attempts,
-                    type(exc).__name__,
-                )
+        async def request(timeout):
+            transport_arguments = self._encode_transport_arguments(tool_name, arguments)
+            result = await self.session.call_tool(tool_name, arguments=transport_arguments)
+            text = _mcp_result_to_text(result)
+            diagnostics = response_diagnostics(text)
+            if getattr(result, "is_error", False) or getattr(result, "isError", False):
+                normalized = normalize_tool_result(tool_name, arguments, None,
+                                                   error=text or "MCP tool error")
+            else:
+                normalized = normalize_tool_result(tool_name, arguments, _mcp_result_to_json(result))
+            return normalized, diagnostics
 
-            if attempt < max_attempts - 1:
-                backoff = 0.5 * (attempt + 1)
-                remaining_after = None if deadline is None else deadline - time.monotonic()
-                if remaining_after is not None:
-                    if remaining_after <= 0:
-                        logger.warning(
-                            "MCP call %s retry skipped retry_skipped_reason=deadline_exhausted remaining_budget_ms=0",
-                            tool_name,
-                        )
-                        return normalize_tool_result(
-                            tool_name,
-                            arguments,
-                            None,
-                            error=f"{last_error or 'MCP call failed'}; budget exhausted before retry",
-                        )
-                    if backoff > remaining_after:
-                        logger.info(
-                            "MCP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
-                            "remaining_budget_ms=%.0f",
-                            tool_name,
-                            remaining_after * 1000,
-                        )
-                        return normalize_tool_result(
-                            tool_name,
-                            arguments,
-                            None,
-                            error=f"{last_error or 'MCP call failed'}; budget exhausted before retry",
-                        )
-                await asyncio.sleep(backoff)
-
-        return normalize_tool_result(
-            tool_name,
-            arguments,
-            None,
-            error=last_error or "unknown MCP error",
-        )
+        return await observed_call(self.settings, tool_name, arguments, deadline, request)
 
 
 def _mcp_result_to_text(result: Any) -> str:

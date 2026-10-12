@@ -314,7 +314,7 @@ def test_sync_and_sse_success_remain_readable_by_legacy_client(monkeypatch):
     assert legacy_view["report"]["market_state"] == "stable"
     assert legacy_view["errors"] == []
     assert (body["delivery_status"], body["persisted"]) == ("verified", True)
-    assert "run_id" not in body
+    assert body["run_id"] == "private-run-id"
 
     stream = client.post("/api/ask/stream", json={"question": "q"})
     assert stream.status_code == 200
@@ -323,7 +323,7 @@ def test_sync_and_sse_success_remain_readable_by_legacy_client(monkeypatch):
     legacy_stream_view = {field: final[field] for field in ("question", "report", "errors")}
     assert legacy_stream_view == legacy_view
     assert (final["delivery_status"], final["persisted"]) == ("verified", True)
-    assert "run_id" not in final
+    assert final["run_id"] and final["run_id"] != body["run_id"]
 
 
 def test_cli_success_does_not_print_internal_run_id(monkeypatch, capsys):

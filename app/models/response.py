@@ -133,9 +133,7 @@ class ResearchResponse(BaseModel):
     #: 持久化门控的实际结果。``None`` 表示调用方尚未执行持久化；
     #: ``False`` 既包括门控拒绝，也包括写入失败或部分写入失败。
     persisted: bool | None = None
-    #: 本次图运行的 run_id。**内部字段**：用于把 run_start / plan / executions /
-    #: critic / route / finalize / delivery 七条结构化日志串起来；对外 JSON 响应里
-    #: 会被 exclude 掉（main.py 传 model_dump(exclude={"run_id"})），落库记录里保留。
+    #: 本次图运行的 run_id。sync / SSE / 日志共同保留该关联字段。
     run_id: str | None = None
     #: 终态诊断字段。正常 verified 响应可以为空；timeout/failed 必须保留，
     #: 便于 sync、SSE 和脱敏运行日志对齐同一失败原因。
@@ -227,6 +225,7 @@ def build_response_from_state(
     注意：values 流模式与 ainvoke 的终态里，results 仍是 ToolResult 实例，
     而 ResearchResponse.tool_results 是 list[dict]，这里统一 dump。
     """
+    response_started = time.monotonic()
     raw_results = state.get("results") or []
     tool_results = [r if isinstance(r, dict) else r.model_dump() for r in raw_results]
 
@@ -277,6 +276,14 @@ def build_response_from_state(
         except (TypeError, ValueError):
             remaining = None
 
+    if delivery_status == "verified" and not state.get("final_audit_status"):
+        from app.graph import run_log
+
+        run_log.log_finalize({**state, "elapsed_ms": elapsed}, final_audit_status="pass", delivery_status="verified",
+                             reason="audit_passed", remaining_budget=remaining, reason_codes=[])
+        run_log.emit("stage", run_id=state.get("run_id"), stage="finalize", status="verified",
+                     elapsed_ms=round((time.monotonic()-response_started)*1000, 1), remaining_budget=remaining)
+
     return ResearchResponse(
         question=question,
         requested_date=state.get("requested_date") or (report.requested_date if hasattr(report, "requested_date") else report.get("requested_date") if isinstance(report, dict) else None),
@@ -299,9 +306,9 @@ def build_response_from_state(
         delivery_status=delivery_status,
         delivery_reason=delivery_reason,
         blocked_reason=blocked_reason,
-        persisted=state.get("persisted"),
+        persisted=False if delivery_status != "verified" else state.get("persisted"),
         run_id=state.get("run_id"),
-        stage=state.get("stage"),
+        stage=state.get("stage") or "finalize",
         exception_type=state.get("exception_type"),
         remaining_budget=remaining,
         elapsed_ms=elapsed,

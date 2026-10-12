@@ -70,3 +70,5 @@ class ToolResult(BaseModel):
     cache_hit: bool = False
     refresh_requested: bool = False
     transport_exception: bool = False
+    upstream_status: str | None = None
+    attempts: list[dict[str, Any]] = Field(default_factory=list)

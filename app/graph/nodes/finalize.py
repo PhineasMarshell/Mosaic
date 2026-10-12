@@ -438,6 +438,7 @@ class FinalizeAuditNode:
         self.settings = settings
 
     async def __call__(self, state):
+        node_started = time.monotonic()
         try:
             if hasattr(state, "model_dump"):
                 s = state.model_dump(exclude_none=False)
@@ -526,6 +527,9 @@ class FinalizeAuditNode:
                 out["degraded_reason_codes"] = terminal_codes
             elif delivery_status != "verified" and s.get("report") is not None:
                 out["report"] = None
+            out["stage"] = s.get("stage") or "finalize"
+            run_log.emit("stage", run_id=s.get("run_id"), stage="finalize", status=delivery_status,
+                         elapsed_ms=round((time.monotonic()-node_started)*1000, 1), remaining_budget=remaining_budget)
             return out
         except Exception as exc:  # noqa: BLE001 — 终态节点不能把图炸掉
             logger.error("finalize_audit failed error_type=%s", type(exc).__name__)

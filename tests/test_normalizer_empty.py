@@ -60,11 +60,7 @@ def test_build_evidence_does_not_fake_success_for_empty():
     失败结果只能以 Failed: 标记呈现。"""
     results = [normalize_tool_result(TOOL, {}, raw) for raw in ({}, "Server busy")]
     evidence = build_evidence(results)
-    assert evidence, "失败结果仍应留下 Failed 标记，便于排查"
-    for e in evidence:
-        assert e.status == "error"
-        assert str(e.value).startswith("Failed:")
-        assert e.value not in ("success", "partial")
+    assert evidence == [], "失败工具只进入 execution diagnostics，不能生成 evidence"
 
 
 def test_nonempty_payload_still_succeeds():

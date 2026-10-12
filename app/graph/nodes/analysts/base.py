@@ -11,6 +11,7 @@ P3 起 analyst（technical / fundamental / moneyflow + 可选 news/sentiment）�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -63,6 +64,7 @@ class MarketAnalystNode:
         LangGraph v1.x 可能传入 ResearchState（Pydantic）或 dict，统一处理。
         所有异常被捕获后写入 errors，不炸图。
         """
+        node_started = time.monotonic()
         try:
             # Normalize state to dict (handle both ResearchState and dict)
             if hasattr(state, "model_dump"):
@@ -91,6 +93,10 @@ class MarketAnalystNode:
             from app.graph import run_log
 
             run_log.log_executions(state, results, category=self.category)
+            run_log.emit("stage", run_id=state.get("run_id"), stage="tools", category=self.category,
+                         status="completed", elapsed_ms=round((time.monotonic()-node_started)*1000, 1),
+                         remaining_budget=(float(state["budget_deadline"])-time.monotonic())
+                         if state.get("budget_deadline") is not None else None)
 
             # 统一构建 Evidence 列表（§1 约定：source_tool / timestamp 语义）
             from app.research.evidence import build_evidence
@@ -203,12 +209,9 @@ class MarketAnalystNode:
         # T27：route 里重复的 (tool, arguments) 在这里真正跳过，
         # 不再依赖下游 execute 的签名集合（那只挡得住"已成功执行过"的）。
         seen: set[str] = set()
-        # T23：整次调查的预算按"剩余预算 ÷ 剩余工具数"均分给每个工具，
-        # 下发到 gateway 客户端做重试预算感知（超预算返回 error ToolResult，不炸链）。
-        # T23b：剩余预算以 state["budget_deadline"]（整次调查的截止时刻）为准——
-        # research_more 回环的第二轮不再重新获得一整份 research_budget_seconds。
+        # Concurrent calls share one tools phase deadline after downstream
+        # reserve. Followup rounds retain the original research deadline.
         budget_seconds = float(getattr(self.settings, "research_budget_seconds", 0) or 0)
-        total_calls = len(mine["tool_calls"])
         budget_deadline = state.get("budget_deadline")
         if budget_deadline is not None:
             remaining_budget = float(budget_deadline) - time.monotonic()
@@ -221,8 +224,31 @@ class MarketAnalystNode:
             )
             remaining_budget = budget_seconds
         run_started = time.monotonic()
+        reserve = (self.settings.reasoning_min_budget_seconds + self.settings.critic_min_budget_seconds
+                   + self.settings.finalize_min_budget_seconds)
+        phase_deadline = min(run_started + self.settings.tools_phase_timeout_seconds,
+                             float(budget_deadline) - reserve if budget_deadline is not None else run_started + remaining_budget)
+        jobs = []
+        semaphore = asyncio.Semaphore(self.settings.tool_concurrency)
 
-        for idx, tc in enumerate(mine["tool_calls"]):
+        async def execute_job(meta, tool_key, arguments, refresh):
+            async with semaphore:
+                started = time.monotonic()
+                if refresh:
+                    result = await self._runtime.execute(meta.tool_name, arguments, called_signatures,
+                                                         deadline=phase_deadline, refresh=True)
+                else:
+                    result = await self._runtime.execute(meta.tool_name, arguments, called_signatures,
+                                                         deadline=phase_deadline)
+                result.tool_key = tool_key
+                if meta.tool_name == "get_stock_abnormal_reasons" and result.status == STATUS_ERROR:
+                    result.reason_codes = list(dict.fromkeys([*result.reason_codes, "optional_evidence_unavailable"]))
+                result.duration_ms = round((time.monotonic() - started) * 1000, 1)
+                return result
+
+        rank = {"high": 0, "medium": 1, "low": 2}
+        tool_calls = sorted(mine["tool_calls"], key=lambda tc: rank.get(tc.get("priority", "high"), 1))
+        for idx, tc in enumerate(tool_calls):
             if budget <= 0:
                 logger.info(
                     "%s: budget 用尽，剩余 %d 个 route 条目跳过",
@@ -315,43 +341,14 @@ class MarketAnalystNode:
                 continue
             seen.add(dedup_key)
 
-            deadline = float(budget_deadline) if budget_deadline is not None else None
-            if budget_seconds > 0:
-                remaining_budget = min(
-                    remaining_budget,
-                    budget_seconds - (time.monotonic() - run_started),
-                )
-                if budget_deadline is not None:
-                    remaining_budget = min(remaining_budget, float(budget_deadline) - time.monotonic())
-                remaining_tools = max(total_calls - idx, 1)
-                tool_deadline = time.monotonic() + max(remaining_budget / remaining_tools, 0.0)
-                deadline = min(deadline, tool_deadline) if deadline is not None else tool_deadline
-
-            # D4：只在真正执行前扣减——被跳过的调用（上面那些 continue）不消耗预算
             budget -= 1
-            exec_started = time.monotonic()
             refresh = bool(tc.get("refresh", False) or "覆盖不足重拉" in str(tc.get("purpose", "")))
-            if refresh:
-                result = await self._runtime.execute(
-                    meta.tool_name, arguments, called_signatures, deadline=deadline, refresh=True
-                )
-            else:
-                result = await self._runtime.execute(meta.tool_name, arguments, called_signatures, deadline=deadline)
-            # 阶段 2：把**原计划的 registry key** 写进结果。缺口判定必须读这个字段，
-            # 而不是拿 operationId 反查（同一 operationId 被多个 registry key 复用时，
-            # 反查只能拿到规范条目，会把兄弟 key 的缺口误判成"已满足"）。
-            try:
-                result.tool_key = tool_key
-                if meta.tool_name == "get_stock_abnormal_reasons" and result.status == STATUS_ERROR:
-                    result.reason_codes = list(
-                        dict.fromkeys([*(result.reason_codes or []), "optional_evidence_unavailable"])
-                    )
-                # 阶段 6：单次工具耗时（指标数据源）。伪对象没有该字段时一并跳过。
-                result.duration_ms = round((time.monotonic() - exec_started) * 1000, 1)
-            except Exception:  # noqa: BLE001 — 伪对象缺字段时不该炸掉整个 analyst
-                logger.debug("%s: 无法写入 tool_key / duration_ms 到结果对象 %r", self.category, type(result))
-            results.append(result)
+            jobs.append((meta, tool_key, arguments, refresh))
 
+        # Preserve the planner's minimum-first ordering while overlapping
+        # independent I/O. Queued calls share the same phase deadline.
+        if jobs:
+            results.extend(await asyncio.gather(*(execute_job(*job) for job in jobs)))
         return results
 
     def _build_arguments(

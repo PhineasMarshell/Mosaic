@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from app.gateway.tool_registry import ALL_TOOLS
-from app.models.market import ToolResult
+from app.models.market import NormalizedDatum, ToolResult
 from app.research.evidence import _MAX_EVIDENCE_ITEMS, build_evidence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,8 +44,8 @@ def test_prompt_evidence_id_example_matches_real_generated_format():
             ToolResult(
                 tool="get_ashare_sentiment",
                 arguments={},
-                status="error",
-                error="upstream unavailable",
+                status="success",
+                normalized=[NormalizedDatum(tool="get_ashare_sentiment", metric="up_count", value=1)],
             )
         ],
         id_prefix="technical",

@@ -225,7 +225,7 @@ def test_terminal_state_matrix_handles_degraded_no_report_and_critic_failure():
     assert degraded.final_audit_status == "revise_exhausted"
     assert degraded.report is not None
     assert degraded.unresolved_issues
-    assert degraded.persisted is None
+    assert degraded.persisted is False
 
     no_report = build_response_from_state(
         {"report": None, "critique": {"verdict": "pass", "reason": "ok"}, "errors": []},

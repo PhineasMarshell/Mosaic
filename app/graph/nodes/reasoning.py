@@ -220,12 +220,14 @@ class ReasoningNode:
         except StageBudgetExceeded:
             return {
                 "report": None,
+                "stage": "reasoning", "exception_type": "StageBudgetExceeded",
                 "reason_codes": ["reasoning_budget_insufficient", "time_budget_insufficient"],
                 "errors": ["reasoning budget unavailable"],
             }
         except TimeoutError:
             return {
                 "report": None,
+                "stage": "reasoning", "exception_type": "TimeoutError",
                 "reason_codes": ["reasoning_timeout"],
                 "errors": ["reasoning stage timed out"],
             }

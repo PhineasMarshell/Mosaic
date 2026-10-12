@@ -95,7 +95,8 @@ async def test_incident_mcp_timeout_is_capped_by_deadline():
     assert time.monotonic() - started < 1
     assert result.status == "error"
     assert result.normalized == []
-    assert "attempt 1" in (result.error or "")
+    assert result.attempts[0]["attempt"] == 1
+    assert result.attempts[0]["status"] == "timeout"
 
 
 @pytest.mark.asyncio

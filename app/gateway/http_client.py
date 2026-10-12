@@ -6,15 +6,13 @@
 - 区分不同 HTTP 错误的处理策略
 """
 
-import asyncio
 import logging
-import time
 from typing import Any
 
 import httpx
 
 from app.config import Settings
-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, summarize_arguments
+from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, quote_transport_symbols
 from app.gateway.normalizer import normalize_tool_result
 
 logger = logging.getLogger(__name__)
@@ -128,194 +126,46 @@ class MarketGatewayHttpClient:
                 tool_key=logical_key,
             )
 
+        from app.gateway.policy import observed_call, response_diagnostics
+
         meta = resolve_tool_by_name(tool_name)
-        last_error = None
-        max_attempts = self.settings.max_retry_per_tool + 1
 
-        def _remaining() -> float | None:
-            return None if deadline is None else deadline - time.monotonic()
+        async def request(timeout):
+            encoded = dict(arguments)
+            if tool_name == "get_market_quotes":
+                encoded["symbols"] = ",".join(quote_transport_symbols(arguments["symbols"]))
+            response = await self.client.request(
+                meta.http_method, meta.http_path,
+                params=encoded if meta.http_method == "GET" else None,
+                json=encoded if meta.http_method != "GET" else None,
+                timeout=timeout,
+            )
+            diagnostics = response_diagnostics(response.text, response.status_code)
+            if response.status_code >= 400:
+                from app.gateway.normalizer import _reason_codes_for_error
 
-        def _budget_exhausted():
-            reason = "budget exhausted: no time left for another attempt"
-            if last_error:
-                reason = f"{last_error}; {reason}"
-            logger.warning("HTTP call %s stopped: %s", tool_name, reason)
-            # 规则 6：超预算必须以 error ToolResult 收尾，不能抛出去炸整条链
-            return normalize_tool_result(tool_name, arguments, None, error=reason)
+                codes = _reason_codes_for_error(f"HTTP {response.status_code} {response.text}")
+                if response.status_code >= 500 and "gateway_upstream_error" not in codes:
+                    codes.append("gateway_upstream_error")
+                normalized = normalize_tool_result(tool_name, arguments, None,
+                                                   error=f"HTTP Gateway error ({response.status_code})",
+                                                   reason_codes=codes)
+            elif not response.content:
+                normalized = normalize_tool_result(tool_name, arguments, None)
+            else:
+                try:
+                    raw = response.json()
+                except ValueError:
+                    from app.gateway.normalizer import _reason_codes_for_error
 
-        for attempt in range(max_attempts):
-            remaining = _remaining()
-            if remaining is not None and remaining <= 0:
-                return _budget_exhausted()
-
-            try:
-                attempt_timeout = self.settings.research_timeout_seconds
-                if remaining is not None:
-                    attempt_timeout = min(attempt_timeout, max(remaining, 0.0))
-                request_arguments = dict(arguments)
-                if tool_name == "get_market_quotes":
-                    # allowed_openapi.json models the HTTP query field as a
-                    # comma separated string; keep list[str] canonical inside
-                    # Mosaic and encode only at this transport boundary.
-                    request_arguments["symbols"] = ",".join(arguments["symbols"])
-                logger.info(
-                    "HTTP call %s attempt=%d attempt_timeout_ms=%.0f remaining_budget_ms=%s "
-                    "canonical_argument_summary=%s transport_argument_summary=%s",
-                    tool_name,
-                    attempt + 1,
-                    attempt_timeout * 1000,
-                    "none" if remaining is None else f"{remaining * 1000:.0f}",
-                    summarize_arguments(arguments),
-                    summarize_arguments(request_arguments),
-                )
-                # HTTPX's timeout is phase based; a server that continually
-                # sends small chunks can otherwise keep resetting the read
-                # timer forever.  The outer wait_for enforces the wall-clock
-                # deadline for the complete response.
-                response = await asyncio.wait_for(
-                    self.client.request(
-                        meta.http_method,
-                        meta.http_path,
-                        params=request_arguments if meta.http_method == "GET" else None,
-                        json=request_arguments if meta.http_method != "GET" else None,
-                        timeout=attempt_timeout,
-                    ),
-                    timeout=attempt_timeout,
-                )
-
-                # --------------------------------------------------
-                # 错误分类（不重试的情况）
-                # --------------------------------------------------
-                error_cls = _classify_http_error(response.status_code)
-
-                if response.status_code in (401, 403, 413):
-                    # 以前这三个分支 raise 之后由下面的 except 兜住，而 except 用的
-                    # 是 last_error —— 首次尝试时它还是 None。于是 error=None 传进
-                    # normalize_tool_result，被归一化成 status="success"、
-                    # value="None" 的"证据"：API key 过期时，每个工具都"成功"返回
-                    # 一条 None，has_evidence=True，LLM 就着一堆 None 写报告。
-                    reason = {
-                        401: "Authentication failed",
-                        403: "Permission denied",
-                        413: "Request too large or malformed",
-                    }[response.status_code]
-                    raise error_cls(f"{reason} ({response.status_code})")
-
-                if response.status_code == 422:
-                    # 记录错误详情供后续报告使用
-                    # Keep upstream bodies out of logs and downstream traces;
-                    # some gateways echo the original query in their detail.
-                    error_msg = "Invalid parameters (422)"
-                    return normalize_tool_result(
-                        tool_name,
-                        arguments,
-                        None,
-                        error=error_msg,
-                    )
-
-                if response.status_code == 429:
-                    # 限流：短暂等待后重试。T23：退避不得超过剩余预算。
-                    backoff = min(2**attempt, 10)
-                    remaining = _remaining()
-                    if remaining is not None:
-                        if remaining <= 0:
-                            last_error = "Rate limited (429)"
-                            return _budget_exhausted()
-                        if backoff > remaining:
-                            logger.info(
-                                "HTTP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
-                                "remaining_budget_ms=%.0f",
-                                tool_name,
-                                remaining * 1000,
-                            )
-                            return _budget_exhausted()
-                        backoff = min(backoff, remaining)
-                    logger.warning(
-                        "Rate limited (%d), backing off %ds",
-                        response.status_code,
-                        backoff,
-                    )
-                    last_error = "Rate limited (429)"
-                    await asyncio.sleep(backoff)
-                    continue
-
-                response.raise_for_status()
-                raw = response.json()
-                return normalize_tool_result(tool_name, arguments, raw)
-
-            except TimeoutError:
-                last_error = (
-                    f"Timeout on {tool_name} attempt {attempt + 1} after {attempt_timeout:.3f}s "
-                    f"(remaining budget was {'unknown' if remaining is None else f'{remaining:.3f}'}s)"
-                )
-                logger.warning(
-                    "HTTP call %s attempt %d/%d timed out attempt_timeout_ms=%.0f remaining_budget_ms=%s",
-                    tool_name,
-                    attempt + 1,
-                    max_attempts,
-                    attempt_timeout * 1000,
-                    "none" if remaining is None else f"{max(remaining, 0) * 1000:.0f}",
-                )
-            except (httpx.HTTPStatusError, httpx.TimeoutException) as exc:
-                if isinstance(exc, httpx.TimeoutException):
-                    last_error = (
-                        f"Timeout on {tool_name} attempt {attempt + 1} after {attempt_timeout:.3f}s "
-                        f"(remaining budget was {'unknown' if remaining is None else f'{remaining:.3f}'}s)"
-                    )
+                    codes = _reason_codes_for_error(response.text)
+                    normalized = normalize_tool_result(tool_name, arguments, None,
+                                                       error="Invalid Gateway JSON response", reason_codes=codes)
                 else:
-                    last_error = f"{type(exc).__name__}"
-                logger.warning(
-                    "HTTP call %s attempt %d/%d failed error_type=%s",
-                    tool_name,
-                    attempt + 1,
-                    max_attempts,
-                    type(exc).__name__,
-                )
-            except HTTPGatewayError as exc:
-                # 致命错误（认证/权限/请求非法），不再重试。
-                # 必须用 str(exc) —— last_error 在首次尝试时还是 None。
-                logger.warning(
-                    "HTTP call %s failed permanently error_type=%s", tool_name, type(exc).__name__
-                )
-                return normalize_tool_result(
-                    tool_name,
-                    arguments,
-                    None,
-                    error=str(exc) or "HTTP gateway error",
-                )
-            except Exception as exc:
-                last_error = f"{type(exc).__name__}"
-                logger.warning(
-                    "HTTP call %s attempt %d/%d failed error_type=%s",
-                    tool_name,
-                    attempt + 1,
-                    max_attempts,
-                    type(exc).__name__,
-                )
+                    normalized = normalize_tool_result(tool_name, arguments, raw)
+            return normalized, diagnostics
 
-            if attempt < max_attempts - 1:
-                backoff = 0.5 * (attempt + 1)
-                remaining = _remaining()
-                if remaining is not None:
-                    if remaining <= 0:
-                        return _budget_exhausted()
-                    if backoff > remaining:
-                        logger.info(
-                            "HTTP call %s retry skipped retry_skipped_reason=backoff_exceeds_remaining "
-                            "remaining_budget_ms=%.0f",
-                            tool_name,
-                            remaining * 1000,
-                        )
-                        return _budget_exhausted()
-                    backoff = min(backoff, remaining)
-                await asyncio.sleep(backoff)
-
-        return normalize_tool_result(
-            tool_name,
-            arguments,
-            None,
-            error=last_error or "unknown HTTP gateway error",
-        )
+        return await observed_call(self.settings, tool_name, arguments, deadline, request)
 
 
 def resolve_tool_by_name(tool_name: str):

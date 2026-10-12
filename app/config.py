@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     #: ``<project>/.tmp/iiix-appdata``; it avoids requiring access to the
     #: user's roaming profile while keeping the child process scoped.
     mcp_appdata_dir: str = ""
+    mcp_localappdata_dir: str = ""
 
     #: 启动时是否对 Gateway 通道做一次自检（mcp 模式：spawn + 握手 + list_tools）。
     #: 背景：2026-10-06 事故——mcp 模式全部 Gateway 工具失败但启动无任何报错。
@@ -57,6 +58,8 @@ class Settings(BaseSettings):
     max_tool_calls: int = 12
     max_research_steps: int = 8
     max_retry_per_tool: int = 1
+    tool_concurrency: int = Field(default=3, ge=1, le=8)
+    tools_phase_timeout_seconds: int = Field(default=45, ge=1, le=600)
 
     #: 单次 MCP/HTTP 工具调用的超时；同时用于 MCP 启动握手与 list_tools。
     research_timeout_seconds: int = 30
@@ -82,8 +85,8 @@ class Settings(BaseSettings):
     finalize_min_budget_seconds: int = Field(default=2, ge=0, le=600)
     # P4：提示词展示上限。原始结果仍完整留在 state/evidence ledger；这里只限制
     # 发给 LLM 的上下文，避免 sentiment 等大列表挤掉 reasoning/critic 预算。
-    reasoning_context_evidence_limit: int = Field(default=180, ge=20, le=2_000)
-    reasoning_context_datums_per_tool: int = Field(default=24, ge=4, le=200)
+    reasoning_context_evidence_limit: int = Field(default=60, ge=20, le=2_000)
+    reasoning_context_datums_per_tool: int = Field(default=10, ge=4, le=200)
     critic_context_evidence_limit: int = Field(default=30, ge=5, le=200)
     critic_context_datums_per_tool: int = Field(default=6, ge=2, le=100)
 

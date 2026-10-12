@@ -49,14 +49,30 @@ def stage_timeout(state: Any, settings: Any, *, stage: str, reserve: float = 0.0
 
 async def run_stage(awaitable: Awaitable[T], state: Any, settings: Any, *, stage: str, reserve: float = 0.0) -> T:
     """Run an awaitable under both the LLM cap and the absolute deadline."""
+    from app.graph import run_log
+
+    started = time.monotonic()
+    outcome = "success"
+    exception_type = None
     try:
         timeout = stage_timeout(state, settings, stage=stage, reserve=reserve)
-    except Exception:
+    except Exception as exc:
         close = getattr(awaitable, "close", None)
         if close is not None:
             close()
+        run_log.emit("stage", run_id=run_log._run_id_of(state), stage=stage, status="blocked",
+                     exception_type=type(exc).__name__, elapsed_ms=0.0, remaining_budget=remaining_budget(state))
         raise
-    return await asyncio.wait_for(awaitable, timeout=timeout)
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout)
+    except BaseException as exc:
+        outcome = "timeout" if isinstance(exc, TimeoutError) else "failed"
+        exception_type = type(exc).__name__
+        raise
+    finally:
+        run_log.emit("stage", run_id=run_log._run_id_of(state), stage=stage, status=outcome,
+                     exception_type=exception_type, elapsed_ms=round((time.monotonic()-started)*1000, 1),
+                     remaining_budget=remaining_budget(state), downstream_reserve=reserve)
 
 
 def elapsed_ms(state: Any) -> float | None:

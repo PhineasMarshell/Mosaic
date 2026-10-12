@@ -427,7 +427,7 @@ def test_sync_delivery_log_carries_the_same_run_id(caplog, monkeypatch):
     assert seen_state["run_id"] == run_id
 
 
-def test_run_id_is_not_exposed_in_public_api_payloads():
+def test_run_id_is_exposed_in_public_api_payloads():
     """run_id 是内部串联字段，不出现在对外 JSON 响应里。"""
     from pathlib import Path
 
@@ -440,12 +440,12 @@ def test_run_id_is_not_exposed_in_public_api_payloads():
         delivery_status="verified",
         final_audit_status="pass",
     )
-    public = {k: v for k, v in response.model_dump().items() if k != "run_id"}
-    assert "run_id" not in public
+    public = response.model_dump()
+    assert public["run_id"] == response.run_id
     assert response.run_id == "abc123def456", "内部仍然拿得到"
 
     source = Path(main.__file__).read_text(encoding="utf-8")
-    assert 'if k != "run_id"' in source, "对外响应必须显式剔除 run_id"
+    assert 'if k != "run_id"' not in source, "对外响应保留 run_id"
 
 
 def _verified_report():

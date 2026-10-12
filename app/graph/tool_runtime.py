@@ -265,13 +265,14 @@ class ToolRuntime:
         if _session.get() is not None:  # 同一 task 内嵌套 → 复用
             yield
             return
-        token = _session.set({"gateway": None, "available": None})
+        token = _session.set({"gateway": None, "available": None, "lock": asyncio.Lock(),
+                              "owner": None, "stop": asyncio.Event()})
         try:
             yield
         finally:
             session = _session.get()
             _session.reset(token)
-            if session is not None and session["gateway"] is not None:
+            if session is not None and session["owner"] is not None:
                 await self._close_gateway(session)
 
     async def _ensure_gateway(self, session: dict):
@@ -280,32 +281,49 @@ class ToolRuntime:
         ``__aenter__`` 失败时把 ``session["gateway"]`` 复位为 None 并把异常抛出去，
         不吞成默认值；失败路径由 T12 的 ``mcp_client.close()`` 自清理。
         """
-        if session["gateway"] is None:
+        async with session["lock"]:
+            if session["owner"] is None:
+                ready = asyncio.get_running_loop().create_future()
+                session["owner"] = asyncio.create_task(self._gateway_owner(session, ready))
+                session["ready"] = ready
+            return await asyncio.shield(session["ready"])
+
+    async def _gateway_owner(self, session: dict, ready):
+        # MCP's AnyIO cancel scopes must enter/exit in the same task.
+        try:
             gateway = self._gateway_class()(self.settings)
-            session["gateway"] = gateway
             try:
                 await gateway.__aenter__()
             except BaseException:
-                session["gateway"] = None
                 await gateway.__aexit__(None, None, None)
                 raise
+            session["gateway"] = gateway
             if self.settings.market_gateway_mode.lower() == "mcp":
                 session["available"] = {tool.name for tool in gateway.tools}
             else:
                 session["available"] = {t.tool_name for t in self._http_allowed_tools()}
-        return session["gateway"]
+            ready.set_result(gateway)
+            await session["stop"].wait()
+        except BaseException as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+        finally:
+            if session["gateway"] is not None:
+                await session["gateway"].__aexit__(None, None, None)
+                session["gateway"] = None
 
     async def _close_gateway(self, session: dict):
         """关闭本请求会话内按需建立的 Gateway 客户端（未建连则无事发生）。"""
-        gateway = session["gateway"]
-        session["gateway"] = None
-        session["available"] = None
-        if gateway is None:
-            return
+        session["stop"].set()
         try:
-            await gateway.__aexit__(None, None, None)
+            if session["owner"] is not None:
+                if not session["ready"].done():
+                    session["owner"].cancel()
+                await session["owner"]
         except Exception as exc:
             logger.warning("Gateway client close failed error_type=%s", type(exc).__name__)
+        finally:
+            session["available"] = None
 
     # ------------------------------------------------------------------ #
     # 公共 API                                                            #
@@ -353,6 +371,8 @@ class ToolRuntime:
                 error=f"Invalid arguments: {exc}",
             )
         signature = self._signature(tool_name, arguments)
+        if refresh:
+            market_cache.invalidate(_make_cache_key(tool_name, arguments))
 
         # T27：同一次运行里同签名已真实执行过 → 明确跳过（partial + note）。
         # 旧实现这里 return None 被调用方当成"无缓存"，同签名第 3 次调用
@@ -377,6 +397,7 @@ class ToolRuntime:
             )
 
         # 检查缓存命中
+        cache_started = time.monotonic()
         cached = None if refresh else self._check_cache(tool_name, arguments, called_signatures, signature)
         if cached is not None:
             logger.info("Cache hit for %s", tool_name)
@@ -384,6 +405,8 @@ class ToolRuntime:
             cached.arguments = arguments
             cached.cache_hit = True
             cached.refresh_requested = False
+            cached.attempts = []  # A cache read made no new upstream attempt.
+            cached.duration_ms = (time.monotonic() - cache_started) * 1000
             return cached
 
         # 执行真实调用
@@ -420,6 +443,7 @@ class ToolRuntime:
                 tool=tool_name, arguments=arguments, status=STATUS_ERROR,
                 normalized=[], error="budget exhausted during tool execution",
                 reason_codes=["deadline_exhausted", "gateway_timeout"],
+                upstream_status="timeout",
                 cache_hit=False,
                 refresh_requested=refresh,
             )
