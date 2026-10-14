@@ -181,16 +181,28 @@ def sanitize(value: Any, _depth: int = 0) -> Any:
         # datum_count / duration_ms / partial），否则普通字典的键数截断会让
         # 回放误判工具没有返回数据。
         if ("tool_key" in value and "status" in value) or ("kind" in value and "action" in value):
-            return {
-                k: _safe_blocked_reason(v)
-                if str(k) == "blocked_reason"
-                else v
-                if str(k) == "reason" and isinstance(v, str) and v in _BLOCKED_REASONS | _ROUTE_REASON_CODES
-                else _redact_sensitive(v)
-                if str(k) in _SENSITIVE_FIELDS
-                else sanitize(v, _depth + 1)
-                for k, v in value.items()
-            }
+            out = {}
+            for k, v in value.items():
+                key = str(k)
+                if key == "datums" and isinstance(v, (list, tuple)):
+                    kept = [sanitize(item, _depth + 1) for item in v[:80]]
+                    if len(v) > 80:
+                        kept.append(f"...(+{len(v) - 80} more)")
+                    out[key] = kept
+                elif key in {"evidence_ids", "claim_refs"} and isinstance(v, (list, tuple)):
+                    kept = [sanitize(item, _depth + 1) for item in v[:240]]
+                    if len(v) > 240:
+                        kept.append(f"...(+{len(v) - 240} more)")
+                    out[key] = kept
+                elif key == "blocked_reason":
+                    out[key] = _safe_blocked_reason(v)
+                elif key == "reason" and isinstance(v, str) and v in _BLOCKED_REASONS | _ROUTE_REASON_CODES:
+                    out[key] = v
+                elif key in _SENSITIVE_FIELDS:
+                    out[key] = _redact_sensitive(v)
+                else:
+                    out[key] = sanitize(v, _depth + 1)
+            return out
         return {
             k: _safe_blocked_reason(v)
             if str(k) == "blocked_reason"
@@ -319,6 +331,8 @@ def log_plan(
         forced_gap_keys=list(forced_gap or []),
         prefix_keys=list(prefix_keys or []),
         unexecutable_keys=list(unexecutable_keys or []),
+        required_tool_keys=list(_field(plan, "required_tool_keys", []) or []),
+        missing_required_tool_keys=list(_field(plan, "missing_required_tool_keys", []) or []),
     )
 
 
@@ -352,16 +366,139 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
                 "reason_codes": _field(r, "reason_codes", []) or [],
                 "upstream_status": _field(r, "upstream_status"),
                 "attempts": _field(r, "attempts", []) or [],
+                "primary_source": _field(r, "primary_source"),
+                "fallback_source": _field(r, "fallback_source"),
+                "fallback_reason": _field(r, "fallback_reason"),
+                "source_switch": bool(_field(r, "source_switch", False)),
                 "source": sorted({_field(d, "source") for d in normalized if _field(d, "source")}),
                 "instrument": sorted({_field(d, "instrument") for d in normalized if _field(d, "instrument")}),
                 "as_of_date": _field(r, "as_of_date"),
                 "retrieved_at": _field(r, "retrieved_at"),
                 "datum_count": len(normalized),
+                "datums": [
+                    {
+                        "metric": _field(d, "metric"),
+                        "as_of_date": _field(d, "as_of_date") or _field(d, "timestamp"),
+                        "instrument": _field(d, "instrument"),
+                        "instrument_name": _field(d, "instrument_name"),
+                        "source": _field(d, "source") or _field(d, "authority"),
+                        "coverage": _field(d, "coverage") or _field(d, "instrument_scope"),
+                        "partial": bool(_field(d, "partial", False)),
+                        "status": _field(d, "status"),
+                    }
+                    for d in normalized[:80]
+                ],
                 "note": clip(_field(r, "note"), 80),
                 "cache": cache or None,
             }
         )
     return emit("executions", run_id=_run_id_of(state), category=category, results=rows)
+
+
+def log_reasoning_context(
+    state: Any,
+    *,
+    ledger_count: int,
+    selected_count: int,
+    evidence_ids: list[str],
+    prompt_chars: int | None,
+    context_build_ms: float | None,
+    llm_request_ms: float | None,
+    parse_ms: float | None,
+    completion_chars: int | None = None,
+    finish_reason: str | None = None,
+    parse_status: str | None = None,
+    request_max_tokens: int | None = None,
+    usage: Any = None,
+    target_filter: dict | None = None,
+    phase: str | None = None,
+) -> None:
+    """Record bounded Reasoning context/timing diagnostics without payload text."""
+    emit(
+        "reasoning_context",
+        run_id=_run_id_of(state),
+        phase=phase,
+        ledger_evidence_count=int(ledger_count),
+        selected_evidence_count=int(selected_count),
+        evidence_ids=list(evidence_ids),
+        prompt_chars=prompt_chars,
+        context_build_ms=None if context_build_ms is None else round(float(context_build_ms), 1),
+        llm_request_ms=None if llm_request_ms is None else round(float(llm_request_ms), 1),
+        parse_ms=None if parse_ms is None else round(float(parse_ms), 1),
+        completion_chars=completion_chars,
+        finish_reason=finish_reason,
+        parse_status=parse_status,
+        request_max_tokens=request_max_tokens,
+        usage={
+            "prompt_tokens": _field(usage, "prompt_tokens"),
+            "completion_tokens": _field(usage, "completion_tokens"),
+            "total_tokens": _field(usage, "total_tokens"),
+        } if usage is not None else None,
+        target_filter=target_filter or {},
+    )
+
+
+def log_evidence_fallback(
+    state: Any,
+    *,
+    phase: str,
+    fallback_enabled: bool,
+    fallback_reason: str,
+    candidate_count: int,
+    accepted_count: int,
+    rejected_count: int,
+    rejection_reasons: dict | None = None,
+    candidate_evidence_ids: dict | None = None,
+    rejected_candidates: list | None = None,
+    requested_date: str | None = None,
+    target_instrument: str | None = None,
+    finish_reason: str | None = None,
+    parse_status: str | None = None,
+    applied: bool = False,
+) -> dict:
+    """记录 evidence-only fallback 的准入判定（P13 §一.2/§一.3）。
+
+    每个候选 evidence 的准入/拒绝原因都在这里落档：只有"有多少条被拒"而
+    没有"为什么被拒"时，blocked 运行无法复盘是哪一道门禁挡住的。
+
+    `applied=False` 表示这次判定只是审计留痕（正常成文路径也记一份），
+    并非 fallback 真的交付了报告——不能让"有合格候选"被读成"降级生效"。
+    """
+    return emit(
+        "evidence_fallback",
+        run_id=_run_id_of(state),
+        phase=phase,
+        applied=bool(applied),
+        fallback_enabled=bool(fallback_enabled),
+        fallback_reason=str(fallback_reason or ""),
+        candidate_count=int(candidate_count),
+        accepted_count=int(accepted_count),
+        rejected_count=int(rejected_count),
+        rejection_reasons=dict(rejection_reasons or {}),
+        candidate_evidence_ids=dict(candidate_evidence_ids or {}),
+        rejected_candidates=list(rejected_candidates or []),
+        requested_date=requested_date,
+        target_instrument=target_instrument,
+        finish_reason=finish_reason,
+        parse_status=parse_status,
+    )
+
+
+def log_critic_context(
+    state: Any,
+    *,
+    prompt_chars: int,
+    ledger_count: int,
+    evidence_ids: list[str],
+) -> None:
+    """Record Critic input size and ledger identity, never the prompt body."""
+    emit(
+        "critic_context",
+        run_id=_run_id_of(state),
+        prompt_chars=int(prompt_chars),
+        ledger_evidence_count=int(ledger_count),
+        evidence_ids=list(evidence_ids),
+    )
 
 
 def log_critic(
@@ -486,6 +623,9 @@ def log_llm_call(
     usage: Any = None,
     duration_ms: float | None = None,
     phase: str | None = None,
+    request_max_tokens: int | None = None,
+    completion_chars: int | None = None,
+    finish_reason: str | None = None,
 ) -> dict:
     """一次 LLM 调用的用量与耗时（阶段 6 指标的数据源）。
 
@@ -502,6 +642,9 @@ def log_llm_call(
         completion_tokens=_field(usage, "completion_tokens"),
         total_tokens=_field(usage, "total_tokens"),
         duration_ms=None if duration_ms is None else round(float(duration_ms), 1),
+        request_max_tokens=request_max_tokens,
+        completion_chars=completion_chars,
+        finish_reason=finish_reason,
     )
 
 
@@ -544,6 +687,8 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
 
     verified 结果也可能因存储故障而 persisted=False；记录实际写入结果。
     """
+    results = _field(state, "results", None) or _field(state, "tool_results", []) or []
+    source_switch = any(bool(_field(result, "source_switch", False)) for result in results)
     emit(
         "delivery",
         run_id=_run_id_of(state),
@@ -569,6 +714,7 @@ def log_delivery(state: Any, *, delivery_status: str, persisted: bool, sink: str
         exception_type=_field(state, "exception_type"),
         stage=_field(state, "stage"),
         reason_codes=_field(state, "reason_codes", []) or [],
+        source_switch=source_switch,
     )
 
 

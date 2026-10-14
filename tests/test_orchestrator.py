@@ -5,6 +5,7 @@ import json
 import logging
 
 import pytest
+from verified_report_fixture import verified_quote_report
 
 from app.agent.orchestrator import Orchestrator
 from app.config import Settings
@@ -29,15 +30,7 @@ class RaisingGraph:
 
 
 def _report() -> MarketIntelligence:
-    return MarketIntelligence.model_validate(
-        {
-            "title": "测试情报",
-            "market_state": "震荡",
-            "state_label": "Neutral",
-            "what_happened": "测试用最小报告",
-            "confidence": "low",
-        }
-    )
+    return verified_quote_report(title="测试情报", market_state="震荡", state_label="Neutral", confidence="low")
 
 
 @pytest.mark.asyncio

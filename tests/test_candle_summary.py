@@ -47,3 +47,28 @@ def test_high_low_used_for_range():
     assert summary["price_min"] == 1.0
     assert summary["price_max"] == 5.0
     assert summary["price_last"] == 4.0
+
+
+def test_dated_candle_is_preserved_as_claim_level_evidence():
+    result = ToolResult(
+        tool="get_market_klines",
+        operation_id="get_market_klines",
+        tool_key="klines",
+        arguments={"symbol": "SH600519"},
+        status="partial",
+        partial=True,
+        normalized=[
+            NormalizedDatum(metric=f"candles[0].{field}", value=value, tool="get_market_klines")
+            for field, value in {"t": "2026-10-09", "o": 1255.42, "h": 1282.0,
+                                 "l": 1255.42, "c": 1263.0, "v": 3511051}.items()
+        ],
+    )
+
+    evidence = build_evidence([result], id_prefix="technical", stable_ids=True)
+    candle = next(item for item in evidence if item.metric == "candle")
+
+    assert candle.as_of_date == "2026-10-09"
+    assert candle.instrument == "SH600519"
+    assert candle.value == {"t": "2026-10-09", "o": 1255.42, "h": 1282.0,
+                            "l": 1255.42, "c": 1263.0, "v": 3511051}
+    assert candle.result_partial is True

@@ -9,6 +9,7 @@ import logging
 import sqlite3
 
 import pytest
+from verified_report_fixture import QUOTE_CLAIM, verified_quote_report
 
 from app.agent.persistence import _answer_summary, persist_research
 from app.memory.storage import MarketMemory
@@ -18,16 +19,13 @@ CONV_ID = "conv-1"
 
 
 def _make_report() -> MarketIntelligence:
-    return MarketIntelligence.model_validate(
-        {
+    return verified_quote_report(**{
             "title": "t",
             "market_state": "弱",
             "state_label": "Neutral",
-            "what_happened": "指数普跌，成交额萎缩",
             "strong_areas": ["AI", "算力"],
             "confidence": "low",
-        }
-    )
+        })
 
 
 def _make_good_response() -> ResearchResponse:
@@ -85,7 +83,7 @@ async def test_persistence_uses_report_fields(mem):
 
     history = mem.get_conversation_history(CONV_ID)
     assert "Neutral" in history
-    assert "指数普跌" in history
+    assert "贵州茅台" in history
     assert "今天市场怎么样" in history
 
 
@@ -117,7 +115,7 @@ async def test_none_report_does_not_clear_daily_state(mem):
 
 def test_answer_summary_format():
     summary = _answer_summary(_make_report())
-    assert summary == "Neutral：指数普跌，成交额萎缩…"
+    assert summary == f"Neutral：{QUOTE_CLAIM}…"
 
 
 async def test_save_failure_logs_warning(mem, caplog, monkeypatch):

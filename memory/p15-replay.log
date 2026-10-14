@@ -1,0 +1,22 @@
+finalize_audit: delivery_status=blocked final_audit_status=revise_exhausted�����־û���errors=0��
+persist_research: delivery_status=blocked/final_audit_status=revise_exhausted/verdict=pass������ memory���Ի��ִ��뵱��״̬��question=<redacted len=22> errors=0��
+finalize_audit: delivery_status=degraded final_audit_status=revise_exhausted�����־û���errors=0��
+persist_research: delivery_status=degraded/final_audit_status=revise_exhausted/verdict=pass������ memory���Ի��ִ��뵱��״̬��question=<redacted len=22> errors=0��
+finalize_audit: delivery_status=blocked final_audit_status=revise_exhausted�����־û���errors=0��
+persist_research: delivery_status=blocked/final_audit_status=revise_exhausted/verdict=pass������ memory���Ի��ִ��뵱��״̬��question=<redacted len=22> errors=0��
+finalize_audit: delivery_status=degraded final_audit_status=revise_exhausted�����־û���errors=0��
+persist_research: delivery_status=degraded/final_audit_status=revise_exhausted/verdict=pass������ memory���Ի��ִ��뵱��״̬��question=<redacted len=22> errors=0��
+persist_research: provenance gate rejected reason_codes=['missing_reference', 'no_verified_claim']
+persist_research: delivery_status=verified/final_audit_status=pass/verdict=pass������ memory���Ի��ִ��뵱��״̬��question=<redacted len=7> errors=0��
+{"probe_run_id": "p15-18de57c2c366c0e0", "scenario_count": 7, "artifact": "D:\\Mosaic\\memory\\p15-acceptance.jsonl"}
+finalize_audit: delivery_status=blocked final_audit_status=revise_exhausted（不持久化，errors=0）
+persist_research: delivery_status=blocked/final_audit_status=revise_exhausted/verdict=pass，跳过 memory、对话轮次与当日状态（question=<redacted len=22> errors=0）
+finalize_audit: delivery_status=degraded final_audit_status=revise_exhausted（不持久化，errors=0）
+persist_research: delivery_status=degraded/final_audit_status=revise_exhausted/verdict=pass，跳过 memory、对话轮次与当日状态（question=<redacted len=22> errors=0）
+finalize_audit: delivery_status=blocked final_audit_status=revise_exhausted（不持久化，errors=0）
+persist_research: delivery_status=blocked/final_audit_status=revise_exhausted/verdict=pass，跳过 memory、对话轮次与当日状态（question=<redacted len=22> errors=0）
+finalize_audit: delivery_status=degraded final_audit_status=revise_exhausted（不持久化，errors=0）
+persist_research: delivery_status=degraded/final_audit_status=revise_exhausted/verdict=pass，跳过 memory、对话轮次与当日状态（question=<redacted len=22> errors=0）
+persist_research: provenance gate rejected reason_codes=['missing_reference', 'no_verified_claim']
+persist_research: delivery_status=verified/final_audit_status=pass/verdict=pass，跳过 memory、对话轮次与当日状态（question=<redacted len=7> errors=0）
+{"probe_run_id": "p15-18de58146995c3e8", "scenario_count": 7, "artifact": "D:\\Mosaic\\memory\\p15-acceptance.jsonl"}

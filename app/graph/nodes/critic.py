@@ -205,13 +205,20 @@ _DOMAIN_RULES = {
 
 # 新闻证据纪律（A7）：跨域规则，不分市场域 —— 三域以上共用，且 unknown 域
 # 的 _get_domain_rules 返回空串，放 _DOMAIN_RULES 里会丢。在 prompt 组装处
-# 无条件附加（新闻面论断只可能引用 news_*/telegraph_* 证据，与域无关）。
+# 无条件附加（新闻与公告事件证据纪律，与域无关）。
 _NEWS_RULES = (
     "[新闻证据纪律]\n"
-    "- 涉及新闻/事件/消息面的论断必须引用 news_* 或 telegraph_* 证据，并标注时间与来源\n"
+    "- 涉及新闻/事件/消息面的论断必须引用 news_*、telegraph_*、announcement_* 或 iwencai_events 的实际事件字段证据，并标注时间与来源\n"
+    "- announcement_* 是同花顺问财公告检索结果：保留原公告链接，摘要不代表已经阅读全文，返回条数不代表全部公告；不得作为实时行情证据\n"
     "- 单一来源的传闻性表述必须明示『单一来源，未交叉确认』\n"
     "- 标题相同且出现于 ≥2 个独立来源（news_meta.multi_source_titles）方可称『已证实』\n"
     "- 数条新闻只是样本，不得据此推断全市场情绪或长期趋势"
+    "\n- 同花顺问财财务/事件/基本资料证据必须保留实际标的、字段单位及数据日期；财务报告期不是交易日期，上市日期是静态属性值。分页或缺字段结果不能当作完整覆盖，默认行情列不算财务或事件证据。"
+    "\n- 同花顺问财 news_* / report_* 是新闻/研报正文片段：保留原媒体/机构、发布日期及链接；同 document_id 的段落不是多份研报，同篇转载不是多源独立确认。评级/目标价和盈利预测是机构观点，不可当实际股价或已实现业绩。"
+    "\n- iwencai_market 按字段核对实际证券代码、数据日期、单位和复权口径，缺时间不能称实时；iwencai_macro 必须按实际国家地区、统计期、单位与周期解释，不能用抓取时间冒充统计期或发布日期。"
+    "\n- iwencai_industry 必须按实际行业/指数身份和分类体系解释，不能混入个股或推断行业层级；iwencai_management 按 holder_name/holder_rank 对应同一股东行，不混淆公告日期、字段日期与持仓截止日；code_count 不代表股东总数。缺指标或单位须明确限定，不能据默认字段认定完整。"
+    "\n- iwencai_index 必须核对结构化指数代码/名称、字段日期和原单位，点位不是个股价格或全市场成交额；无日期不能证明当日/实时变化。iwencai_astock_selector / iwencai_sector_selector 是上游候选页，逐项过滤条件须有对应字段证据；保留原查询、市场和日期，不用分页或code_count推断全市场，不用默认行情列证明财务/技术/概念条件。partial候选不能支持强比较、因果或全市场绝对结论。"
+    "\n- iwencai_business 的公司、客户/供应商/子公司、报告期及合同公告日必须分别核对；未知对手、字段或日期不能补造。iwencai_insresearch 属机构观点，必须有真实机构及评级/发布日期；预测期不是发布日期，目标价不是实际股价，预测利润不是已实现利润，券商推荐不能作为投资回报保证。"
 )
 
 
@@ -229,9 +236,8 @@ _SENTIMENT_RULES = (
 
 def _field(obj, key, default=None):
     """从 dict 或对象读取字段 —— LangGraph 可能传入任一形式。"""
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+    value = obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
+    return default if value is None else value
 
 
 def _get_domain_rules(domain: str) -> str:
@@ -734,12 +740,14 @@ def _claim_evidence_issues(
     *,
     requested_date: str | None = None,
     market_closed: bool | None = None,
+    expected_domain: str | None = None,
 ) -> list["AuditIssue"]:
     """Apply the post-Reasoning claim→datum gate without weakening the LLM audit."""
     issues: list[AuditIssue] = []
     for row in match_claims_to_evidence(
         report, evidence, expected_date=expected_date,
         requested_date=requested_date, market_closed=market_closed,
+        expected_domain=expected_domain,
     ):
         reasons = row["reason_codes"]
         if not reasons:
@@ -942,9 +950,12 @@ def _coverage_issues(report, evidence) -> list["AuditIssue"]:
     text = entity_report_text(report)
     segments = [part.strip() for part in re.split(r"[。！？；，,\n]|(?:但|然而|不过)", text) if part.strip()]
     complete = [item for item in items if not _incomplete(item)]
-    up = [item for item in complete if re.search(r"up_count|advancing|上涨家数", str(_field(item, "metric", "")), re.I)]
+    # A complete row from a partial result can support its own fact, but a
+    # partial result cannot establish an exhaustive market breadth total.
+    complete_breadth_items = [item for item in complete if not _field(item, "result_partial", False)]
+    up = [item for item in complete_breadth_items if re.search(r"up_count|advancing|上涨家数", str(_field(item, "metric", "")), re.I)]
     down = [
-        item for item in complete if re.search(r"down_count|declining|下跌家数", str(_field(item, "metric", "")), re.I)
+        item for item in complete_breadth_items if re.search(r"down_count|declining|下跌家数", str(_field(item, "metric", "")), re.I)
     ]
     issues: list[AuditIssue] = []
     # A claim labelled fact/comparison/causation/structure without a concrete
@@ -1294,6 +1305,12 @@ class CriticNode:
 
             prompt = "\n".join(prompt_pieces)
             prompt = translate_evidence_references(prompt, {real: alias for alias, real in presentation_aliases.items()})
+            run_log.log_critic_context(
+                state,
+                prompt_chars=len(prompt),
+                ledger_count=len(evidence),
+                evidence_ids=[str(_field(item, "id")) for item in evidence if _field(item, "id")],
+            )
 
             _llm_started = time.perf_counter()
             request = self.client.chat.completions.create(
@@ -1304,6 +1321,7 @@ class CriticNode:
                 ],
                 response_format={"type": "json_object"},
                 temperature=0,
+                max_tokens=int(getattr(self.settings, "llm_max_completion_tokens", 2048) or 2048),
             )
             response = await run_stage(
                 request,
@@ -1377,6 +1395,7 @@ class CriticNode:
             code_issues = _code_level_issues(report) + _coverage_issues(report, evidence) + _claim_evidence_issues(
                 report, evidence, expected_date=expected_date,
                 requested_date=state.get("requested_date"), market_closed=state.get("market_closed"),
+                expected_domain=domain,
             )
             if unknown_aliases:
                 code_issues.append(AuditIssue(

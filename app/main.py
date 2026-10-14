@@ -18,7 +18,7 @@ from app.errors import LLMOutputError, UpstreamTimeoutError
 from app.graph import run_log
 from app.logging_config import setup_logging
 from app.memory.storage import get_memory
-from app.models.response import build_response_from_state
+from app.models.response import build_response_from_state, build_terminal_payload, terminal_code_for
 from app.research.trading_calendar import requested_date_from_question, resolve_trading_date_semantics
 
 setup_logging(level="INFO")
@@ -248,28 +248,18 @@ async def ask(request: dict):
             )
             return JSONResponse(
                 status_code=200,
-                content={
-                    **result.model_dump(),
-                    "question": question,
-                    "report": None,
-                    "conversation_id": conversation_id,
-                    "critique": result.critique,
-                    "unresolved_issues": result.unresolved_issues,
-                    "errors": result.errors,
-                    "delivery_status": "blocked",
-                    "blocked_reason": result.blocked_reason,
-                    "final_audit_status": result.final_audit_status,
-                    "delivery_reason": result.delivery_reason
+                content=build_terminal_payload(
+                    result,
+                    code="blocked",
+                    message="研究未通过证据审计，未返回可信结论，请重试或缩小问题范围",
+                    retryable=True,
+                    delivery_status="blocked",
+                    delivery_reason=result.delivery_reason
                     or "研究未通过证据审计，未返回可信结论，请重试或缩小问题范围",
-                    "reason_codes": result.reason_codes,
-                    "elapsed_ms": result.elapsed_ms,
-                    "remaining_budget": result.remaining_budget,
-                    "stage": result.stage,
-                    "exception_type": result.exception_type,
-                    "run_id": result.run_id,
-                    "persisted": False,
-                    "retryable": True,
-                },
+                    run_id=result.run_id,
+                    question=question,
+                    extra={"conversation_id": conversation_id},
+                ),
             )
 
         if result.report is None:
@@ -288,25 +278,14 @@ async def ask(request: dict):
             result.persisted = False
             return JSONResponse(
                 status_code=502,
-                content={
-                    **result.model_dump(),
-                    "detail": "研究未能产出报告（推理环节失败），请重试",
-                    "code": code,
-                    "errors": result.errors,
-                    "delivery_status": delivery,
-                    "blocked_reason": result.blocked_reason,
-                    "final_audit_status": result.final_audit_status,
-                    "delivery_reason": result.delivery_reason,
-                    "reason_codes": result.reason_codes,
-                    "elapsed_ms": result.elapsed_ms,
-                    "remaining_budget": result.remaining_budget,
-                    "stage": result.stage,
-                    "exception_type": result.exception_type,
-                    "run_id": result.run_id,
-                    "critique": result.critique,
-                    "unresolved_issues": result.unresolved_issues,
-                    "persisted": False,
-                },
+                content=build_terminal_payload(
+                    result,
+                    code=code,
+                    message="研究未能产出报告（推理环节失败），请重试",
+                    delivery_status=str(delivery),
+                    run_id=result.run_id,
+                    question=question,
+                ),
             )
 
         # T3：同步与 SSE 共用同一持久化逻辑，避免双路径漂移（SSE 曾读错字段层级，
@@ -314,7 +293,14 @@ async def ask(request: dict):
         persisted = await persist_research(result, question, conversation_id)
         result.persisted = persisted
         # Keep the same run_id in delivery telemetry and the public response.
-        data = result.model_dump()
+        data = build_terminal_payload(
+            result,
+            code=terminal_code_for(delivery),
+            delivery_status=str(delivery),
+            run_id=result.run_id,
+            question=question,
+            extra={"conversation_id": conversation_id},
+        )
         run_log.log_delivery(
             data,
             delivery_status=str(delivery), persisted=persisted, sink="sync"
@@ -326,22 +312,20 @@ async def ask(request: dict):
         timeout_codes = ["timeout", "research_deadline_exhausted"]
         return JSONResponse(
             status_code=504,
-            content={
-                "detail": f"Research timed out after {settings.research_budget_seconds}s",
-                "code": "timeout",
-                "question": question,
-                "final_audit_status": "error",
-                "delivery_status": "failed",
-                "delivery_reason": "研究超出总预算",
-                "run_id": request_run_id,
-                "stage": "research",
-                "exception_type": "TimeoutError",
-                "reason_codes": timeout_codes,
-                "elapsed_ms": round((time.monotonic() - request_started_at) * 1000, 1),
-                "remaining_budget": 0.0,
-                "unresolved_issues": [],
-                "persisted": False,
-            },
+            content=build_terminal_payload(
+                code="timeout",
+                message=f"Research timed out after {settings.research_budget_seconds}s",
+                delivery_status="failed",
+                final_audit_status="error",
+                delivery_reason="研究超出总预算",
+                exception_type="TimeoutError",
+                reason_codes=timeout_codes,
+                run_id=request_run_id,
+                question=question,
+                elapsed_ms=round((time.monotonic() - request_started_at) * 1000, 1),
+                remaining_budget=0.0,
+                extra={"stage": "research"},
+            ),
         )
     except LLMOutputError as exc:
         # 必须排在 ValueError 之前 —— LLMOutputError 是 ValueError 的子类
@@ -349,22 +333,20 @@ async def ask(request: dict):
         codes = ["llm_output_error"]
         return JSONResponse(
             status_code=502,
-            content={
-                "detail": "上游模型返回了无法解析的内容，请重试或更换模型",
-                "code": "upstream",
-                "question": question,
-                "final_audit_status": "error",
-                "delivery_status": "failed",
-                "delivery_reason": "上游模型输出不可解析",
-                "run_id": request_run_id,
-                "stage": "research",
-                "exception_type": type(exc).__name__,
-                "reason_codes": codes,
-                "elapsed_ms": round((time.monotonic() - request_started_at) * 1000, 1),
-                "remaining_budget": 0.0,
-                "unresolved_issues": [],
-                "persisted": False,
-            },
+            content=build_terminal_payload(
+                code="upstream",
+                message="上游模型返回了无法解析的内容，请重试或更换模型",
+                delivery_status="failed",
+                final_audit_status="error",
+                delivery_reason="上游模型输出不可解析",
+                exception_type=type(exc).__name__,
+                reason_codes=codes,
+                run_id=request_run_id,
+                question=question,
+                elapsed_ms=round((time.monotonic() - request_started_at) * 1000, 1),
+                remaining_budget=0.0,
+                extra={"stage": "research"},
+            ),
         )
     except ValueError as exc:
         logger.warning("Invalid input: %s", type(exc).__name__)
@@ -383,22 +365,20 @@ async def ask(request: dict):
         logger.error("Internal error during research: %s", type(exc).__name__)
         return JSONResponse(
             status_code=500,
-            content={
-                "detail": str(exc),
-                "code": "internal",
-                "question": question,
-                "final_audit_status": "error",
-                "delivery_status": "failed",
-                "delivery_reason": "研究流程发生内部异常",
-                "run_id": request_run_id,
-                "stage": "research",
-                "exception_type": type(exc).__name__,
-                "reason_codes": ["research_error", type(exc).__name__],
-                "elapsed_ms": round((time.monotonic() - request_started_at) * 1000, 1),
-                "remaining_budget": 0.0,
-                "unresolved_issues": [],
-                "persisted": False,
-            },
+            content=build_terminal_payload(
+                code="internal",
+                message=str(exc),
+                delivery_status="failed",
+                final_audit_status="error",
+                delivery_reason="研究流程发生内部异常",
+                exception_type=type(exc).__name__,
+                reason_codes=["research_error", type(exc).__name__],
+                run_id=request_run_id,
+                question=question,
+                elapsed_ms=round((time.monotonic() - request_started_at) * 1000, 1),
+                remaining_budget=0.0,
+                extra={"stage": "research"},
+            ),
         )
 
     finally:
@@ -433,6 +413,14 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
 
     def json_event(event: str, data: dict):
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+    def progress_event(step: str, message: str, node: str | None = None) -> dict:
+        """P13 §二.3：所有非终态事件都显式带 ``terminal=False``。
+
+        心跳（step=working）与节点进度因此**不可能**被前端或验收脚本当作终态；
+        唯一的终态事件一律由 ``build_terminal_payload`` 产出并带 ``terminal=True``。
+        """
+        return {"step": step, "node": node, "message": message, "terminal": False}
 
     initial_state = {
         "question": question,
@@ -486,25 +474,22 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             terminal,
             delivery_status="failed", persisted=False, sink="sse",
         )
-        yield json_event("progress", {"step": "error", "message": "研究初始化失败，请重试"})
+        yield json_event("progress", progress_event("error", "研究初始化失败，请重试"))
         yield json_event(
             "result",
-            {
-                "error": str(exc),
-                "code": "internal",
-                "question": question,
-                "final_audit_status": "error",
-                "delivery_status": "failed",
-                "delivery_reason": "研究流程发生内部异常",
-                "run_id": initial_state["run_id"],
-                "stage": terminal["stage"],
-                "exception_type": terminal["exception_type"],
-                "reason_codes": terminal["reason_codes"],
-                "elapsed_ms": terminal["elapsed_ms"],
-                "remaining_budget": terminal["remaining_budget"],
-                "unresolved_issues": [],
-                "persisted": False,
-            },
+            build_terminal_payload(
+                code="internal",
+                message=str(exc),
+                delivery_status="failed",
+                final_audit_status="error",
+                delivery_reason="研究流程发生内部异常",
+                run_id=initial_state["run_id"],
+                question=question,
+                elapsed_ms=terminal["elapsed_ms"],
+                remaining_budget=terminal["remaining_budget"],
+                extra={"stage": terminal["stage"], "exception_type": terminal["exception_type"],
+                       "reason_codes": terminal["reason_codes"]},
+            ),
         )
         return
 
@@ -543,7 +528,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 elapsed = int(loop.time() - started_at)
                 yield json_event(
                     "progress",
-                    {"step": "working", "node": None, "message": f"仍在调查中…（{elapsed}s / 预算 {budget}s）"},
+                    progress_event("working", f"仍在调查中…（{elapsed}s / 预算 {budget}s）"),
                 )
                 continue
 
@@ -556,7 +541,7 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             elif mode == "updates":
                 for node_name in payload.keys():
                     step, message = _NODE_PROGRESS.get(node_name, (node_name, node_name))
-                    yield json_event("progress", {"step": step, "node": node_name, "message": message})
+                    yield json_event("progress", progress_event(step, message, node_name))
 
         # ── 组装结果（与 orchestrator.run 共用同一构造器）──
         result = build_response_from_state(final_state, question=question, conversation_id=conversation_id)
@@ -596,69 +581,47 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
                 )
                 yield json_event(
                     "progress",
-                    {
-                        "step": "blocked",
-                        "node": None,
-                        "message": "研究未通过证据审计，本次结果不可作为可信结论，请重试或缩小问题范围",
-                    },
+                    progress_event(
+                        "blocked",
+                        "研究未通过证据审计，本次结果不可作为可信结论，请重试或缩小问题范围",
+                    ),
                 )
                 yield json_event(
                     "result",
-                    {
-                        **result.model_dump(),
-                        "error": "研究未通过证据审计，未返回可信结论",
-                        "code": "blocked",
-                        "blocked_reason": result.blocked_reason,
-                        "question": question,
-                        "delivery_status": "blocked",
-                        "final_audit_status": result.final_audit_status,
-                        "delivery_reason": result.delivery_reason,
-                        "reason_codes": result.reason_codes,
-                        "elapsed_ms": result.elapsed_ms,
-                        "remaining_budget": result.remaining_budget,
-                        "stage": result.stage,
-                        "exception_type": result.exception_type,
-                        "run_id": result.run_id,
-                        "critique": result.critique,
-                        "unresolved_issues": result.unresolved_issues,
-                        "errors": result.errors,
-                        "persisted": False,
-                    },
+                    build_terminal_payload(
+                        result,
+                        code="blocked",
+                        message="研究未通过证据审计，未返回可信结论",
+                        retryable=True,
+                        delivery_status="blocked",
+                        run_id=result.run_id,
+                        question=question,
+                        extra={"conversation_id": conversation_id},
+                    ),
                 )
                 run_log.log_delivery(final_state, delivery_status="blocked", persisted=False, sink="sse")
                 return
             # 推理环节失败：与超时/上游错误保持一致，发一个带 error 的 result 事件，
             # 既不落库，也不让前端拿空报告去渲染。
             logger.error("Stream research produced no report for %s (error_count=%d)", run_log.redact_text(question), len(result.errors))
-            yield json_event("progress", {"step": "error", "message": "研究未能产出报告（推理环节失败），请重试"})
+            yield json_event("progress", progress_event("error", "研究未能产出报告（推理环节失败），请重试"))
             code = "no_report" if "reasoning produced no report" in result.errors else "failed"
             result.persisted = False
             yield json_event(
                 "result",
-                {
-                    **result.model_dump(),
-                    "error": "研究未能产出报告（推理环节失败），请重试",
-                    "code": code,
-                    "question": question,
-                    "errors": result.errors,
-                    "delivery_status": delivery,
-                    "final_audit_status": result.final_audit_status,
-                    "delivery_reason": result.delivery_reason,
-                    "reason_codes": result.reason_codes,
-                    "elapsed_ms": result.elapsed_ms,
-                    "remaining_budget": result.remaining_budget,
-                    "stage": result.stage,
-                    "exception_type": result.exception_type,
-                    "run_id": result.run_id,
-                    "critique": result.critique,
-                    "unresolved_issues": result.unresolved_issues,
-                    "persisted": False,
-                },
+                build_terminal_payload(
+                    result,
+                    code=code,
+                    message="研究未能产出报告（推理环节失败），请重试",
+                    delivery_status=str(delivery),
+                    run_id=result.run_id,
+                    question=question,
+                ),
             )
             run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=False, sink="sse")
             return
 
-        yield json_event("progress", {"step": "done", "node": None, "message": "调查完成"})
+        yield json_event("progress", progress_event("done", "调查完成"))
 
         # T3：SSE 与同步共用同一持久化函数，内部从 result.report 读字段；
         # 旧实现读 model_dump() 顶层（字段嵌在 report 下），导致摘要恒空、当日状态
@@ -673,9 +636,16 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         persisted = await persist_research(result, question, conversation_id)
         result.persisted = persisted
         final_state["persisted"] = persisted
-        # SSE and sync both expose the graph's original run_id.
-        public_result = result.model_dump()
-        save_result = public_result
+        # SSE and sync both expose the graph's original run_id, and both now build
+        # the terminal payload through the same shared builder (P13 §二.2).
+        save_result = build_terminal_payload(
+            result,
+            code=terminal_code_for(delivery),
+            delivery_status=str(delivery),
+            run_id=result.run_id,
+            question=question,
+            extra={"conversation_id": conversation_id},
+        )
         run_log.log_delivery(final_state, delivery_status=str(delivery), persisted=persisted, sink="sse")
 
         yield json_event("result", save_result)
@@ -704,25 +674,22 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             terminal,
             delivery_status="failed", persisted=False, sink="sse",
         )
-        yield json_event("progress", {"step": "error", "message": "研究超时，请重试"})
+        yield json_event("progress", progress_event("error", "研究超时，请重试"))
         yield json_event(
             "result",
-            {
-                "error": f"Research timed out after {budget}s",
-                "code": "timeout",
-                "question": question,
-                "final_audit_status": "error",
-                "delivery_status": "failed",
-                "delivery_reason": "研究超出总预算",
-                "run_id": initial_state["run_id"],
-                "stage": "research",
-                "exception_type": "UpstreamTimeoutError",
-                "reason_codes": timeout_codes,
-                "elapsed_ms": terminal["elapsed_ms"],
-                "remaining_budget": 0.0,
-                "unresolved_issues": [],
-                "persisted": False,
-            },
+            build_terminal_payload(
+                code="timeout",
+                message=f"Research timed out after {budget}s",
+                delivery_status="failed",
+                final_audit_status="error",
+                delivery_reason="研究超出总预算",
+                run_id=initial_state["run_id"],
+                question=question,
+                elapsed_ms=terminal["elapsed_ms"],
+                remaining_budget=0.0,
+                extra={"stage": "research", "exception_type": "UpstreamTimeoutError",
+                       "reason_codes": timeout_codes},
+            ),
         )
     except LLMOutputError as exc:
         logger.error("Stream research got unusable LLM output for: %s — %s", run_log.redact_text(question), type(exc).__name__)
@@ -733,23 +700,20 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
             terminal,
             delivery_status="failed", persisted=False, sink="sse",
         )
-        yield json_event("progress", {"step": "error", "message": "上游模型返回了无法解析的内容"})
+        yield json_event("progress", progress_event("error", "上游模型返回了无法解析的内容"))
         yield json_event(
             "result",
-            {
-                "error": "上游模型返回了无法解析的内容，请重试或更换模型",
-                "code": "upstream",
-                "question": question,
-                "final_audit_status": "error",
-                "delivery_status": "failed",
-                "delivery_reason": "上游模型输出不可解析",
-                "run_id": initial_state["run_id"],
-                "stage": "research",
-                "exception_type": type(exc).__name__,
-                "reason_codes": codes,
-                "unresolved_issues": [],
-                "persisted": False,
-            },
+            build_terminal_payload(
+                code="upstream",
+                message="上游模型返回了无法解析的内容，请重试或更换模型",
+                delivery_status="failed",
+                final_audit_status="error",
+                delivery_reason="上游模型输出不可解析",
+                run_id=initial_state["run_id"],
+                question=question,
+                extra={"stage": "research", "exception_type": type(exc).__name__,
+                       "reason_codes": codes},
+            ),
         )
     except Exception as exc:
         logger.error("Stream research failed for: %s (%s)", run_log.redact_text(question), type(exc).__name__)
@@ -762,27 +726,21 @@ async def _stream_research(question: str, domain: str | None, conversation_id: s
         )
         yield json_event(
             "progress",
-            {
-                "step": "error",
-                "message": f"研究失败: {str(exc)[:100]}",
-            },
+            progress_event("error", f"研究失败: {str(exc)[:100]}"),
         )
         yield json_event(
             "result",
-            {
-                "error": str(exc),
-                "code": "internal",
-                "question": question,
-                "final_audit_status": "error",
-                "delivery_status": "failed",
-                "delivery_reason": "研究流程发生内部异常",
-                "run_id": initial_state["run_id"],
-                "stage": "research",
-                "exception_type": type(exc).__name__,
-                "reason_codes": codes,
-                "unresolved_issues": [],
-                "persisted": False,
-            },
+            build_terminal_payload(
+                code="internal",
+                message=str(exc),
+                delivery_status="failed",
+                final_audit_status="error",
+                delivery_reason="研究流程发生内部异常",
+                run_id=initial_state["run_id"],
+                question=question,
+                extra={"stage": "research", "exception_type": type(exc).__name__,
+                       "reason_codes": codes},
+            ),
         )
     finally:
         if not task.done():

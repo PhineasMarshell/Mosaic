@@ -45,6 +45,35 @@ SYSTEM_PROMMENT = """你是 Mosaic，一个 Market Intelligence Agent。
 # Reasoning Prompt                                                    #
 # ------------------------------------------------------------------ #
 
+REFERENCE_REPORT_PROMPT = """你是 Mosaic 的 Reasoning Engine。只返回合法 JSON object。
+用户问题：{question}
+工具状态（不是证据）：{data}
+真实证据账本（只允许引用已展示的条目）：{evidence}
+{evidence_alias_context}
+{history_context}
+
+输出对象的字段：
+- title: 简短标题；market_state: 有证据支持的有限状态；state_label: 简短标签。
+- what_happened: 最多三句，回答问题；缺口写 data_caveats。
+- claims: 最多六个对象，每项包含 claim、claim_type、evidence_ids。
+  claim_type 只取 fact/inference/single_source/comparison/causation/structure/other。
+  每项只陈述一个直接事实，必须引用实际 evidence 别名。不得编造引用。
+- evidence: 只输出已被 claims 引用的去重选择器，例如 [{{"id":"E001"}}]。
+  代码从真实账本填充 value、标的、日期、来源、authority、retrieved_at、coverage、
+  completeness、partial、result_partial；不得重复输出这些对象或 note/interpretation。
+- confidence: high/medium/low；data_caveats: 最多四条口径、时效与覆盖缺口。
+why/strong_areas/what_changed/what_matters/risks 可省略；没有所需证据时必须省略。
+
+日期服从代码元数据：requested_date 是请求日，as_of_date 是实际证据日，
+planned_as_of_date 只是计划核验日，retrieved_at 不是行情日期。休市必须说明休市
+及最近交易日证据是否取得；不得把结构说明写成行情成功。
+新闻/公告不能证明价格变化。单标的、指数或局部样本不能证明全市场广度、排名或因果。
+无完整同日上涨/下跌家数只能写无法确认市场广度；无板块证据只能写板块覆盖缺失。
+partial、result_partial、未知日期、来源或覆盖必须披露，不能通过措辞或重复引用补齐。
+单源消息标注单一来源、未交叉确认。每个正向事实均需引用；无依据推断应删除。
+只返回 JSON，不要复述证据，不要加入未被 claims 支持的正文。
+"""
+
 REASONING_PROMPT = """你是 Mosaic 的 Reasoning Engine。
 
 用户问题：

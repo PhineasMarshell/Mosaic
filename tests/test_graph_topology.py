@@ -284,7 +284,8 @@ def _patch_reasoning_and_critic(monkeypatch):
     async def fake_reasoning(self, state):
         return {
             "report": types.SimpleNamespace(
-                what_happened="测试报告",
+                what_happened="暂无可核验数据",
+                claims=[{"claim": "暂无可核验数据", "claim_type": "structure", "evidence_ids": []}],
                 confidence=0.8,
                 state_label="neutral",
                 strong_areas=[],
@@ -499,7 +500,8 @@ def _fake_report():
     import types
 
     return types.SimpleNamespace(
-        what_happened="测试报告",
+        what_happened="暂无可核验数据",
+        claims=[{"claim": "暂无可核验数据", "claim_type": "structure", "evidence_ids": []}],
         confidence=0.8,
         state_label="neutral",
         strong_areas=[],

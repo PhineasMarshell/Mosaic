@@ -103,6 +103,17 @@ def test_partial_and_undated_breadth_cannot_support_all_market_claim():
     assert _coverage_issues({"what_happened": "无法确认全市场全部上涨。"}, evidence) == []
 
 
+def test_complete_rows_from_partial_result_do_not_prove_full_market_breadth():
+    report = {"what_happened": "全市场全部上涨。"}
+    evidence = [
+        Evidence(id="a", source_tool="get_ashare_sentiment", metric="up_count",
+                 value=5000, timestamp="2026-10-09", result_partial=True),
+        Evidence(id="b", source_tool="get_ashare_sentiment", metric="down_count",
+                 value=0, timestamp="2026-10-09", result_partial=True),
+    ]
+    assert _coverage_issues(report, evidence)[0].kind == "unsupported_claim"
+
+
 def test_unsupported_causation_and_fund_rotation_get_issues():
     for sentence in ("OpenAI营收不及预期导致AI硬件抛售。", "资金从AI/光通信流向锂电池。",
                      "内房股受港股上涨带动。"):

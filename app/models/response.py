@@ -1,4 +1,5 @@
 import time
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -52,6 +53,7 @@ class EvidenceItem(BaseModel):
     instrument_name: str | None = None
     status: str = "success"
     partial: bool = False
+    result_partial: bool = False
     note: str | None = None
     #: 阶段 4：这条证据属于哪个标的（工具调用时的 ``symbol`` 参数）。
     #: 让"报告里的公司名"可以对着证据校验，而不是凭模型记忆。
@@ -109,6 +111,9 @@ class ResearchResponse(BaseModel):
     partial: bool = False
     source: Any = None
     coverage: Any = None
+    #: 本次运行是否发生了受控数据源切换（例如 THS → MCP）。该字段由
+    #: ToolResult 逐条汇总，避免调用方只能深入 tool_results 才能发现路由变化。
+    source_switch: bool = False
     #: reasoning 环节失败时为空。此前该字段是必填的，导致"没产出报告"这种最需要
     #: 被解释的失败反而在组装响应时就抛 ValidationError，调用方只能拿到 500 和
     #: 一段 pydantic 校验文本，state.errors 里真正的原因永远传不出去。
@@ -141,15 +146,24 @@ class ResearchResponse(BaseModel):
     exception_type: str | None = None
     elapsed_ms: float | None = None
     remaining_budget: float | None = None
+    #: P13：evidence-only fallback 的结构化准入诊断。``None`` 表示本次运行根本
+    #: 没有进入该路径；只要进入（无论最终 degraded 还是 blocked）就必须带上
+    #: 候选数、接受数、拒绝原因和候选 evidence id，供审计复盘与脱敏 JSONL 记录。
+    fallback_diagnostics: dict[str, Any] | None = None
+    #: 上述诊断的平铺字段，便于 JSONL / 前端直接读取而不必解嵌套。
+    candidate_count: int | None = None
+    accepted_count: int | None = None
+    rejected_count: int | None = None
+    rejection_reasons: dict[str, int] = Field(default_factory=dict)
 
 
-def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) -> tuple[str, str, str, Any]:
-    """由终态 state 推导 (final_audit_status, delivery_status, delivery_reason, report)。
+def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) -> tuple[str, str, str, Any, list[str]]:
+    """由终态 state 推导审计状态、交付状态、理由、报告与严格校验原因。
 
-    优先用 ``finalize_audit`` 节点写入的字段；``verdict=pass`` 的快乐路径不经过该
-    节点，这里按 critique 兜底派生，保证两条路径的对外契约一致。
+    优先用 ``finalize_audit`` 节点写入的字段；重放或兼容调用缺少终态字段时按
+    critique 兜底派生，并复用同一严格 claim 校验，保证两条路径的对外契约一致。
     """
-    from app.graph.nodes.finalize import infer_blocked_reason, resolve_delivery
+    from app.graph.nodes.finalize import _strict_verified_issues, infer_blocked_reason, resolve_delivery
 
     critique = state.get("critique")
     blocked_reason = infer_blocked_reason(state, critique)
@@ -189,6 +203,15 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
         )
         delivery_status = derived_delivery
 
+    strict_issues: list[str] = []
+    if delivery_status == "verified" and report is not None:
+        strict_issues = _strict_verified_issues(state, report)
+        if strict_issues:
+            strict_issues.append("verified_provenance_failed")
+            audit_status = "revise_exhausted"
+            delivery_status = "blocked"
+            reason = "verified_provenance_failed: " + ", ".join(strict_issues)
+
     report_out = report
     if report_out is None and delivery_status == "verified":
         # A passing Critic cannot make an absent reasoning report deliverable.
@@ -197,11 +220,12 @@ def _resolve_terminal_state(state: dict[str, Any], report, errors: list[str]) ->
         audit_status = "error"
         delivery_status = "failed"
         reason = "reasoning produced no report"
+        strict_issues.append("no_report")
     if delivery_status in ("blocked", "failed") and report_out is not None:
         # 未通过审计的正文不得作为结论返回（阶段 5）。
         report_out = None
 
-    return str(audit_status), str(delivery_status), reason, report_out
+    return str(audit_status), str(delivery_status), reason, report_out, strict_issues
 
 
 def _critique_reason(critique: Any) -> str:
@@ -236,10 +260,11 @@ def build_response_from_state(
     report = state.get("report")
     errors = list(state.get("errors") or [])
 
-    final_audit_status, delivery_status, delivery_reason, report = _resolve_terminal_state(state, report, errors)
+    final_audit_status, delivery_status, delivery_reason, report, strict_issues = _resolve_terminal_state(state, report, errors)
     from app.graph.nodes.finalize import infer_blocked_reason
-
     blocked_reason = infer_blocked_reason(state, critique) if delivery_status not in ("verified", "degraded") else ""
+    if "verified_provenance_failed" in strict_issues:
+        blocked_reason = "verified_provenance_failed"
 
     if report is None and not errors and delivery_status not in ("blocked",):
         # 保证 report 为空时调用方手里一定有一条可展示的原因，而不是只有空报告。
@@ -284,6 +309,37 @@ def build_response_from_state(
         run_log.emit("stage", run_id=state.get("run_id"), stage="finalize", status="verified",
                      elapsed_ms=round((time.monotonic()-response_started)*1000, 1), remaining_budget=remaining)
 
+    tool_reason_codes: list[str] = []
+    source_switch = False
+    for item in raw_results:
+        if isinstance(item, dict):
+            tool_reason_codes.extend(str(code) for code in (item.get("reason_codes") or []) if code)
+            source_switch = source_switch or bool(item.get("source_switch", False))
+        else:
+            tool_reason_codes.extend(str(code) for code in (getattr(item, "reason_codes", []) or []) if code)
+            source_switch = source_switch or bool(getattr(item, "source_switch", False))
+    response_reason_codes = list(dict.fromkeys([
+        *(state.get("reason_codes") or state.get("degraded_reason_codes") or []),
+        *tool_reason_codes,
+        *strict_issues,
+    ]))
+
+    # P13：fallback 诊断从 graph state 原样透出（sync / SSE 共用本函数，因此
+    # 两条传输路径不可能给出不同的候选/拒绝统计）。
+    fallback_diagnostics = state.get("fallback_diagnostics") or None
+    if isinstance(fallback_diagnostics, dict):
+        candidate_total = int(fallback_diagnostics.get("candidate_count", 0) or 0)
+        accepted_total = int(fallback_diagnostics.get("accepted_count", 0) or 0)
+        rejected_total = int(fallback_diagnostics.get("rejected_count", 0) or 0)
+        rejection_reasons = {
+            str(key): int(value)
+            for key, value in (fallback_diagnostics.get("rejection_reasons") or {}).items()
+        }
+    else:
+        fallback_diagnostics = None
+        candidate_total = accepted_total = rejected_total = None
+        rejection_reasons = {}
+
     return ResearchResponse(
         question=question,
         requested_date=state.get("requested_date") or (report.requested_date if hasattr(report, "requested_date") else report.get("requested_date") if isinstance(report, dict) else None),
@@ -294,13 +350,14 @@ def build_response_from_state(
         if report is not None else None,
         coverage=(report.coverage if hasattr(report, "coverage") else report.get("coverage") if isinstance(report, dict) else None)
         if report is not None else None,
+        source_switch=source_switch,
         report=report,
         tool_results=tool_results,
         cache_stats=dict(state.get("cache_stats") or {}),
         conversation_id=conversation_id,
         critique=critique,
         unresolved_issues=list(state.get("unresolved_issues") or _unresolved_issues(critique)),
-        reason_codes=list(state.get("reason_codes") or state.get("degraded_reason_codes") or []),
+        reason_codes=response_reason_codes,
         errors=errors,
         final_audit_status=final_audit_status,
         delivery_status=delivery_status,
@@ -312,6 +369,11 @@ def build_response_from_state(
         exception_type=state.get("exception_type"),
         remaining_budget=remaining,
         elapsed_ms=elapsed,
+        fallback_diagnostics=fallback_diagnostics,
+        candidate_count=candidate_total,
+        accepted_count=accepted_total,
+        rejected_count=rejected_total,
+        rejection_reasons=rejection_reasons,
     )
 
 
@@ -319,3 +381,104 @@ def _unresolved_issues(critique: Any) -> list[str]:
     from app.graph.nodes.finalize import unresolved_issue_summary
 
     return unresolved_issue_summary(critique)
+
+
+def terminal_code_for(delivery_status: str | None) -> str:
+    """交付状态的规范终态 ``code``（sync 与 SSE 共用同一张映射表）。
+
+    这样"同一份 state ⇒ 同一个 code"不是靠两端各写一遍字面量，而是靠同一次查表。
+    """
+    return {
+        "verified": "ok",
+        "degraded": "degraded",
+        "blocked": "blocked",
+        "failed": "failed",
+    }.get(str(delivery_status or ""), "failed")
+
+
+def build_terminal_payload(
+    result: ResearchResponse | None = None,
+    *,
+    code: str,
+    message: str | None = None,
+    retryable: bool | None = None,
+    delivery_status: str | None = None,
+    final_audit_status: str | None = None,
+    delivery_reason: str | None = None,
+    exception_type: str | None = None,
+    reason_codes: Sequence[str] | None = None,
+    run_id: str | None = None,
+    question: str | None = None,
+    elapsed_ms: float | None = None,
+    remaining_budget: float | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """P13 §二：sync 与 SSE **唯一**的终态载荷构造器。
+
+    两个端点此前各自手工拼装终态字典，于是同一份 graph state 会得到不同形状的
+    交付结果（同步 blocked 有 ``retryable``、SSE 只有 ``error``；成功路径同步没有
+    ``code``）。本函数把"终态字段集"收敛到一处：
+
+    * ``status`` / ``delivery_status`` / ``final_audit_status`` / ``code`` /
+      ``reason_codes`` / ``report`` / ``persisted`` 全部由此处推导；
+    * ``terminal`` 显式标记这是终态事件，SSE 的 progress / heartbeat 一律不带它，
+      因此"心跳"永远不会被误读成终态（§二.3）；
+    * ``persisted`` 只在 ``verified`` 时才可能为真，degraded/blocked/failed 一律
+      为假（§一.7）。
+
+    传入 ``result`` 时以它的 ``model_dump()`` 为基底；不传时（超时 / 上游异常等
+    没有研究报告对象的路径）用一个显式的最小骨架，避免异常路径再造一套字段。
+    """
+    if result is not None:
+        payload: dict[str, Any] = result.model_dump()
+    else:
+        payload = {
+            "report": None,
+            "tool_results": [],
+            "cache_stats": {},
+            "critique": None,
+            "unresolved_issues": [],
+            "reason_codes": [],
+            "errors": [],
+            "partial": False,
+            "source_switch": False,
+            "persisted": False,
+        }
+
+    resolved_delivery = str(delivery_status or payload.get("delivery_status") or "failed")
+    payload["delivery_status"] = resolved_delivery
+    payload["final_audit_status"] = str(final_audit_status or payload.get("final_audit_status") or "error")
+    if delivery_reason is not None:
+        payload["delivery_reason"] = delivery_reason
+    payload.setdefault("delivery_reason", "")
+    if exception_type is not None:
+        payload["exception_type"] = exception_type
+    if reason_codes is not None:
+        payload["reason_codes"] = list(dict.fromkeys([
+            *(payload.get("reason_codes") or []),
+            *(str(item) for item in reason_codes if item),
+        ]))
+    if run_id is not None:
+        payload["run_id"] = run_id
+    if question is not None:
+        payload["question"] = question
+    if elapsed_ms is not None:
+        payload["elapsed_ms"] = elapsed_ms
+    if remaining_budget is not None:
+        payload["remaining_budget"] = remaining_budget
+
+    payload["code"] = str(code)
+    payload["status"] = resolved_delivery
+    payload["terminal"] = True
+    payload["persisted"] = False if resolved_delivery != "verified" else bool(payload.get("persisted"))
+    if payload.get("report") is None:
+        # blocked / failed 绝不把未经审计的正文发出去。
+        payload["report"] = None
+    if message is not None:
+        payload["error"] = message
+        payload["detail"] = message
+    if retryable is not None:
+        payload["retryable"] = bool(retryable)
+    if extra:
+        payload.update(extra)
+    return payload

@@ -11,11 +11,12 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from verified_report_fixture import verified_quote_report
 
 import app.main as main
 from app.agent.persistence import persist_research
 from app.memory.storage import MarketMemory
-from app.models.response import MarketIntelligence, ResearchResponse
+from app.models.response import ResearchResponse
 
 
 class _BlockingGraph:
@@ -61,7 +62,7 @@ async def test_sse_cancellation_logs_terminal_fields(monkeypatch, caplog):
 async def test_persistence_partial_write_rolls_back(tmp_path, monkeypatch):
     """对话写入失败时，前序 research_records 也必须回滚。"""
     memory = MarketMemory(db_path=tmp_path / "memory.db")
-    report = MarketIntelligence(title="t", market_state="弱", state_label="Neutral", confidence="low")
+    report = verified_quote_report(title="t", market_state="弱", state_label="Neutral", confidence="low")
     result = ResearchResponse(
         question="q",
         report=report,

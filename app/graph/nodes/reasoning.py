@@ -12,17 +12,100 @@ import logging
 
 from app.config import Settings
 from app.errors import LLMOutputError
+from app.graph import run_log
 from app.graph.budget import StageBudgetExceeded, run_stage
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
 from app.models.response import MarketIntelligence
-from app.research.reasoning import ReasoningEngine, _get_evidence_key, build_evidence_aliases
+from app.research.reasoning import (
+    ReasoningEngine,
+    _get_evidence_key,
+    build_evidence_aliases,
+    build_evidence_only_fallback,
+    plan_evidence_only_fallback,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def _field(item, key, default=None):
     return item.get(key, default) if isinstance(item, dict) else getattr(item, key, default)
+
+
+#: P13：evidence-only fallback 判负/超时后留在 state 上的终态标记。一次正常成文会
+#: 取代那次产物，这些标记必须随之清除 —— 否则 finalize 会把这份**普通报告**当成
+#: fallback 报告直接放行（既误标交付理由，又跳过 degraded 的 claim 级过滤）。
+_STALE_FALLBACK_CODES = frozenset({"evidence_only_fallback", "llm_output_error"})
+
+
+def _ledger_evidence(state) -> list:
+    """把 state 里的 evidence 还原成对象，供准入判定使用。"""
+    return [
+        Evidence(**item) if isinstance(item, dict) else item
+        for item in (state.get("evidence") or [])
+    ]
+
+
+def _plan_fallback(state, *, requested_date, target_instrument):
+    """对账本做一次 evidence-only fallback 准入判定（纯判定，不产出交付）。"""
+    return plan_evidence_only_fallback(
+        _ledger_evidence(state),
+        requested_date=requested_date,
+        target_instrument=target_instrument,
+        as_of_date=state.get("as_of_date"),
+    )
+
+
+def _log_fallback(engine, state, plan, *, phase: str, applied: bool) -> dict:
+    """落档一次准入判定，返回带 `applied` 的诊断字段。"""
+    diagnostics = dict(plan.diagnostics())
+    diagnostics["applied"] = bool(applied)
+    run_log.log_evidence_fallback(
+        state,
+        phase=phase,
+        applied=applied,
+        fallback_enabled=plan.enabled,
+        fallback_reason=plan.reason,
+        candidate_count=plan.candidate_count,
+        accepted_count=plan.accepted_count,
+        rejected_count=plan.rejected_count,
+        rejection_reasons=diagnostics["rejection_reasons"],
+        candidate_evidence_ids=diagnostics["candidate_evidence_ids"],
+        rejected_candidates=diagnostics["rejected_candidates"],
+        requested_date=plan.requested_date,
+        target_instrument=plan.target_instrument,
+        finish_reason=getattr(engine, "last_finish_reason", None),
+        parse_status=getattr(engine, "last_parse_status", None),
+    )
+    return diagnostics
+
+
+def _evidence_fallback_update(
+    engine, state, *, requested_date, target_instrument, phase: str,
+) -> dict | None:
+    """判定并记录 evidence-only fallback，返回节点更新（不适用/无合格证据则 None）。
+
+    Timeout 与 LLM 输出错误两条路径都走这里：准入判据、诊断字段和日志形状
+    只实现一次，sync/SSE 因此不可能各自漂移出不同结论（P13 §一/§二.1）。
+    """
+    ledger = _ledger_evidence(state)
+    plan = plan_evidence_only_fallback(
+        ledger,
+        requested_date=requested_date,
+        target_instrument=target_instrument,
+        as_of_date=state.get("as_of_date"),
+    )
+    report = build_evidence_only_fallback(
+        ledger,
+        requested_date=requested_date,
+        target_instrument=target_instrument,
+        as_of_date=state.get("as_of_date"),
+        decision=plan,
+    )
+    diagnostics = _log_fallback(engine, state, plan, phase=phase, applied=report is not None)
+    if report is None:
+        return None
+    return {"report": report, "fallback_diagnostics": diagnostics}
 
 
 def _select_evidence(items: list, previous_report, *, total_limit: int = 500, per_tool: int = 80) -> tuple[list, dict]:
@@ -118,12 +201,19 @@ class ReasoningNode:
 
             question = state.get("question", "") if isinstance(state, dict) else getattr(state, "question", "")
 
+            # Focused mode is limited to an explicit date plus one six-digit
+            # instrument.  It changes only the prompt context, never the ledger.
+            import re
+            code_matches = re.findall(r"(?<!\d)(?:SH|SZ|BJ)?(\d{6})(?!\d)", str(question or ""), re.I)
+            # A planned index/quote is an evidence source, not a restriction
+            # requested by the user. Broad A-share questions routinely include
+            # a default index call; inferring a target from that route discarded
+            # the market/breadth/sector ledger before the real model saw it.
+            target_instrument = code_matches[0] if len(set(code_matches)) == 1 else None
+            requested_date = state.get("requested_date") or _field(state.get("intent"), "requested_date")
+            compact_mode = bool(requested_date and target_instrument)
+
             all_evidence_items = state.get("evidence", [])
-            evidence_aliases = (
-                build_evidence_aliases([e if not isinstance(e, dict) else Evidence(**e) for e in all_evidence_items])
-                if all_evidence_items
-                else {}
-            )
             evidence_items, truncation = _select_evidence(
                 all_evidence_items,
                 state.get("report"),
@@ -131,9 +221,16 @@ class ReasoningNode:
                 per_tool=int(getattr(self.settings, "reasoning_context_datums_per_tool", 24) or 24),
             )
             if truncation["omitted"]:
-                from app.graph import run_log
-
                 run_log.emit("reasoning_context", run_id=state.get("run_id"), context_truncation=truncation)
+
+            # Aliases are presentation permissions. Build them only from the
+            # rows that will actually be shown to the model; hidden ledger
+            # rows must remain unreferenceable in compact mode.
+            evidence_aliases = (
+                build_evidence_aliases([e if not isinstance(e, dict) else Evidence(**e) for e in evidence_items])
+                if evidence_items and not compact_mode
+                else {}
+            )
 
             results = state.get("results", [])
             # LangGraph reducer merge 将 ToolResult 序列化为 dict，需要转回
@@ -150,12 +247,14 @@ class ReasoningNode:
                 findings=state.get("findings", []),
                 evidence_aliases=evidence_aliases,
                 domain=state.get("domain") or _field(state.get("intent"), "domain") or "a_share",
-                requested_date=state.get("requested_date") or _field(state.get("intent"), "requested_date"),
+                requested_date=requested_date,
                 as_of_date=state.get("as_of_date"),
                 planned_as_of_date=state.get("planned_as_of_date") or _field(state.get("intent"), "as_of_date"),
                 market_closed=state.get("market_closed")
                 if state.get("market_closed") is not None
                 else _field(state.get("intent"), "market_closed"),
+                target_instrument=target_instrument,
+                compact_mode=compact_mode,
             )
             reserve = float(getattr(self.settings, "critic_min_budget_seconds", 15) or 15) + float(
                 getattr(self.settings, "finalize_min_budget_seconds", 2) or 2
@@ -164,8 +263,6 @@ class ReasoningNode:
                 request, state, self.settings, stage="reasoning", reserve=reserve
             )
             # 阶段 6：把这次推理的 LLM 用量/耗时写进运行日志（指标的数据源）。
-            from app.graph import run_log
-
             run_log.log_llm_call(
                 state,
                 node="reasoning",
@@ -173,6 +270,26 @@ class ReasoningNode:
                 model=self.settings.openai_model,
                 usage=getattr(self._engine, "last_llm_usage", None),
                 duration_ms=getattr(self._engine, "last_llm_duration_ms", None),
+                request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
+                completion_chars=getattr(self._engine, "last_completion_chars", None),
+                finish_reason=getattr(self._engine, "last_finish_reason", None),
+            )
+            run_log.log_reasoning_context(
+                state,
+                ledger_count=len(all_evidence_items),
+                selected_count=len(evidence_items),
+                evidence_ids=getattr(self._engine, "last_evidence_ids", []),
+                prompt_chars=getattr(self._engine, "last_prompt_chars", None),
+                context_build_ms=getattr(self._engine, "last_context_build_ms", None),
+                llm_request_ms=getattr(self._engine, "last_llm_duration_ms", None),
+                parse_ms=getattr(self._engine, "last_parse_duration_ms", None),
+                completion_chars=getattr(self._engine, "last_completion_chars", None),
+                finish_reason=getattr(self._engine, "last_finish_reason", None),
+                parse_status=getattr(self._engine, "last_parse_status", None),
+                request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
+                usage=getattr(self._engine, "last_llm_usage", None),
+                target_filter=getattr(self._engine, "last_target_filter", None),
+                phase="rewrite" if is_rewrite else ("research_followup" if is_followup else "initial"),
             )
 
             # T15/D2：消费 Evidence Gate 的结论 —— has_evidence=False 时
@@ -214,10 +331,38 @@ class ReasoningNode:
                 "rewrite_count": rewrite_count,
                 "revision_count": rewrite_count + research_round_count,
             }
+            # P13 §一.2：即使这次正常成文、fallback 未被使用，也落一份准入判定。
+            # 否则"本次没有降级"和"根本没判定过"在 JSONL 上无法区分。
+            fallback_plan = _plan_fallback(
+                state, requested_date=requested_date, target_instrument=target_instrument,
+            )
+            out["fallback_diagnostics"] = _log_fallback(
+                self._engine, state, fallback_plan, phase="not_required", applied=False,
+            )
+            # P13：本次正常成文取代了此前的 evidence-only fallback 产物，因此必须
+            # 清掉那次失败留下的终态标记。否则 finalize 会认为当前 report 就是
+            # fallback 报告并直接放行（跳过 claim 级过滤），既不真实也绕过审计。
+            # 只清标记：不改路由、不加回环、不动预算（§一.6）。
+            out["degraded_reason_codes"] = []
+            out["reason_codes"] = [
+                str(code)
+                for code in (state.get("reason_codes") or [])
+                if str(code) not in _STALE_FALLBACK_CODES
+            ]
+            if state.get("delivery_status") == "degraded":
+                out["delivery_status"] = None
             if gate_errors:
                 out["errors"] = gate_errors
             return out
         except StageBudgetExceeded:
+            run_log.log_reasoning_context(
+                state, ledger_count=len(state.get("evidence", [])), selected_count=0,
+                evidence_ids=getattr(self._engine, "last_evidence_ids", []),
+                prompt_chars=getattr(self._engine, "last_prompt_chars", None),
+                context_build_ms=getattr(self._engine, "last_context_build_ms", None),
+                llm_request_ms=getattr(self._engine, "last_llm_duration_ms", None),
+                parse_ms=getattr(self._engine, "last_parse_duration_ms", None), phase="blocked",
+            )
             return {
                 "report": None,
                 "stage": "reasoning", "exception_type": "StageBudgetExceeded",
@@ -225,6 +370,38 @@ class ReasoningNode:
                 "errors": ["reasoning budget unavailable"],
             }
         except TimeoutError:
+            run_log.log_llm_call(
+                state, node="reasoning", model=self.settings.openai_model,
+                usage=getattr(self._engine, "last_llm_usage", None),
+                duration_ms=getattr(self._engine, "last_llm_duration_ms", None), phase="timeout",
+                request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
+                completion_chars=getattr(self._engine, "last_completion_chars", None),
+                finish_reason=getattr(self._engine, "last_finish_reason", None),
+            )
+            run_log.log_reasoning_context(
+                state, ledger_count=len(state.get("evidence", [])), selected_count=0,
+                evidence_ids=getattr(self._engine, "last_evidence_ids", []),
+                prompt_chars=getattr(self._engine, "last_prompt_chars", None),
+                context_build_ms=getattr(self._engine, "last_context_build_ms", None),
+                llm_request_ms=getattr(self._engine, "last_llm_duration_ms", None),
+                parse_ms=getattr(self._engine, "last_parse_duration_ms", None), phase="timeout",
+                completion_chars=getattr(self._engine, "last_completion_chars", None),
+                finish_reason=getattr(self._engine, "last_finish_reason", None),
+                parse_status=getattr(self._engine, "last_parse_status", None),
+                request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
+                usage=getattr(self._engine, "last_llm_usage", None),
+                target_filter=getattr(self._engine, "last_target_filter", None),
+            )
+            fallback_update = _evidence_fallback_update(
+                self._engine, state,
+                requested_date=requested_date if "requested_date" in locals() else state.get("requested_date"),
+                target_instrument=target_instrument if "target_instrument" in locals() else None,
+                phase="timeout",
+            )
+            if fallback_update is not None:
+                return {**fallback_update, "delivery_status": "degraded", "persisted": False,
+                        "degraded_reason_codes": ["evidence_only_fallback", "reasoning_timeout"],
+                        "reason_codes": ["evidence_only_fallback", "reasoning_timeout"]}
             return {
                 "report": None,
                 "stage": "reasoning", "exception_type": "TimeoutError",
@@ -233,6 +410,38 @@ class ReasoningNode:
             }
         except LLMOutputError as exc:
             logger.warning("Reasoning LLM output error: %s", type(exc).__name__)
+            run_log.log_llm_call(
+                state, node="reasoning", model=self.settings.openai_model,
+                usage=getattr(self._engine, "last_llm_usage", None),
+                duration_ms=getattr(self._engine, "last_llm_duration_ms", None), phase="output_error",
+                request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
+                completion_chars=getattr(self._engine, "last_completion_chars", None),
+                finish_reason=getattr(self._engine, "last_finish_reason", None),
+            )
+            run_log.log_reasoning_context(
+                state, ledger_count=len(state.get("evidence", [])), selected_count=len(evidence_items),
+                evidence_ids=getattr(self._engine, "last_evidence_ids", []),
+                prompt_chars=getattr(self._engine, "last_prompt_chars", None),
+                context_build_ms=getattr(self._engine, "last_context_build_ms", None),
+                llm_request_ms=getattr(self._engine, "last_llm_duration_ms", None),
+                parse_ms=getattr(self._engine, "last_parse_duration_ms", None),
+                completion_chars=getattr(self._engine, "last_completion_chars", None),
+                finish_reason=getattr(self._engine, "last_finish_reason", None),
+                parse_status=getattr(self._engine, "last_parse_status", None), phase="output_error",
+                request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
+                usage=getattr(self._engine, "last_llm_usage", None),
+                target_filter=getattr(self._engine, "last_target_filter", None),
+            )
+            fallback_update = _evidence_fallback_update(
+                self._engine, state,
+                requested_date=requested_date if "requested_date" in locals() else state.get("requested_date"),
+                target_instrument=target_instrument if "target_instrument" in locals() else None,
+                phase="output_error",
+            )
+            if fallback_update is not None:
+                return {**fallback_update, "delivery_status": "degraded", "persisted": False,
+                        "degraded_reason_codes": ["evidence_only_fallback", "llm_output_error"],
+                        "reason_codes": ["evidence_only_fallback", "llm_output_error"]}
             return {
                 "report": None,
                 "errors": [f"Reasoning engine failed: {exc}"],

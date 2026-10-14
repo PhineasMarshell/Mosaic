@@ -1,0 +1,46 @@
+........................................................................ [  6%]
+........................................................................ [ 12%]
+........................................................................ [ 18%]
+........................................................................ [ 24%]
+........................................................................ [ 30%]
+........................................................................ [ 36%]
+........................................................................ [ 43%]
+........................................................................ [ 49%]
+........................................................................ [ 55%]
+........................................................................ [ 61%]
+........................................................................ [ 67%]
+........................................................................ [ 73%]
+........................................................................ [ 80%]
+........................................................................ [ 86%]
+...............................F........................................ [ 92%]
+........................................................................ [ 98%]
+..................                                                       [100%]
+================================== FAILURES ===================================
+_________ test_sync_and_sse_success_remain_readable_by_legacy_client __________
+tests\test_stage8_release.py:326: in test_sync_and_sse_success_remain_readable_by_legacy_client
+    assert final["run_id"] == "private-run-id"
+E   AssertionError: assert 'a442e62bf062' == 'private-run-id'
+E     
+E     - private-run-id
+E     + a442e62bf062
+---------------------------- Captured stdout call -----------------------------
+[15:32:18] INFO main: Received question=<redacted len=1> (len=1) domain=None conv_id=<redacted len=0>
+[15:32:18] INFO run_log: {"ts": 1791732738.213, "event": "delivery", "run_id": "private-run-id", "delivery_status": "verified", "persisted": true, "sink": "sync", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=0>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "elapsed_ms": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null, "exception_type": null, "stage": null, "reason_codes": []}
+[15:32:18] INFO main: Streaming question=<redacted len=1> domain=None conv_id=<redacted len=0>
+[15:32:18] INFO run_log: {"ts": 1791732738.217, "event": "run_start", "run_id": "a442e62bf062", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+[15:32:18] INFO run_log: {"ts": 1791732738.217, "event": "delivery", "run_id": "a442e62bf062", "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=4>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "elapsed_ms": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null, "exception_type": null, "stage": null, "reason_codes": []}
+------------------------------ Captured log call ------------------------------
+INFO     app.main:main.py:214 Received question=<redacted len=1> (len=1) domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:225 {"ts": 1791732738.213, "event": "delivery", "run_id": "private-run-id", "delivery_status": "verified", "persisted": true, "sink": "sync", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=0>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "elapsed_ms": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null, "exception_type": null, "stage": null, "reason_codes": []}
+INFO     app.main:main.py:817 Streaming question=<redacted len=1> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:225 {"ts": 1791732738.217, "event": "run_start", "run_id": "a442e62bf062", "question": "<redacted len=1>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:225 {"ts": 1791732738.217, "event": "delivery", "run_id": "a442e62bf062", "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=4>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "elapsed_ms": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null, "exception_type": null, "stage": null, "reason_codes": []}
+============================== warnings summary ===============================
+.venv\Lib\site-packages\starlette\testclient.py:53
+  D:\Mosaic\.venv\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_stage8_release.py::test_sync_and_sse_success_remain_readable_by_legacy_client
+1 failed, 1169 passed, 1 warning in 29.49s

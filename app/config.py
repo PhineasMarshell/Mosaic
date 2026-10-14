@@ -33,6 +33,13 @@ class Settings(BaseSettings):
 
     # Market Gateway 接入模式：mcp / http
     market_gateway_mode: str = "mcp"
+    market_primary_source: str = "ths_skill"
+    market_fallback_source: str = "mcp"
+    market_source_fallback_enabled: bool = True
+    #: Explicit runtime profile switch.  ``Settings()`` is intentionally a
+    #: neutral test/offline double; the application entrypoint uses
+    #: ``get_settings()`` with this flag enabled after loading the real env.
+    market_source_routing_enabled: bool = False
 
     mcp_command: str = "iiix"
     #: iiix CLI >= 0.8.0 的语法：`plugin serve <project-code>`。
@@ -75,6 +82,10 @@ class Settings(BaseSettings):
     stream_heartbeat_seconds: int = 15
 
     llm_timeout_seconds: int = 90
+    #: Bound structured completions so a provider cannot spend the whole
+    #: reasoning/critic stage generating unbounded prose.  This preserves the
+    #: stage timeout as a diagnostic rather than hiding it with a larger budget.
+    llm_max_completion_tokens: int = Field(default=2048, ge=256, le=16_384)
     max_conversation_turns: int = 10
 
     # P4：阶段级预算保留线。每次 LLM 调用都从同一个 research deadline
@@ -162,6 +173,25 @@ class Settings(BaseSettings):
     #: 留空 = 美股基本面工具（us_fundamentals/us_filings_recent）直接返回 error。
     sec_edgar_contact: str = ""
 
+    # 同花顺问财官方 Skill API（独立于 Market Gateway）。
+    iwencai_base_url: str = "https://openapi.iwencai.com"
+    iwencai_api_key: str = Field(default="", repr=False)
+    iwencai_announcement_ttl_seconds: int = Field(default=900, ge=0, le=86400)
+    iwencai_finance_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    iwencai_event_ttl_seconds: int = Field(default=900, ge=0, le=86400)
+    iwencai_basicinfo_ttl_seconds: int = Field(default=86400, ge=0, le=604800)
+    iwencai_market_ttl_seconds: int = Field(default=60, ge=0, le=3600)
+    iwencai_index_ttl_seconds: int = Field(default=60, ge=0, le=3600)
+    iwencai_astock_selector_ttl_seconds: int = Field(default=60, ge=0, le=3600)
+    iwencai_sector_selector_ttl_seconds: int = Field(default=60, ge=0, le=3600)
+    iwencai_business_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    iwencai_insresearch_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    iwencai_macro_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    iwencai_industry_ttl_seconds: int = Field(default=60, ge=0, le=86400)
+    iwencai_management_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    iwencai_report_ttl_seconds: int = Field(default=3600, ge=0, le=86400)
+    iwencai_news_ttl_seconds: int = Field(default=300, ge=0, le=86400)
+
     # ── 阶段 6：两条回环路径的**实际**上限（唯一读取入口） ──
     #: 路由与节点都必须读这两个属性，不要直接读 `max_rewrites` /
     #: `max_research_rounds`，否则兼容字段 `critic_max_revisions` 会被绕过。
@@ -178,4 +208,6 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # Keep production routing explicit while allowing Settings() doubles to
+    # exercise the legacy Gateway path without network credentials.
+    return Settings(market_source_routing_enabled=True)

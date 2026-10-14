@@ -634,11 +634,13 @@ class TestTtl:
 
 
 class TestRegistry:
-    def test_four_news_tools_declared(self):
+    def test_news_tools_declared(self):
         from app.gateway.tool_registry import ALL_TOOLS, by_category
 
         news_tools = by_category.get("news", [])
-        assert len(news_tools) == 4
+        assert {t.key for t in news_tools} == {
+            "news_search", "symbol_news", "telegraph", "news_digest", "announcement_search", "iwencai_events", "iwencai_news_search",
+        }
         by_key = {t.key: t for t in ALL_TOOLS}
         assert by_key["symbol_news"].tool_name == "internal_symbol_news"
         assert by_key["symbol_news"].domain == "a_share"

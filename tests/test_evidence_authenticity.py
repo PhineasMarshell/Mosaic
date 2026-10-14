@@ -38,11 +38,90 @@ def test_news_mention_does_not_support_price_change():
     assert "news_mention_not_price" in row["reason_codes"]
 
 
+def test_cross_market_citation_cannot_hide_behind_valid_a_share_event():
+    common = {
+        "source_tool": "internal_iwencai_announcement_search", "domain": "media",
+        "metric": "announcement_1", "value": {"title": "贵州茅台公告"},
+        "instrument_name": "贵州茅台", "as_of_date": "2026-10-09",
+        "source": "同花顺问财", "coverage": "instrument",
+    }
+    evidence = [
+        Evidence(id="ashare", instrument="600519", **common),
+        Evidence(id="cross-market", instrument="HK600519", **common),
+    ]
+    report = {"claims": [{
+        "claim": "贵州茅台在2026-10-09发布公告",
+        "evidence_ids": ["ashare", "cross-market"],
+    }]}
+    row = match_claims_to_evidence(report, evidence, expected_domain="a_share")[0]
+    assert row["supported"] is False
+    assert "domain_mismatch" in row["reason_codes"]
+
+
+def test_reference_category_does_not_reject_a_share_index_and_industry():
+    for instrument, coverage, claim in (
+        ("000001", "index", "上证指数在2026-10-09点位为3000"),
+        (None, "industry", "半导体行业在2026-10-09有统计数据"),
+    ):
+        evidence = Evidence(
+            id="reference-1", source_tool="internal_iwencai_index",
+            domain="reference", metric="index_value", value=3000,
+            instrument=instrument, instrument_name="上证指数" if instrument else None,
+            as_of_date="2026-10-09", source="同花顺问财", coverage=coverage,
+        )
+        row = match_claims_to_evidence(
+            {"claims": [{"claim": claim, "evidence_ids": [evidence.id]}]},
+            [evidence], expected_domain="a_share",
+        )[0]
+        assert "domain_mismatch" not in row["reason_codes"]
+
+
+def test_cross_request_and_attributed_macro_context_are_not_market_mismatches():
+    evidence = Evidence(
+        id="macro-1", source_tool="macro", domain="macro", metric="cpi",
+        value=2, as_of_date="2026-10-09", source="统计机构", coverage="market",
+    )
+    report = {"claims": [{"claim": "2026-10-09美国CPI为2", "evidence_ids": [evidence.id]}]}
+    for domain in ("a_share", "cross"):
+        row = match_claims_to_evidence(report, [evidence], expected_domain=domain)[0]
+        assert "domain_mismatch" not in row["reason_codes"]
+
+
 def test_partial_is_limited_and_market_level_does_not_prove_single_stock():
     evidence = [Evidence(id="sent-1", source_tool="sentiment", tool_key="sentiment", metric="up_count", value=100, timestamp="2026-10-09", source="feed", partial=True, completeness="partial", coverage="market")]
     rows = match_claims_to_evidence({"claims": [{"claim": "600519今日上涨", "evidence_ids": ["sent-1"]}]}, evidence)
     assert "partial_only" in rows[0]["reason_codes"]
     assert "market_level_for_single_instrument" in rows[0]["reason_codes"]
+
+
+def test_gate_keeps_datum_and_result_partial_separate():
+    result = ToolResult(
+        tool="quote", tool_key="quote", operation_id="quote",
+        arguments={"symbol": "600519"}, status="partial", partial=True,
+        normalized=[
+            NormalizedDatum(
+                tool="quote", metric="change_pct", value=2.0,
+                instrument="600519", as_of_date="2026-10-09",
+                source="feed", completeness="complete", instrument_scope="instrument",
+            ),
+            NormalizedDatum(
+                tool="quote", metric="price", value=1800,
+                instrument="600519", as_of_date="2026-10-09",
+                source="feed", partial=True, instrument_scope="instrument",
+            ),
+        ],
+    )
+    gate = run_evidence_gate([result], requested_date="2026-10-09")
+    complete, incomplete = gate.evidence_quality
+    assert complete["valid"] is True
+    assert complete["partial"] is False
+    assert complete["result_partial"] is True
+    assert complete["completeness"] == "complete"
+    assert incomplete["partial"] is True
+    assert gate.partial_only == [{
+        "tool_key": "quote", "evidence_id": "quote-1",
+        "scope": "instrument", "as_of_date": "2026-10-09",
+    }]
 
 
 def test_market_level_quote_cannot_prove_named_stock_move():

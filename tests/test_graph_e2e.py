@@ -84,7 +84,8 @@ def mock_openai(monkeypatch):
         report = MarketIntelligence(
             market_state="neutral",
             state_label="测试状态",
-            what_happened="测试：mock 报告",
+            what_happened="暂无可核验数据",
+            claims=[{"claim": "暂无可核验数据", "claim_type": "structure", "evidence_ids": []}],
             confidence="medium",
         )
         critique = state.get("critique")

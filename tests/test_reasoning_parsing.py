@@ -12,6 +12,7 @@ Note on new-format tests: 审计第 7 项修复后，新格式条目必须有匹
 
 import pytest
 
+from app.errors import LLMOutputError
 from app.models.evidence import Evidence
 from app.models.response import EvidenceItem, MarketIntelligence
 
@@ -528,6 +529,67 @@ def _stub_reasoning_engine(content):
 
 
 @pytest.mark.asyncio
+async def test_truncated_json_completion_fails_closed_with_diagnostics():
+    """A length-truncated completion must never become a partial report."""
+    from types import SimpleNamespace
+
+    from app.config import Settings
+    from app.research.reasoning import ReasoningEngine
+
+    engine = ReasoningEngine(Settings())
+
+    async def create(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"title":"截断'),
+                    finish_reason="length",
+                )
+            ]
+        )
+
+    engine.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with pytest.raises(LLMOutputError):
+        await engine.reason("今天A股发生了什么？", [], [])
+    assert engine.last_finish_reason == "length"
+    assert engine.last_parse_status == "invalid_json"
+    assert engine.last_completion_chars > 0
+
+
+def test_compact_target_context_excludes_other_dates_and_instruments():
+    from app.models.evidence import Evidence
+    from app.research.reasoning import _compact_evidence_for_target
+
+    rows = [
+        Evidence(id="same", source_tool="quote", metric="price", value=1,
+                 instrument="SH600519", as_of_date="2026-10-09", source="feed", retrieved_at="2026-10-10T00:00:00Z"),
+        Evidence(id="old", source_tool="quote", metric="price", value=2,
+                 instrument="SH600519", as_of_date="2026-10-08", source="feed", retrieved_at="2026-10-10T00:00:00Z"),
+        Evidence(id="other", source_tool="quote", metric="price", value=3,
+                 instrument="SZ000001", as_of_date="2026-10-09", source="feed", retrieved_at="2026-10-10T00:00:00Z"),
+    ]
+    selected, telemetry = _compact_evidence_for_target(
+        rows, requested_date="2026-10-09", target_instrument="600519"
+    )
+    assert [item.id for item in selected] == ["same"]
+    assert telemetry["excluded_count"] == 2
+    assert telemetry["excluded_reasons"] == {"date_mismatch": 1, "instrument_mismatch": 1}
+
+
+def test_compact_aliases_are_scoped_to_visible_evidence():
+    from app.research.reasoning import build_evidence_aliases
+
+    visible = Evidence(
+        id="visible", source_tool="quote", metric="price", value=2,
+        instrument="SH600519", as_of_date="2026-10-09", source="feed",
+        retrieved_at="2026-10-10T00:00:00Z",
+    )
+    aliases = build_evidence_aliases([visible])
+    assert aliases == {"E001": "visible"}
+    assert "hidden" not in aliases.values()
+
+
+@pytest.mark.asyncio
 async def test_missing_required_fields_degrade_with_caveats():
     """模型 payload 缺 market_state / what_happened → 仍产出 report，
     字段置空且 data_caveats 说明降级（旧实现：ValidationError → report=None）。"""
@@ -593,7 +655,8 @@ async def test_build_response_fills_anomalies_from_code(monkeypatch):
     )
     report = MarketIntelligence(
         market_state="s",
-        what_happened="w",
+        what_happened="暂无可核验数据",
+        claims=[{"claim": "暂无可核验数据", "claim_type": "structure", "evidence_ids": []}],
         anomalies=[{"id": "model-made", "severity": 1}],
     )
     # 阶段 5：真实图终态一定带 critique；没有审计结论时正文不会被当作可信结论返回，

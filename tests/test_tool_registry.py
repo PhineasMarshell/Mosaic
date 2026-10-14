@@ -16,15 +16,18 @@ def test_registry_text_contains_core_tools():
     assert "sentiment" in text
 
 
-def test_news_category_contains_four_news_tools():
-    """新闻面多源接入（A3）后 news 类工具为 4 条：news_search + 三个新聚合工具。"""
+def test_news_category_contains_news_and_announcement_tools():
+    """新闻聚合及同花顺公告工具都可由 news analyst 发现。"""
     news_tools = by_category.get("news", [])
-    assert {t.key for t in news_tools} == {"news_search", "symbol_news", "telegraph", "news_digest"}
+    assert {t.key for t in news_tools} == {"news_search", "symbol_news", "telegraph", "news_digest", "announcement_search", "iwencai_events", "iwencai_news_search"}
     assert {t.tool_name for t in news_tools} == {
         "news_search",
         "internal_symbol_news",
         "internal_market_telegraph",
         "internal_news_digest",
+        "internal_iwencai_announcement_search",
+        "internal_iwencai_event_query",
+        "internal_iwencai_news_search",
     }
 
 

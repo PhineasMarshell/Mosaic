@@ -66,9 +66,8 @@ _REPORT_LIST_FIELDS = (
 
 def _field(obj: Any, key: str, default: Any = None) -> Any:
     """从 dict 或对象读取字段 —— LangGraph 可能传入任一形式。"""
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+    value = obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
+    return default if value is None else value
 
 
 def _dump(obj: Any) -> Any:

@@ -184,6 +184,26 @@ def _resolve_ttl(tool: str, settings=None, arguments: dict | None = None) -> flo
     否则 d/m 两档会被这里的 week 默认值覆盖掉（分档形同失效）。
     """
     if settings is not None:
+        iwencai_ttl_fields = {
+            "internal_iwencai_finance_query": "iwencai_finance_ttl_seconds",
+            "internal_iwencai_event_query": "iwencai_event_ttl_seconds",
+            "internal_iwencai_basicinfo_query": "iwencai_basicinfo_ttl_seconds",
+            "internal_iwencai_market_query": "iwencai_market_ttl_seconds",
+            "internal_iwencai_index_query": "iwencai_index_ttl_seconds",
+            "internal_iwencai_astock_selector": "iwencai_astock_selector_ttl_seconds",
+            "internal_iwencai_sector_selector": "iwencai_sector_selector_ttl_seconds",
+            "internal_iwencai_business_query": "iwencai_business_ttl_seconds",
+            "internal_iwencai_insresearch_query": "iwencai_insresearch_ttl_seconds",
+            "internal_iwencai_macro_query": "iwencai_macro_ttl_seconds",
+            "internal_iwencai_industry_query": "iwencai_industry_ttl_seconds",
+            "internal_iwencai_management_query": "iwencai_management_ttl_seconds",
+            "internal_iwencai_report_search": "iwencai_report_ttl_seconds",
+            "internal_iwencai_news_search": "iwencai_news_ttl_seconds",
+        }
+        if tool in iwencai_ttl_fields:
+            return float(getattr(settings, iwencai_ttl_fields[tool]))
+        if tool == "internal_iwencai_announcement_search":
+            return float(settings.iwencai_announcement_ttl_seconds)
         # news_search 的 TTL 分档见 tool_runtime（d/w/m 各档）
         if tool == "news_search":
             tier = str((arguments or {}).get("time_limit", "") or "").strip().lower()

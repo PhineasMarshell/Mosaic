@@ -6,7 +6,7 @@
 - 新增市场域只需添加新 ToolMeta 条目并更新 DEFAULT_DOMAINS
 - 兼容旧版 resolve_tool(key) → ToolMeta 查询
 
-所有 48 个 Market Gateway Tool 均在此声明，按域分组。
+所有 63 个 Market Gateway Tool / 内部工具均在此声明，按域分组。
 后续 Tool 名变化时，优先修改这里，而不是 Planner。
 """
 
@@ -592,6 +592,31 @@ _US_STOCK_PLACEHOLDERS = [
 
 _NEWS_TOOLS = [
     ToolMeta(
+        "iwencai_news_search", "internal_iwencai_news_search",
+        "同花顺问财官方财经新闻搜索：媒体、政策、行业与公司资讯；query 必填（保留主题和时间），"
+        "size可选整数1..20默认10；保留原媒体及链接，按相关性检索，非全量；不作行情证据；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="news", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_events", "internal_iwencai_event_query",
+        "同花顺问财官方事件数据：业绩预告、增发配股、股权质押、限售解禁、机构调研、监管函等；"
+        "对应事件查询必须使用。query 必填（保留标的、时间与条件），page/limit 可选正整数，limit<=20；"
+        "is_cache/expand_index 可选布尔；分页非全量；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="news", requires_symbol=False,
+    ),
+    ToolMeta(
+        "announcement_search",
+        "internal_iwencai_announcement_search",
+        "同花顺问财官方公告检索：A股、港股、基金、ETF；财报/分红/回购增持/重组等。"
+        "query 必填（自然语言，含标的、公告类型、时间范围），size 可选整数1..20默认10；"
+        "按相关性检索，非完整公告清单；不用于Crypto/商品行情；需 IWENCAI_API_KEY",
+        domain="cross",
+        priority="high",
+        http_method="INTERNAL",
+        category="news",
+        requires_symbol=False,
+    ),
+    ToolMeta(
         "news_search",
         "news_search",
         "DDGS 新闻舆情搜索（必填: query=搜索词; 可选: max_results, time_limit=d/w/m，不限市场域；"
@@ -631,6 +656,92 @@ _NEWS_TOOLS = [
         http_method="INTERNAL",
         http_path="",
         category="news",
+    ),
+]
+
+_IWENCAI_REFERENCE_TOOLS = [
+    ToolMeta(
+        "iwencai_sector_selector", "internal_iwencai_sector_selector",
+        "同花顺问财官方板块筛选：行业估值、资金流向、涨跌幅和板块类型多条件；对应板块筛选必须使用。"
+        "query必填且保留原日期及全部条件，page/limit可选，limit<=20，is_cache/expand_index可选布尔；"
+        "只保留上游明确板块身份、分类及字段日期，候选页不证明全部条件或全市场排名；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="technical", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_business", "internal_iwencai_business_query",
+        "同花顺问财官方公司经营：主营业务构成、主要客户/供应商、参控股公司、股权投资、重大合同；对应查询必须使用。"
+        "query必填并保留公司及报告期，page/limit可选，limit<=20，is_cache/expand_index可选布尔；"
+        "公司与客户/供应商/子公司身份分开，报告期和合同公告日期不能互换；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_insresearch", "internal_iwencai_insresearch_query",
+        "同花顺问财官方机构研究：研报评级、盈利/业绩预测、ESG/信用/主体/基金评级、券商金股；对应查询必须使用。"
+        "query必填，page/limit可选，limit<=20，is_cache/expand_index可选布尔；"
+        "保留机构、评级/发布日期、预测期和原始观点，预测不等于已实现业绩，目标价不是实际股价；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_index", "internal_iwencai_index_query",
+        "同花顺问财官方指数数据：上证指数、沪深300、创业板指、恒生、纳斯达克等点位、涨跌幅、成交量；"
+        "对应指数行情查询必须使用。query必填，page/limit可选，limit<=20，is_cache/expand_index可选布尔；"
+        "保留指数代码/名称、字段日期与原单位，不把指数当个股，缺时间不能称实时；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="technical", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_astock_selector", "internal_iwencai_astock_selector",
+        "同花顺问财官方A股选股：行情、技术形态、财务、行业概念多条件筛选；对应选股问题必须使用。"
+        "query必填且保留原日期、市场及全部筛选条件，page/limit可选，limit<=20，is_cache/expand_index可选布尔；"
+        "返回上游候选和字段证据，过滤条件须逐项核查，分页非全市场，不自动放宽条件；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="technical", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_industry", "internal_iwencai_industry_query",
+        "同花顺问财官方行业估值、财务、盈利、行情和板块排名；对应行业数据查询必须使用。"
+        "query必填，page/limit可选，limit<=20，is_cache/expand_index可选布尔；保留行业/指数身份、"
+        "分类体系、字段日期与单位；指数不等于个股，分类未知不推断申万/中信口径；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_management", "internal_iwencai_management_query",
+        "同花顺问财官方股本结构、股权结构、股东户数、十大股东/流通股东、持有人、实控人和股权质押；"
+        "对应股东股本查询必须使用。query必填，page/limit可选，limit<=20，is_cache/expand_index可选布尔；"
+        "保留每行股东名称、排名与日期，公告日不是持仓截止日，code_count不代表股东总数；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_market", "internal_iwencai_market_query",
+        "同花顺问财官方股票/ETF/指数行情、涨跌幅、成交量、主力/大小单资金流向、技术指标；对应证券行情查询必须使用。"
+        "query必填，page/limit可选，limit<=20，is_cache/expand_index可选布尔；保留实际日期及复权口径，"
+        "不把未知时间的最新价当作已确认实时数据；非Crypto/商品行情源；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="technical", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_macro", "internal_iwencai_macro_query",
+        "同花顺问财官方宏观数据：GDP/CPI/PPI/PMI/M2、利率汇率、社融、工业、消费投资与进出口；对应宏观数据查询必须使用。"
+        "query必填，page/limit可选，limit<=20，is_cache/expand_index可选布尔；保留国家地区、指标、统计期、单位，"
+        "不以检索时间替代统计期；不要求证券代码；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_report_search", "internal_iwencai_report_search",
+        "同花顺问财官方研报检索：机构、评级、目标价及分析逻辑；query必填，size可选整数1..20默认10；"
+        "返回正文片段和链接，相同文档不是多份研报，机构预测/评级不是已实现业绩或实际行情；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_finance", "internal_iwencai_finance_query",
+        "同花顺问财官方财务数据：营收、净利润、ROE/ROA、毛利率、净利率、负债率、现金流、估值等；"
+        "对应财务指标查询必须使用。query 必填（保留标的与报告期），page/limit 可选正整数，limit<=20；"
+        "is_cache/expand_index 可选布尔；不替代实时行情，分页非全量；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
+    ),
+    ToolMeta(
+        "iwencai_basicinfo", "internal_iwencai_basicinfo_query",
+        "同花顺问财官方基本资料：股票/指数/基金/期货/期权/转债/债券等基础信息、发行主体、费率、上市日期/地点；"
+        "对应静态资料查询必须使用。query 必填，page/limit 可选正整数，limit<=20；"
+        "is_cache/expand_index 可选布尔；不替代报价或交易能力；需 IWENCAI_API_KEY",
+        domain="cross", priority="high", http_method="INTERNAL", category="fundamental", requires_symbol=False,
     ),
 ]
 
@@ -700,6 +811,7 @@ ALL_TOOLS: list[ToolMeta] = (
     + _CRYPTO_COINGLASS
     + _US_STOCK_PLACEHOLDERS
     + _NEWS_TOOLS
+    + _IWENCAI_REFERENCE_TOOLS
     + _SENTIMENT_TOOLS
     + _HEALTH_TOOLS
 )
@@ -725,6 +837,21 @@ _SYMBOL_FREE_TOOLS: dict[str, bool] = {
     # —— 无 symbol 可执行，但口径不是"整个市场" ——
     "news_search": False,
     "internal_news_digest": False,
+    "internal_iwencai_announcement_search": False,
+    "internal_iwencai_finance_query": False,
+    "internal_iwencai_event_query": False,
+    "internal_iwencai_basicinfo_query": False,
+    "internal_iwencai_market_query": False,
+    "internal_iwencai_index_query": False,
+    "internal_iwencai_astock_selector": False,
+    "internal_iwencai_sector_selector": False,
+    "internal_iwencai_business_query": False,
+    "internal_iwencai_insresearch_query": False,
+    "internal_iwencai_macro_query": False,
+    "internal_iwencai_industry_query": False,
+    "internal_iwencai_management_query": False,
+    "internal_iwencai_report_search": False,
+    "internal_iwencai_news_search": False,
     "search_stocks": False,
     "get_stock_longhu": False,
     "internal_hk_northbound": False,
@@ -863,4 +990,8 @@ def get_enabled_domains() -> list[MarketDomain]:
     for t in ALL_TOOLS:
         if t.domain not in ("unknown", "cross"):
             seen.add(t.domain)
+    # Macro data is shared with every market, so its tool is cross-domain,
+    # while macro itself is now a supported research target.
+    if "iwencai_macro" in BY_KEY:
+        seen.add("macro")
     return sorted(seen)

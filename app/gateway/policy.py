@@ -54,12 +54,24 @@ async def observed_call(settings, tool: str, arguments: dict, deadline: float | 
             last, diagnostics = await asyncio.wait_for(request(timeout), timeout=timeout)
         except TimeoutError:
             exception_type = "TimeoutError"
-            last = normalize_tool_result(tool, arguments, None, error="Gateway request timed out")
+            codes = ["gateway_timeout"]
+            if getattr(request, "mcp_transport", False):
+                codes.append("mcp_upstream_timeout")
+            if deadline - time.monotonic() <= 0:
+                codes.append("deadline_exhausted")
+            last = normalize_tool_result(tool, arguments, None, error="Gateway request timed out",
+                                         reason_codes=codes)
         except Exception as exc:
             exception_type = type(exc).__name__
             # Exception strings can echo credentials and query parameters.
+            codes = list(getattr(exc, "reason_codes", []) or []) or ["gateway_transport_error"]
+            if getattr(exc, "stage", None):
+                diagnostics["stage"] = exc.stage
+            if getattr(exc, "endpoint", None):
+                diagnostics["endpoint"] = exc.endpoint
+            diagnostics["attempt"] = getattr(exc, "attempt", number)
             last = normalize_tool_result(tool, arguments, None, error=f"Gateway transport error: {exception_type}",
-                                         reason_codes=["gateway_transport_error"])
+                                         reason_codes=codes)
         codes = set(last.reason_codes)
         outcome = ("timeout" if "gateway_timeout" in codes else "empty" if codes & {"empty_gateway_response", "empty_normalized"}
                    else last.status)

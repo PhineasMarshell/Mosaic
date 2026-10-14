@@ -44,6 +44,25 @@ class GateNode:
             gate: EvidenceGateResult = run_evidence_gate(
                 tool_results, requested_date=requested_date, event_date=state.get("requested_date"),
             )
+            # On a closed day, the nearest previous trading day is deliverable
+            # only when every market datum explicitly declares that as_of_date.
+            # A provider response with no date remains a quality gap; it must
+            # not silently become 2026-10-09 because it was retrieved later.
+            if state.get("market_closed") is True and state.get("planned_as_of_date"):
+                for quality in gate.evidence_quality:
+                    if quality.get("date_scope") == "market" and quality.get("as_of_date") in {None, "unknown"}:
+                        quality["reason_codes"] = list(dict.fromkeys([
+                            *(quality.get("reason_codes") or []), "missing_as_of_date", "unknown_date",
+                        ]))
+                        if quality.get("valid"):
+                            quality["valid"] = False
+                            gate.valid_evidence_count = max(0, gate.valid_evidence_count - 1)
+                            gate.invalid_evidence_count += 1
+                if any("missing_as_of_date" in (row.get("reason_codes") or []) for row in gate.evidence_quality):
+                    gate.reason_codes = list(dict.fromkeys([*gate.reason_codes, "missing_as_of_date", "unknown_date"]))
+                    gate.has_evidence = gate.valid_evidence_count > 0
+                    if not gate.has_evidence:
+                        gate.reason_codes.append("no_valid_datum")
             observed_dates = {
                 observed
                 for quality in gate.evidence_quality
@@ -94,6 +113,7 @@ class GateNode:
             return {
                 "gate": gate,
                 "as_of_date": as_of_date,
+                "reason_codes": gate.reason_codes,
             }
         except Exception as exc:
             # 门控失败降级：继续流程（report 会标注数据不足）

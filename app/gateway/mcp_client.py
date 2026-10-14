@@ -52,12 +52,42 @@ PROXY_ENV_KEYS = (
 )
 
 
+def _mcp_reason_codes(message: str, stage: str) -> list[str]:
+    text = str(message or "").casefold()
+    codes = [f"mcp_{stage}_error"]
+    if "tls" in text or "certificate" in text or "ssl" in text:
+        codes.append("mcp_tls_error")
+    if "timeout" in text or "timed out" in text or "deadline exceeded" in text:
+        codes.append("mcp_upstream_timeout")
+    if "5xx" in text or any(code in text for code in ("502", "503", "504")):
+        codes.append("mcp_http_5xx")
+    return list(dict.fromkeys(codes))
+
+
 class MCPConnectionError(RuntimeError):
-    """MCP 连接/初始化失败。"""
+    """MCP 连接/初始化失败，保留分阶段诊断字段。"""
+
+    def __init__(self, message: str, *, stage: str = "stdio_init", endpoint: str | None = None,
+                 attempt: int = 1, elapsed_ms: float | None = None, reason_codes: list[str] | None = None):
+        super().__init__(message)
+        self.stage = stage
+        self.endpoint = endpoint
+        self.attempt = attempt
+        self.elapsed_ms = elapsed_ms
+        self.reason_codes = reason_codes or _mcp_reason_codes(message, stage)
 
 
 class MCPToolCallError(RuntimeError):
-    """单次工具调用失败。"""
+    """单次工具调用失败，保留 call_tool 阶段诊断字段。"""
+
+    def __init__(self, message: str, *, stage: str = "call_tool", endpoint: str | None = None,
+                 attempt: int = 1, elapsed_ms: float | None = None, reason_codes: list[str] | None = None):
+        super().__init__(message)
+        self.stage = stage
+        self.endpoint = endpoint
+        self.attempt = attempt
+        self.elapsed_ms = elapsed_ms
+        self.reason_codes = reason_codes or _mcp_reason_codes(message, stage)
 
 
 class MarketGatewayClient:
@@ -251,10 +281,12 @@ class MarketGatewayClient:
                     )
             except TimeoutError:
                 raise MCPConnectionError(
-                    f"MCP server startup timed out after {self.settings.research_timeout_seconds}s (command: {launch})"
+                    f"MCP server startup timed out after {self.settings.research_timeout_seconds}s (command: {launch})",
+                    stage="stdio_init", reason_codes=["mcp_stdio_init_error", "mcp_upstream_timeout"],
                 ) from None
             except Exception as exc:
-                raise MCPConnectionError(f"MCP server startup failed: {exc} (command: {launch})") from exc
+                raise MCPConnectionError(f"MCP server startup failed: {type(exc).__name__} (command: {launch})",
+                                          stage="stdio_init") from exc
 
             self.session = await self.stack.enter_async_context(ClientSession(read_stream, write_stream))
 
@@ -267,9 +299,11 @@ class MarketGatewayClient:
                     timeout=self.settings.research_timeout_seconds,
                 )
             except TimeoutError:
-                raise MCPConnectionError(f"MCP initialize (handshake) timed out (command: {launch})") from None
+                raise MCPConnectionError(f"MCP initialize (handshake) timed out (command: {launch})",
+                                          stage="initialize", reason_codes=["mcp_initialize_error", "mcp_upstream_timeout"]) from None
             except Exception as exc:
-                raise MCPConnectionError(f"MCP initialize (handshake) failed: {exc} (command: {launch})") from exc
+                raise MCPConnectionError(f"MCP initialize (handshake) failed: {type(exc).__name__} (command: {launch})",
+                                          stage="initialize") from exc
 
             try:
                 listed = await asyncio.wait_for(
@@ -279,9 +313,11 @@ class MarketGatewayClient:
                 self.tools = list(listed.tools)
                 logger.info("MCP connected: %d tools available", len(self.tools))
             except TimeoutError:
-                raise MCPConnectionError(f"MCP list_tools timed out (command: {launch})") from None
+                raise MCPConnectionError(f"MCP list_tools timed out (command: {launch})",
+                                          stage="list_tools", reason_codes=["mcp_list_tools_error", "mcp_upstream_timeout"]) from None
             except Exception as exc:
-                raise MCPConnectionError(f"MCP list_tools failed: {exc} (command: {launch})") from exc
+                raise MCPConnectionError(f"MCP list_tools failed: {type(exc).__name__} (command: {launch})",
+                                          stage="list_tools") from exc
         except (MCPConnectionError, asyncio.CancelledError):
             # 任何连接阶段失败：先回收已进入的资源（含 stdio 子进程），再向上抛。
             await self.close()
@@ -329,16 +365,26 @@ class MarketGatewayClient:
 
         async def request(timeout):
             transport_arguments = self._encode_transport_arguments(tool_name, arguments)
-            result = await self.session.call_tool(tool_name, arguments=transport_arguments)
+            try:
+                result = await self.session.call_tool(tool_name, arguments=transport_arguments)
+            except Exception as exc:
+                raise MCPToolCallError(f"MCP call_tool failed: {type(exc).__name__}", stage="call_tool") from exc
             text = _mcp_result_to_text(result)
             diagnostics = response_diagnostics(text)
-            if getattr(result, "is_error", False) or getattr(result, "isError", False):
+            if diagnostics.get("http_status") and int(diagnostics["http_status"]) >= 500:
+                normalized = normalize_tool_result(
+                    tool_name, arguments, None,
+                    error="MCP upstream HTTP 5xx",
+                    reason_codes=["mcp_http_5xx", "gateway_upstream_error"],
+                )
+            elif getattr(result, "is_error", False) or getattr(result, "isError", False):
                 normalized = normalize_tool_result(tool_name, arguments, None,
                                                    error=text or "MCP tool error")
             else:
                 normalized = normalize_tool_result(tool_name, arguments, _mcp_result_to_json(result))
             return normalized, diagnostics
 
+        request.mcp_transport = True
         return await observed_call(self.settings, tool_name, arguments, deadline, request)
 
 

@@ -1,0 +1,1 @@
+{"rows": 326, "artifact": "D:\\Mosaic\\memory\\p5-real-acceptance.jsonl", "audited_runs": ["43071b228865", "a0da64b19fd6", "e31417f0a9df", "7aa3cbbb6d67"], "not_observed": ["abnormal_reasons_empty", "abnormal_reasons_success"], "production_ready": false}

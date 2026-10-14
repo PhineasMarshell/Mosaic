@@ -145,6 +145,8 @@ class MarketGatewayHttpClient:
                 from app.gateway.normalizer import _reason_codes_for_error
 
                 codes = _reason_codes_for_error(f"HTTP {response.status_code} {response.text}")
+                if response.status_code >= 500:
+                    codes.append("http_5xx")
                 if response.status_code >= 500 and "gateway_upstream_error" not in codes:
                     codes.append("gateway_upstream_error")
                 normalized = normalize_tool_result(tool_name, arguments, None,

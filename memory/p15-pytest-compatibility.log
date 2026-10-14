@@ -1,0 +1,38 @@
+........................................................................ [ 42%]
+........................................................................ [ 85%]
+.................F......                                                 [100%]
+================================== FAILURES ===================================
+_______________ test_stream_emits_per_node_progress_then_result _______________
+tests\test_stream_endpoint.py:136: in test_stream_emits_per_node_progress_then_result
+    assert final["report"]["what_happened"] == "��������С����"
+E   AssertionError: assert '����ę́(600519)...0-09���̼�Ϊ1488Ԫ' == '��������С����'
+E     
+E     - ��������С����
+E     + ����ę́(600519)��2026-10-09���̼�Ϊ1488Ԫ
+---------------------------- Captured stdout call -----------------------------
+{"ts": "2026-10-14T08:19:30.134693+00:00", "level": "INFO", "logger": "app.main", "msg": "Streaming question=<redacted len=10> domain=None conv_id=<redacted len=0>"}
+{"ts": "2026-10-14T08:19:30.134976+00:00", "level": "INFO", "logger": "app.graph.run_log", "msg": "{\"ts\": 1791965970.135, \"event\": \"run_start\", \"run_id\": \"00545f34adb7\", \"question\": \"<redacted len=10>\", \"explicit_domain\": null, \"conversation_id\": \"<redacted len=0>\"}"}
+{"ts": "2026-10-14T08:19:30.135282+00:00", "level": "INFO", "logger": "app.graph.run_log", "msg": "{\"ts\": 1791965970.135, \"event\": \"finalize\", \"run_id\": null, \"final_audit_status\": \"pass\", \"delivery_status\": \"verified\", \"reason\": \"<redacted len=17>\", \"unresolved_issues\": [], \"blocked_reason\": \"\", \"research_round_count\": 0, \"rewrite_count\": 0, \"remaining_budget\": null, \"elapsed_ms\": null, \"gap_key_decisions\": [], \"executable_gap_steps\": [], \"reason_codes\": []}"}
+{"ts": "2026-10-14T08:19:30.135343+00:00", "level": "INFO", "logger": "app.graph.run_log", "msg": "{\"ts\": 1791965970.135, \"event\": \"stage\", \"run_id\": null, \"stage\": \"finalize\", \"status\": \"verified\", \"elapsed_ms\": 0.2, \"remaining_budget\": null}"}
+{"ts": "2026-10-14T08:19:30.146479+00:00", "level": "INFO", "logger": "app.memory.storage", "msg": "Saved research question=<redacted len=10> �� 2b8fd7b9"}
+{"ts": "2026-10-14T08:19:30.146696+00:00", "level": "INFO", "logger": "app.memory.storage", "msg": "Saved daily state for 2026-10-14"}
+{"ts": "2026-10-14T08:19:30.149543+00:00", "level": "INFO", "logger": "app.graph.run_log", "msg": "{\"ts\": 1791965970.15, \"event\": \"persistence\", \"run_id\": null, \"attempt\": 1, \"max_attempts\": 3, \"outcome\": \"committed\", \"retryable\": false, \"idempotent\": false, \"error\": \"<redacted len=0>\", \"error_category\": null}"}
+{"ts": "2026-10-14T08:19:30.149748+00:00", "level": "INFO", "logger": "app.graph.run_log", "msg": "{\"ts\": 1791965970.15, \"event\": \"delivery\", \"run_id\": null, \"delivery_status\": \"verified\", \"persisted\": true, \"sink\": \"sse\", \"error_count\": 0, \"final_audit_status\": \"pass\", \"delivery_reason\": \"<redacted len=2>\", \"research_round_count\": 0, \"rewrite_count\": 0, \"remaining_budget\": null, \"elapsed_ms\": null, \"gap_key_decisions\": [], \"executable_gap_steps\": [], \"blocked_reason\": \"\", \"issues\": [], \"error_category\": null, \"exception_type\": null, \"stage\": \"finalize\", \"reason_codes\": [], \"source_switch\": false}"}
+------------------------------ Captured log call ------------------------------
+INFO     app.main:main.py:775 Streaming question=<redacted len=10> domain=None conv_id=<redacted len=0>
+INFO     app.graph.run_log:run_log.py:237 {"ts": 1791965970.135, "event": "run_start", "run_id": "00545f34adb7", "question": "<redacted len=10>", "explicit_domain": null, "conversation_id": "<redacted len=0>"}
+INFO     app.graph.run_log:run_log.py:237 {"ts": 1791965970.135, "event": "finalize", "run_id": null, "final_audit_status": "pass", "delivery_status": "verified", "reason": "<redacted len=17>", "unresolved_issues": [], "blocked_reason": "", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "elapsed_ms": null, "gap_key_decisions": [], "executable_gap_steps": [], "reason_codes": []}
+INFO     app.graph.run_log:run_log.py:237 {"ts": 1791965970.135, "event": "stage", "run_id": null, "stage": "finalize", "status": "verified", "elapsed_ms": 0.2, "remaining_budget": null}
+INFO     app.memory.storage:storage.py:448 Saved research question=<redacted len=10> �� 2b8fd7b9
+INFO     app.memory.storage:storage.py:337 Saved daily state for 2026-10-14
+INFO     app.graph.run_log:run_log.py:237 {"ts": 1791965970.15, "event": "persistence", "run_id": null, "attempt": 1, "max_attempts": 3, "outcome": "committed", "retryable": false, "idempotent": false, "error": "<redacted len=0>", "error_category": null}
+INFO     app.graph.run_log:run_log.py:237 {"ts": 1791965970.15, "event": "delivery", "run_id": null, "delivery_status": "verified", "persisted": true, "sink": "sse", "error_count": 0, "final_audit_status": "pass", "delivery_reason": "<redacted len=2>", "research_round_count": 0, "rewrite_count": 0, "remaining_budget": null, "elapsed_ms": null, "gap_key_decisions": [], "executable_gap_steps": [], "blocked_reason": "", "issues": [], "error_category": null, "exception_type": null, "stage": "finalize", "reason_codes": [], "source_switch": false}
+============================== warnings summary ===============================
+.venv\Lib\site-packages\starlette\testclient.py:53
+  D:\Mosaic\.venv\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_stream_endpoint.py::test_stream_emits_per_node_progress_then_result
+1 failed, 167 passed, 1 warning in 13.29s

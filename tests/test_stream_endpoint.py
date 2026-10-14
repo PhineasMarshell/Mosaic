@@ -12,9 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from verified_report_fixture import QUOTE_CLAIM, verified_quote_report
 
 import app.main as main
-from app.models.response import MarketIntelligence
 
 
 @pytest.fixture(autouse=True)
@@ -77,15 +77,7 @@ class FakeGraph:
 
 
 def _make_report():
-    return MarketIntelligence.model_validate(
-        {
-            "title": "测试情报",
-            "market_state": "震荡",
-            "state_label": "Neutral",
-            "what_happened": "测试用最小报告",
-            "confidence": "low",
-        }
-    )
+    return verified_quote_report(title="测试情报", market_state="震荡", state_label="Neutral", confidence="low")
 
 
 def _use_fake_graph(monkeypatch, graph):
@@ -140,7 +132,7 @@ def test_stream_emits_per_node_progress_then_result(monkeypatch):
     # result 事件含 report
     final = [d for n, d in events if n == "result"][-1]
     assert final.get("report") is not None
-    assert final["report"]["what_happened"] == "测试用最小报告"
+    assert final["report"]["what_happened"] == QUOTE_CLAIM
     assert final["question"] == "今天A股发生了什么？"
     assert final["critique"] == {"verdict": "pass", "reason": "ok"}
     assert final["errors"] == []

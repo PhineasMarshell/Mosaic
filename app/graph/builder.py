@@ -127,6 +127,8 @@ def critic_route_outcome(state, settings: Settings) -> tuple[str, str]:
             return "finalize_audit", "no_executable_gap_steps"
         return "supervisor", "research_allowed"
     if verdict == "pass":
+        # Keep the public route decision compatible with existing callers;
+        # the graph maps this terminal label to FinalizeAuditNode below.
         return "end", "audit_passed"
     logger.error("critic_route_decision 遇到未预期 verdict，安全终止 verdict_len=%d", len(verdict))
     return "finalize_audit", "unknown_verdict"
@@ -142,7 +144,8 @@ def critic_route_decision(state, settings: Settings) -> str:
     不足以跑完"半轮工具 + reasoning + critic"时不再启动回环（直接进安全终态）。
 
     Returns:
-        "end"（仅 verdict=pass 走这里）/ "reasoning"（revise 回退）/
+        "end"（verdict=pass；graph 将其映射到终态 provenance 审查）/
+        "reasoning"（revise 回退）/
         "supervisor"（research_more 回退）/ "finalize_audit"（非 pass 的安全终态）
     """
     if hasattr(state, "model_dump"):
@@ -286,7 +289,9 @@ def build_graph(settings: Settings):
         "critic",
         _critic_route,
         {
-            "end": END,
+            # ``end`` is retained as the decision API label, but pass must
+            # still execute FinalizeAuditNode before the graph terminates.
+            "end": "finalize_audit",
             "reasoning": "reasoning",
             "supervisor": "supervisor",
             "finalize_audit": "finalize_audit",

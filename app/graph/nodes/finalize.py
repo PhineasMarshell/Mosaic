@@ -9,7 +9,7 @@ claim 的 evidence、标的、日期、来源与完整性时启用。正文由�
 =================  ====================================  ===============
 值                 条件                                   持久化
 =================  ====================================  ===============
-``verified``       Critic=pass                             是
+``verified``       Critic=pass 且每条 claim 严格校验通过    是
 ``degraded``       耗尽但可产出仅含已证实事实的报告         否
 ``blocked``        耗尽且 verdict 非 pass，无法安全作答   否
 ``failed``         节点 / 上游 / 审计器自身错误            否
@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections import Counter
 from typing import Any, Literal
 
 from app.agent.evidence_gate import match_claims_to_evidence
@@ -111,6 +112,7 @@ _EVIDENCE_REF_RE = re.compile(
 _BAD_COMPLETENESS = frozenset({"partial", "incomplete", "truncated"})
 _GLOBAL_DEGRADED_BLOCKERS = frozenset(
     {
+        "domain_mismatch",
         "invalid_reference",
         "invalid_evidence",
         "conflicting_evidence",
@@ -128,6 +130,59 @@ _GLOBAL_DEGRADED_BLOCKERS = frozenset(
 )
 
 
+def _strict_verified_issues(state: dict[str, Any], report: Any) -> list[str]:
+    """Return concrete reasons a passing Critic cannot become ``verified``.
+
+    The ordinary claim matcher is intentionally useful for research/degraded
+    analysis.  The persistence boundary is narrower: every cited datum must
+    be complete, fully scoped and independently attributable.  Keeping this
+    check here prevents a permissive model audit from silently opening the
+    verified path.
+    """
+    payload = _report_dict(report)
+    if report is None:
+        return ["no_report"]
+    evidence = list((state.get("evidence") if "evidence" in state else payload.get("evidence")) or [])
+    expected_date = state.get("planned_as_of_date") or state.get("as_of_date") or payload.get("as_of_date")
+    requested_date = state.get("requested_date") or payload.get("requested_date")
+    expected_domain = str(state.get("domain") or "").strip().lower() or None
+    question = str(state.get("question") or "")
+    requested_codes = sorted({match.group(1) for match in re.finditer(r"(?<!\d)(?:SH|SZ|BJ)?(\d{6})(?!\d)", question.upper())})
+    rows = match_claims_to_evidence(
+        payload,
+        evidence,
+        expected_date=expected_date,
+        requested_date=requested_date,
+        market_closed=state.get("market_closed") if state.get("market_closed") is not None else payload.get("market_closed"),
+        expected_domain=expected_domain,
+        strict_provenance=True,
+        expected_instruments=requested_codes,
+    )
+    codes: list[str] = []
+    for row in rows:
+        codes.extend(str(code) for code in row.get("reason_codes") or [])
+        if not row.get("supported") and not row.get("reason_codes"):
+            codes.append("unverified_claim")
+    if not any(row.get("supported") for row in rows):
+        codes.append("no_verified_claim")
+    if payload.get("evidence_violations"):
+        codes.append("invalid_reference")
+
+    for item in state.get("results") or []:
+        status = str(_evidence_field(item, "status", "") or "").lower()
+        reasons = {str(code).lower() for code in (_evidence_field(item, "reason_codes", []) or [])}
+        if status == "error" or reasons & {
+            "gateway_timeout", "mcp_upstream_timeout", "timeout", "http_401", "gateway_auth_error",
+            "http_5xx", "gateway_upstream_error", "transport_timeout", "deadline_exhausted",
+        }:
+            codes.append("independent_tool_failure")
+
+    conflicts = payload.get("entity_conflicts") or []
+    if any(str(_evidence_field(item, "authority", "")).lower() == "authoritative" for item in conflicts):
+        codes.append("authority_conflict")
+    return list(dict.fromkeys(codes))
+
+
 def _report_dict(report: Any) -> dict[str, Any]:
     if report is None:
         return {}
@@ -136,6 +191,49 @@ def _report_dict(report: Any) -> dict[str, Any]:
     if hasattr(report, "model_dump"):
         return report.model_dump(exclude_none=False)
     return dict(getattr(report, "__dict__", {}) or {})
+
+
+def _log_claim_audit(state: dict[str, Any]) -> None:
+    """Record counts and each strict decision before blocked prose is removed.
+
+    Per-claim/per-evidence events avoid the generic log array limit. Claim text
+    remains redacted; the index and original references identify the decision.
+    This is observation only and never changes the audit or its input ledger.
+    """
+    ledger = state.get("evidence") or []
+    report = _report_dict(state.get("report"))
+    run_id = state.get("run_id")
+    run_log.emit(
+        "ledger_summary", run_id=run_id, ledger_evidence_count=len(ledger),
+        coverage_counts=dict(Counter(str(_field(e, "coverage", "unknown")) for e in ledger)),
+        completeness_counts=dict(Counter(str(_field(e, "completeness", "unknown")) for e in ledger)),
+        date_counts=dict(Counter(str(_field(e, "as_of_date") or "unknown") for e in ledger)),
+        metric_counts=dict(Counter(str(_field(e, "metric", "unknown")) for e in ledger)),
+        partial_count=sum(bool(_field(e, "partial", False)) for e in ledger),
+        result_partial_count=sum(bool(_field(e, "result_partial", False)) for e in ledger),
+        report_claim_count=len(report.get("claims") or []),
+    )
+    checks = match_claims_to_evidence(
+        report, ledger, strict_provenance=True,
+        expected_date=state.get("planned_as_of_date") or state.get("as_of_date"),
+        requested_date=state.get("requested_date"), market_closed=state.get("market_closed"),
+        expected_domain=state.get("domain"),
+        expected_instruments=re.findall(r"(?<!\d)(?:SH|SZ|BJ)?(\d{6})(?!\d)", str(state.get("question") or "").upper()),
+    ) if report else []
+    for index, check in enumerate(checks):
+        run_log.emit("claim_audit", run_id=run_id, claim_index=index,
+                     claim=check["claim"], evidence_ids=check["evidence_ids"],
+                     supported=check["supported"], reason_codes=check["reason_codes"])
+        for evidence in ledger:
+            if _field(evidence, "id") not in check["evidence_ids"]:
+                continue
+            run_log.emit("claim_evidence", run_id=run_id, claim_index=index, **{
+                key: _field(evidence, key) for key in (
+                    "id", "source_tool", "tool_key", "operation_id", "domain", "metric", "value",
+                    "instrument", "instrument_name", "as_of_date", "timestamp", "retrieved_at",
+                    "source", "authority", "coverage", "completeness", "partial", "result_partial", "status",
+                )
+            })
 
 
 def _evidence_field(item: Any, key: str, default: Any = None) -> Any:
@@ -182,6 +280,8 @@ def _degraded_evidence_ok(item: Any, claim: str) -> bool:
         "unknown",
         "",
     }:
+        return False
+    if _claim_is_strong(claim) and bool(_evidence_field(item, "result_partial", False)):
         return False
     return True
 
@@ -231,7 +331,7 @@ def build_degraded_report(
     if any(re.search(r"critic|reasoning|audit", error) for error in audit_errors):
         return None, ["critic_or_reasoning_audit_error"], ["audit_error"]
 
-    evidence = list(state.get("evidence") or payload.get("evidence") or [])
+    evidence = list((state.get("evidence") if "evidence" in state else payload.get("evidence")) or [])
     expected_date = state.get("planned_as_of_date") or state.get("as_of_date") or payload.get("as_of_date")
     rows = match_claims_to_evidence(
         payload,
@@ -241,6 +341,7 @@ def build_degraded_report(
         market_closed=state.get("market_closed")
         if state.get("market_closed") is not None
         else payload.get("market_closed"),
+        expected_domain=str(state.get("domain") or "").strip().lower() or None,
     )
     # A forged/unknown reference anywhere in the report is a hard stop, even
     # when another claim could otherwise be delivered.  Silently dropping it
@@ -258,12 +359,6 @@ def build_degraded_report(
     )
     if forged_in_prose:
         return None, [f"报告正文包含 forged/unknown evidence reference：{', '.join(forged_in_prose)}"], ["invalid_reference"]
-    expected_domain = str(state.get("domain") or "").strip().lower()
-    if expected_domain:
-        for item in evidence:
-            item_domain = str(_evidence_field(item, "domain", "") or "").strip().lower()
-            if item_domain and item_domain not in {"unknown", expected_domain}:
-                return None, ["证据域与请求域冲突"], ["domain_mismatch"]
     hard_scope_codes = sorted(
         {
             code
@@ -410,6 +505,9 @@ def infer_blocked_reason(state: dict[str, Any], critique: Any, settings: Any = N
     explicit = str(state.get("blocked_reason") or "").strip()
     if explicit:
         return explicit
+    state_reasons = set(state.get("reason_codes") or [])
+    if "missing_as_of_date" in state_reasons:
+        return "missing_as_of_date"
     if settings is not None:
         from app.graph.builder import critic_route_outcome
 
@@ -446,6 +544,7 @@ class FinalizeAuditNode:
                 s = state
 
             critique = s.get("critique")
+            _log_claim_audit(s)
             errors = list(s.get("errors") or [])
             remaining_budget = None
             if s.get("budget_deadline") is not None:
@@ -460,6 +559,30 @@ class FinalizeAuditNode:
                 blocked_reason=blocked_reason,
                 gap_key_decisions=s.get("gap_key_decisions"),
             )
+
+            # Critic=pass is necessary but not sufficient for persistence.
+            # Apply the strict provenance boundary before any report can take
+            # the verified route; failed checks may still enter controlled
+            # degraded delivery, but can never persist.
+            strict_issues = _strict_verified_issues(s, s.get("report")) if s.get("report") is not None else []
+            if delivery_status == "verified":
+                if s.get("report") is None:
+                    audit_status, delivery_status = "error", "failed"
+                    reason, blocked_reason = "reasoning produced no report", "no_report"
+                if strict_issues:
+                    audit_status = "revise_exhausted"
+                    delivery_status = "blocked"
+                    reason = "verified_provenance_failed: " + ", ".join(strict_issues)
+                    blocked_reason = "verified_provenance_failed"
+                    strict_issues.append("verified_provenance_failed")
+
+            # Evidence-only fallback is explicitly non-persistent even if a
+            # later audit happens to accept its narrow facts.
+            fallback_codes = set(s.get("reason_codes") or []) | set(s.get("degraded_reason_codes") or [])
+            if "evidence_only_fallback" in fallback_codes and s.get("report") is not None:
+                audit_status, delivery_status = "revise_exhausted", "degraded"
+                reason = "evidence_only_fallback: 仅交付账本中的直接事实"
+                blocked_reason = ""
 
             degraded_report = None
             degraded_issues: list[str] = []
@@ -480,10 +603,26 @@ class FinalizeAuditNode:
                         else "degraded_partial_evidence: 仅交付可验证 claim"
                     )
                     blocked_reason = ""
+            if "evidence_only_fallback" in fallback_codes and s.get("report") is not None:
+                # The fallback report has already been deterministically built
+                # from complete, same-date, same-instrument ledger rows. Keep
+                # it intact; never re-run free-form degraded reconstruction.
+                degraded_report = s.get("report")
+                # 交付理由只列**真实发生过**的失败码：超时截断的 run 不该被写成
+                # llm_output_error（P13：reason code 必须可回溯到实际原因）。
+                degraded_codes = [
+                    code
+                    for code in ("evidence_only_fallback", "llm_output_error", "reasoning_timeout")
+                    if code in fallback_codes
+                ]
 
             unresolved = list(dict.fromkeys(unresolved_issue_summary(critique) + degraded_issues))
             gap_decisions = s.get("gap_key_decisions") or _field(critique, "gap_key_decisions", []) or []
-            terminal_codes = list(dict.fromkeys([*(s.get("reason_codes") or []), *degraded_codes]))
+            terminal_codes = list(dict.fromkeys([
+                *(s.get("reason_codes") or []),
+                *degraded_codes,
+                *strict_issues,
+            ]))
             if blocked_reason and blocked_reason not in terminal_codes and delivery_status != "verified":
                 terminal_codes.append(str(blocked_reason))
             elapsed = elapsed_ms(s)

@@ -194,6 +194,10 @@ async def test_redacted_terminal_events_keep_run_id_issues_and_consistent_code(v
              "critique": {"verdict": verdict, "reason": secret, "issues": [issue] if verdict != "pass" else []},
              "research_round_count": 1, "rewrite_count": 1}
     config = settings(max_research_rounds=1, max_rewrites=1)
+    if verdict == "pass":
+        state["report"] = {"what_happened": "暂无可核验数据", "claims": [
+            {"claim": "暂无可核验数据", "claim_type": "structure", "evidence_ids": []},
+        ]}
     with caplog.at_level(logging.INFO, logger="app.graph.run_log"):
         run_log.log_run_start(state)
         run_log.log_critic(state, state["critique"])
@@ -305,8 +309,9 @@ async def test_partial_quote_without_explicit_coverage_retains_target_for_refres
     })
     assert output.get("errors", []) == []
     calls = [tc for assignment in output["route"] for tc in assignment["tool_calls"]]
-    assert len(calls) == 1 and calls[0]["refresh"]
-    assert calls[0]["arguments"] == {"symbols": ["600519"]}
+    assert {call["tool_key"] for call in calls} == {"iwencai_market", "quote"}
+    quote_call = next(call for call in calls if call["tool_key"] == "quote")
+    assert quote_call["refresh"] and quote_call["arguments"] == {"symbols": ["600519"]}
 
 
 @pytest.mark.asyncio

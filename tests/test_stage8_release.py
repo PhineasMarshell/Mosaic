@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from verified_report_fixture import verified_quote_report
 
 import app.cli as cli
 import app.main as main
@@ -267,7 +268,7 @@ def test_invalid_environment_timeout_cannot_silently_use_default(tmp_path, monke
 
 
 def test_sync_and_sse_success_remain_readable_by_legacy_client(monkeypatch):
-    report = MarketIntelligence(title="t", market_state="stable", state_label="Neutral", confidence="low")
+    report = verified_quote_report(title="t", market_state="stable", state_label="Neutral", confidence="low")
 
     class Graph:
         async def astream(self, initial_state, stream_mode=None, config=None):
@@ -408,7 +409,7 @@ def test_non_transactional_lock_failure_is_not_retried_or_duplicated():
 
     result = ResearchResponse(
         question="q",
-        report=MarketIntelligence(title="t", market_state="stable", state_label="Neutral", confidence="low"),
+        report=verified_quote_report(title="t", market_state="stable", state_label="Neutral", confidence="low"),
         critique={"verdict": "pass"},
         final_audit_status="pass",
         delivery_status="verified",
@@ -436,7 +437,7 @@ def test_retry_is_bounded_and_permanent_errors_stop(tmp_path, message, expected_
     memory.transaction = failing_transaction
     result = ResearchResponse(
         question="q",
-        report=MarketIntelligence(title="t", market_state="stable", state_label="Neutral", confidence="low"),
+        report=verified_quote_report(title="t", market_state="stable", state_label="Neutral", confidence="low"),
         critique={"verdict": "pass"},
         final_audit_status="pass",
         delivery_status="verified",

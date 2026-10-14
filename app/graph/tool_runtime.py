@@ -22,8 +22,11 @@ from contextvars import ContextVar
 from app.cache import _make_cache_key, _resolve_ttl, market_cache
 from app.config import Settings
 from app.gateway.arguments import canonicalize_tool_arguments, semantic_signature
+from app.gateway.controlled_fallback import ControlledFallbackRouter
 from app.gateway.http_client import MarketGatewayHttpClient
 from app.gateway.mcp_client import MarketGatewayClient
+from app.gateway.source_routing import is_mcp_fallback_enabled, is_primary_skill_enabled, skill_route_for
+from app.gateway.ths_skill_adapter import is_registered_skill, skill_adapter_for
 from app.gateway.tool_registry import resolve_tool_by_name
 from app.models.market import STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, NormalizedDatum, ToolResult
 from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
@@ -217,6 +220,7 @@ def _normalize_us_filings(filings: list[dict]) -> list[NormalizedDatum]:
 # ContextVar 语义天然"每个 asyncio task 一份"：asyncio.create_task 复制当前 context，
 # 子任务看到会话、兄弟任务看不到。gateway/available 成组放 dict，一次 set 成组读写。
 _session: ContextVar[dict | None] = ContextVar("gateway_session", default=None)
+_run_id: ContextVar[str | None] = ContextVar("tool_runtime_run_id", default=None)
 
 
 def _normalize_hk_entries(hk_data: dict) -> list[NormalizedDatum]:
@@ -250,6 +254,10 @@ class ToolRuntime:
         # 子进程 + 握手 + list_tools，一轮 12 个工具就是 12 次。
         # T18c：会话状态放在模块级 ContextVar `_session`（每 asyncio task 一份），
         # 不要再往 self.* 上放会话状态——单例图的节点实例被并发请求共享。
+
+    def set_run_id(self, run_id: str | None) -> None:
+        """Set the request id inherited by analyst child tasks."""
+        _run_id.set(run_id)
 
     @asynccontextmanager
     async def gateway_session(self):
@@ -369,6 +377,7 @@ class ToolRuntime:
                 status=STATUS_ERROR,
                 normalized=[],
                 error=f"Invalid arguments: {exc}",
+                reason_codes=["invalid_arguments"],
             )
         signature = self._signature(tool_name, arguments)
         if refresh:
@@ -429,17 +438,32 @@ class ToolRuntime:
                 cache_hit=False,
                 refresh_requested=refresh,
             )
-        execution = (
-            self._do_execute(tool_name, arguments, deadline=deadline, refresh=True)
-            if refresh and is_internal else self._do_execute(tool_name, arguments, deadline=deadline)
-        )
+        primary_route = None if is_registered_skill(tool_name) else skill_route_for(tool_name, arguments)
+        if primary_route is not None and is_primary_skill_enabled(self.settings):
+            execution = self._execute_primary_skill_route(
+                tool_name, arguments, primary_route, deadline=deadline, refresh=refresh
+            )
+        else:
+            execution = (
+                self._do_execute(tool_name, arguments, deadline=deadline, refresh=True)
+                if refresh and is_internal else self._do_execute(tool_name, arguments, deadline=deadline)
+            )
         try:
             # Include lazy connection/handshake and internal adapters in the
             # same wall-clock budget as the upstream request.
             async with asyncio.timeout(remaining):
                 result = await execution
         except TimeoutError:
-            return ToolResult(
+            if primary_route is not None and is_primary_skill_enabled(self.settings):
+                return ToolResult(
+                    tool=tool_name, operation_id=tool_name, arguments=arguments, status=STATUS_ERROR,
+                    normalized=[], error="budget exhausted during primary source routing",
+                    reason_codes=["deadline_exhausted"], upstream_status="timeout",
+                    primary_source="ths_skill", fallback_source="mcp" if is_mcp_fallback_enabled(self.settings) else None,
+                    source_switch=bool(is_mcp_fallback_enabled(self.settings)),
+                    refresh_requested=refresh, run_id=_run_id.get(), transport="http_api",
+                )
+            primary = ToolResult(
                 tool=tool_name, arguments=arguments, status=STATUS_ERROR,
                 normalized=[], error="budget exhausted during tool execution",
                 reason_codes=["deadline_exhausted", "gateway_timeout"],
@@ -447,11 +471,21 @@ class ToolRuntime:
                 cache_hit=False,
                 refresh_requested=refresh,
             )
+            return await self._route_fallback(primary, tool_name, arguments, deadline, refresh=refresh) if is_primary_skill_enabled(self.settings) else primary
         except Exception as exc:
+            if primary_route is not None and is_primary_skill_enabled(self.settings):
+                return ToolResult(
+                    tool=tool_name, operation_id=tool_name, arguments=arguments, status=STATUS_ERROR,
+                    normalized=[], error=f"Primary source routing failed: {type(exc).__name__}",
+                    reason_codes=["gateway_transport_error"], transport_exception=True,
+                    primary_source="ths_skill", fallback_source="mcp" if is_mcp_fallback_enabled(self.settings) else None,
+                    source_switch=bool(is_mcp_fallback_enabled(self.settings)),
+                    refresh_requested=refresh, run_id=_run_id.get(), transport="http_api",
+                )
             # A transport/connection exception must remain a zero-datum error;
             # optional Gateway sources may be unavailable without aborting the
             # entire graph or causing a secondary terminal exception.
-            return ToolResult(
+            primary = ToolResult(
                 tool=tool_name,
                 arguments=arguments,
                 status=STATUS_ERROR,
@@ -462,6 +496,7 @@ class ToolRuntime:
                 refresh_requested=refresh,
                 transport_exception=True,
             )
+            return await self._route_fallback(primary, tool_name, arguments, deadline, refresh=refresh) if is_primary_skill_enabled(self.settings) else primary
         # Keep trace fields present even when a Gateway/mock implementation
         # constructs an older ToolResult shape.
         result.operation_id = result.operation_id or tool_name
@@ -548,6 +583,12 @@ class ToolRuntime:
         # 内部工具直连（不走 Gateway）—— 必须在会话分支之前 return，
         # 只用内部工具的 analyst 不得触发建连（T18b）
         meta = resolve_tool_by_name(tool_name)
+        if is_registered_skill(tool_name):
+            # P6：十个同花顺 Skill 统一经过 adapter/registry；每个 Skill 的
+            # 字段解析仍遵循其官方契约，Evidence Gate 不感知 Skill 特例。
+            return await skill_adapter_for(self.settings).call(
+                tool_name, arguments, deadline=deadline, refresh=refresh, run_id=_run_id.get()
+            )
         if getattr(meta, "http_method", None) == "INTERNAL":
             if refresh:
                 return await self._execute_internal(tool_name, arguments, refresh=True)
@@ -558,11 +599,119 @@ class ToolRuntime:
         session = _session.get()
         if session is not None:
             gateway = await self._ensure_gateway(session)
-            return await self._call_gateway(gateway, session["available"], tool_name, arguments, deadline=deadline)
+            return await self._call_gateway(gateway, session["available"], tool_name, arguments, deadline=deadline, refresh=refresh)
 
         gateway_cls = self._gateway_class()  # 会话外：保持旧的逐次新建路径
         async with gateway_cls(self.settings) as gateway:
-            return await self._call_gateway(gateway, None, tool_name, arguments, deadline=deadline)
+            return await self._call_gateway(gateway, None, tool_name, arguments, deadline=deadline, refresh=refresh)
+
+    async def _execute_primary_skill_route(
+        self,
+        tool_name: str,
+        arguments: dict,
+        route: tuple[str, str, dict],
+        *,
+        deadline: float | None,
+        refresh: bool,
+    ) -> ToolResult:
+        """Call THS first, then optionally use MCP as a controlled backup."""
+        skill_tool, capability, skill_arguments = route
+
+        async def primary_call() -> ToolResult:
+            result = await skill_adapter_for(self.settings).call(
+                skill_tool, skill_arguments, deadline=deadline, refresh=refresh, run_id=_run_id.get()
+            )
+            return self._as_routed_result(result, tool_name, arguments, primary_source="ths_skill")
+
+        async def fallback_call() -> ToolResult:
+            if deadline is not None and deadline - time.monotonic() <= 0:
+                return ToolResult(
+                    tool=tool_name, operation_id=tool_name, arguments=arguments, status=STATUS_ERROR,
+                    normalized=[], error="budget exhausted before MCP fallback",
+                    reason_codes=["deadline_exhausted"], refresh_requested=refresh,
+                )
+            return await self._execute_mcp_only(tool_name, arguments, deadline=deadline)
+
+        router = ControlledFallbackRouter()
+        if not is_mcp_fallback_enabled(self.settings):
+            result = await primary_call()
+            if "gateway_auth_error" in result.reason_codes:
+                result.reason_codes = list(dict.fromkeys([
+                    *result.reason_codes,
+                    "mcp_fallback_not_attempted_auth",
+                ]))
+                result.fallback_reason = "authentication_failure_no_fallback"
+        else:
+            result = await router.call(
+                run_id=_run_id.get() or "unassigned",
+                capability=capability,
+                arguments=arguments,
+                primary_source="ths_skill",
+                primary_transport="http_api",
+                primary=primary_call,
+                fallback_source="mcp",
+                fallback_transport="mcp",
+                fallback=fallback_call,
+            )
+        result = self._as_routed_result(result, tool_name, arguments, primary_source="ths_skill")
+        result.refresh_requested = bool(refresh)
+        result.run_id = result.run_id or _run_id.get()
+        result.attempts = [
+            *result.attempts,
+            *[item.as_dict() for item in router.observations],
+        ]
+        return result
+
+    async def _execute_mcp_only(self, tool_name: str, arguments: dict, *, deadline: float | None) -> ToolResult:
+        """Execute the configured Gateway without re-entering THS fallback."""
+        try:
+            session = _session.get()
+            if session is not None:
+                gateway = await self._ensure_gateway(session)
+                available = session.get("available")
+                result = await self._call_gateway(gateway, available, tool_name, arguments, deadline=deadline,
+                                                  route_fallback=False)
+            else:
+                gateway_cls = self._gateway_class()
+                async with gateway_cls(self.settings) as gateway:
+                    result = await self._call_gateway(gateway, None, tool_name, arguments, deadline=deadline,
+                                                      route_fallback=False)
+            if self.settings.market_gateway_mode.lower() == "mcp":
+                result.mcp_initialize = True
+                result.mcp_list_tools = True
+                result.mcp_real_call = True
+            result.transport = "mcp" if self.settings.market_gateway_mode.lower() == "mcp" else "http"
+            return result
+        except Exception as exc:
+            codes = list(getattr(exc, "reason_codes", []) or []) or ["gateway_transport_error"]
+            result = ToolResult(
+                tool=tool_name, operation_id=tool_name, arguments=arguments, status=STATUS_ERROR,
+                normalized=[], error=f"MCP fallback failed: {type(exc).__name__}", reason_codes=codes,
+                transport="mcp", transport_exception=True, endpoint=getattr(exc, "endpoint", None),
+                attempts=[{"stage": getattr(exc, "stage", "call_tool"), "endpoint": getattr(exc, "endpoint", None),
+                           "attempt": getattr(exc, "attempt", 1), "elapsed_ms": getattr(exc, "elapsed_ms", None),
+                           "reason_codes": codes}],
+            )
+            stage = getattr(exc, "stage", "call_tool")
+            if stage in {"stdio_init", "initialize", "list_tools"}:
+                result.mcp_initialize = stage not in {"stdio_init", "initialize"}
+                result.mcp_list_tools = stage == "list_tools"
+                result.mcp_real_call = False
+            return result
+
+    @staticmethod
+    def _as_routed_result(result: ToolResult, tool_name: str, arguments: dict, *, primary_source: str) -> ToolResult:
+        result.tool = tool_name
+        result.operation_id = tool_name
+        result.arguments = arguments
+        try:
+            result.tool_key = resolve_tool_by_name(tool_name).key
+        except Exception:
+            pass
+        result.primary_source = result.primary_source or primary_source
+        result.run_id = result.run_id or _run_id.get()
+        result.transport = result.transport or ("mcp" if result.fallback_source == "mcp" else "http_api")
+        return result
 
     async def _call_gateway(
         self,
@@ -571,6 +720,8 @@ class ToolRuntime:
         tool_name: str,
         arguments: dict,
         deadline: float | None = None,
+        route_fallback: bool = True,
+        refresh: bool = False,
     ) -> ToolResult:
         """通过已连接的 gateway 执行一次调用；available 为 None 时按模式现场解析。"""
         if available is None:
@@ -581,7 +732,7 @@ class ToolRuntime:
             )
 
         if tool_name not in available:
-            return ToolResult(
+            primary = ToolResult(
                 tool=tool_name,
                 operation_id=tool_name,
                 arguments=arguments,
@@ -590,8 +741,76 @@ class ToolRuntime:
                 error=f"Tool not available: {tool_name}",
                 reason_codes=["gateway_tool_unavailable"],
             )
+        else:
+            primary = await gateway.call(tool_name, arguments, deadline=deadline)
+        return await self._route_fallback(primary, tool_name, arguments, deadline, refresh=refresh) if route_fallback else primary
 
-        return await gateway.call(tool_name, arguments, deadline=deadline)
+    async def _route_fallback(
+        self, primary: ToolResult, tool_name: str, arguments: dict, deadline: float | None, *, refresh: bool = False
+    ) -> ToolResult:
+        primary.run_id = _run_id.get()
+        primary.transport = self.settings.market_gateway_mode.lower()
+        fallback_spec = self._fallback_spec(tool_name, arguments)
+        if primary.status != STATUS_ERROR or fallback_spec is None:
+            return primary
+        capability, skill_tool, skill_arguments = fallback_spec
+        router = ControlledFallbackRouter()
+
+        async def primary_call():
+            return primary
+
+        async def fallback_call():
+            from app.gateway.ths_skill_adapter import skill_adapter_for
+
+            return await skill_adapter_for(self.settings).call(
+                skill_tool,
+                skill_arguments,
+                deadline=deadline,
+                refresh=refresh,
+                run_id=_run_id.get(),
+            )
+
+        result = await router.call(
+            run_id=_run_id.get() or "unassigned",
+            capability=capability,
+            arguments=arguments,
+            primary_source=self.settings.market_gateway_mode.lower(),
+            primary_transport=self.settings.market_gateway_mode.lower(),
+            primary=primary_call,
+            fallback_source="ths_skill",
+            fallback_transport="http_api",
+            fallback=fallback_call,
+        )
+        result.attempts = [
+            *result.attempts,
+            *[
+                {
+                    "source": item.source,
+                    "transport": item.transport,
+                    "capability": item.capability,
+                    "status": item.result.status,
+                    "reason_codes": item.result.reason_codes,
+                    "datum_count": len(item.result.normalized),
+                    "latency_ms": item.latency_ms,
+                }
+                for item in router.observations
+            ],
+        ]
+        return result
+
+    @staticmethod
+    def _fallback_spec(tool_name: str, arguments: dict) -> tuple[str, str, dict] | None:
+        """Return the registry-controlled THS route for legacy Gateway fallback."""
+        route = skill_route_for(tool_name, arguments)
+        if route is not None:
+            return route[1], route[0], route[2]
+        if tool_name == "get_stock_abnormal_reasons":
+            symbol = arguments.get("symbol") or ""
+            date_text = arguments.get("end") or arguments.get("date") or ""
+            return "abnormal_reasons", "internal_iwencai_event_query", {
+                "query": f"{symbol} {date_text} 异常涨跌原因".strip()
+            }
+        return None
 
     def _check_cache(
         self,

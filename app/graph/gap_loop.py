@@ -40,7 +40,7 @@ from app.models.research import ToolCallPlan
 _DONE_STATUSES = ("success", "partial")
 
 #: 这些 tool_name 前缀的工具必须带 query，缺口补齐时用用户问题兜底
-_QUERY_TOOL_PREFIXES = ("news_",)
+_QUERY_TOOL_PREFIXES = ("news_", "internal_iwencai_")
 
 
 def _field(obj: Any, key: str, default: Any = None) -> Any:

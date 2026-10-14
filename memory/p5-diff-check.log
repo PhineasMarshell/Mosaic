@@ -1,0 +1,5 @@
+warning: in the working copy of '.env.example', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/gateway/arguments.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/graph/budget.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/graph/nodes/finalize.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/graph/run_log.py', LF will be replaced by CRLF the next time Git touches it

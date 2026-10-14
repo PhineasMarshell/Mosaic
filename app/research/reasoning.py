@@ -10,12 +10,13 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, get_args
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
-from app.agent.prompts import REASONING_PROMPT
+from app.agent.prompts import REASONING_PROMPT, REFERENCE_REPORT_PROMPT
 from app.config import Settings
 from app.errors import LLMOutputError
 from app.llm_json import parse_json_object
@@ -77,6 +78,312 @@ def _compact_normalized_data(results: list[ToolResult], *, per_tool: int = 24, t
         omitted += len(rows) - total
         rows = rows[:total]
     return rows, {"kept": len(rows), "omitted": omitted, "per_tool": per_tool, "total": total}
+
+
+def _same_instrument(left: Any, right: Any) -> bool:
+    """Compare security codes while accepting exchange prefixes/suffixes."""
+    left_text = re.sub(r"[^A-Z0-9]", "", str(left or "").upper())
+    right_text = re.sub(r"[^A-Z0-9]", "", str(right or "").upper())
+    left_match = re.search(r"\d{6}", left_text)
+    right_match = re.search(r"\d{6}", right_text)
+    return bool(left_text and right_text and ((left_match and right_match and left_match.group() == right_match.group()) or left_text == right_text))
+
+
+def _compact_evidence_for_target(
+    evidence: list[Evidence], *, requested_date: str | None, target_instrument: str | None,
+) -> tuple[list[Evidence], dict]:
+    """Filter only model-facing evidence; the ledger remains unchanged."""
+    if not (requested_date and target_instrument):
+        return evidence, {"enabled": False, "excluded_count": 0, "excluded_reasons": {}}
+    kept: list[Evidence] = []
+    reasons: dict[str, int] = {}
+    for item in evidence:
+        observed = item.as_of_date or (item.timestamp or "")[:10]
+        if observed != requested_date:
+            reasons["date_mismatch"] = reasons.get("date_mismatch", 0) + 1
+            continue
+        if not item.instrument or not _same_instrument(item.instrument, target_instrument):
+            reasons["instrument_mismatch"] = reasons.get("instrument_mismatch", 0) + 1
+            continue
+        kept.append(item)
+    return kept, {
+        "enabled": True,
+        "requested_date": requested_date,
+        "instrument": target_instrument,
+        "excluded_count": len(evidence) - len(kept),
+        "excluded_reasons": reasons,
+    }
+
+
+#: P13 §一.3：fallback 必须为**每个**候选 evidence 记录拒绝原因。词表之外的
+#: 取值不出现；``fallback_inapplicable`` 只用于"请求本身缺少日期或标的"时，
+#: 此时不是候选有缺陷，而是 fallback 这条交付路径整体不适用。
+FALLBACK_REJECTION_REASONS: tuple[str, ...] = (
+    "status_not_success",
+    "partial",
+    "incomplete",
+    "unknown_completeness",
+    "unknown_coverage",
+    "date_mismatch",
+    "symbol_mismatch",
+    "missing_source",
+    "missing_retrieved_at",
+    "unsupported_fact_type",
+    "authority_conflict",
+)
+FALLBACK_INAPPLICABLE = "fallback_inapplicable"
+
+#: fallback 直接交付的判据（P13 §一.4）。未被接受的一切取值都必须给出
+#: ``incomplete`` 或 ``unknown_completeness``，不允许"认不出的 token 默认放行"。
+_ACCEPTED_COMPLETENESS = frozenset({"complete", "full"})
+_INCOMPLETE_COMPLETENESS = frozenset({"partial", "incomplete", "truncated"})
+_UNKNOWN_COVERAGE = frozenset({"", "unknown", "none", "null"})
+#: 集合/排名类指标描述的不是单标的事实，交付它们等于交付"全市场结论"。
+_NON_DIRECT_METRIC_RE = re.compile(
+    r"排名|排序|榜单|全市场|涨跌家数|涨停家数|跌停家数|连板|总数|合计"
+)
+_MAX_FALLBACK_ROWS = 3
+#: 诊断里逐候选明细的上限（日志侧还会再走一遍 run_log 的截断）。
+_MAX_DIAGNOSTIC_CANDIDATES = 24
+#: evidence-only fallback 交付物的固定标题。它是代码拥有的字面量（不是模型输出），
+#: 因此验收侧可以据此判断"这份报告究竟来自 fallback 还是模型成文"，无需读正文。
+EVIDENCE_ONLY_FALLBACK_TITLE = "受控降级：仅交付证据事实"
+
+
+@dataclass(frozen=True)
+class FallbackCandidate:
+    """一个候选 evidence 的准入判定——无论通过与否都留档。"""
+
+    evidence_id: str
+    metric: str
+    accepted: bool
+    reasons: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "metric": self.metric,
+            "accepted": self.accepted,
+            "rejection_reasons": list(self.reasons),
+        }
+
+
+@dataclass(frozen=True)
+class FallbackDecision:
+    """fallback 的准入结果 + 结构化诊断（可直接进 run log / JSONL）。"""
+
+    enabled: bool
+    reason: str
+    requested_date: str | None
+    target_instrument: str | None
+    as_of_date: str | None
+    candidates: tuple[FallbackCandidate, ...]
+    accepted: tuple[Evidence, ...]
+
+    @property
+    def candidate_count(self) -> int:
+        return len(self.candidates)
+
+    @property
+    def accepted_count(self) -> int:
+        return len(self.accepted)
+
+    @property
+    def rejected_count(self) -> int:
+        return self.candidate_count - self.accepted_count
+
+    @property
+    def report_evidence_ids(self) -> list[str]:
+        return [row.id for row in self.accepted[:_MAX_FALLBACK_ROWS]]
+
+    def count_reasons(self) -> dict[str, int]:
+        """按出现次数降序的原因计数（同数按字典序，保证可复现）。"""
+        counts: dict[str, int] = {}
+        for candidate in self.candidates:
+            for code in candidate.reasons:
+                counts[code] = counts.get(code, 0) + 1
+        return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+    def diagnostics(self) -> dict[str, Any]:
+        """JSONL-safe 诊断块：只有 id / 计数 / 原因码，没有正文与原始值。
+
+        `candidate_rejections` 对**每一个**被拒候选都留下原因码（P13 §一.3），
+        `rejected_candidates` 只是可读性更好的截断视图。
+        """
+        rejected = [candidate for candidate in self.candidates if not candidate.accepted]
+        return {
+            "enabled": self.enabled,
+            "reason": self.reason,
+            "requested_date": self.requested_date,
+            "target_instrument": self.target_instrument,
+            "as_of_date": self.as_of_date,
+            "candidate_count": self.candidate_count,
+            "accepted_count": self.accepted_count,
+            "rejected_count": self.rejected_count,
+            "rejection_reasons": self.count_reasons(),
+            "candidate_rejections": {
+                candidate.evidence_id: list(candidate.reasons) for candidate in rejected
+            },
+            "candidate_evidence_ids": {
+                "accepted": [candidate.evidence_id for candidate in self.candidates if candidate.accepted],
+                "rejected": [candidate.evidence_id for candidate in rejected],
+            },
+            "rejected_candidates": [candidate.as_dict() for candidate in rejected[:_MAX_DIAGNOSTIC_CANDIDATES]],
+            "rejected_candidates_truncated": max(0, len(rejected) - _MAX_DIAGNOSTIC_CANDIDATES),
+            "report_evidence_ids": self.report_evidence_ids,
+        }
+
+
+def _normalized_token(value: Any) -> str:
+    return str(value if value is not None else "").strip().lower()
+
+
+def _direct_fact_supported(item: Evidence) -> bool:
+    """断言这条 evidence 能被**直接陈述**，而不需要任何推断（P13 §一.5）。
+
+    排名/集合类指标天然是"全市场结论"，无界容器（列表、无标题字典）也无法
+    在一句话里原样引用，因此都不允许成为交付事实。
+    """
+    if _NON_DIRECT_METRIC_RE.search(str(item.metric or "")):
+        return False
+    value = item.value
+    if isinstance(value, (list, tuple, set, dict)):
+        return isinstance(value, dict) and bool(str(value.get("title") or "").strip())
+    return value is not None and str(value).strip() != ""
+
+
+def _conflicting_evidence_ids(rows: list[Evidence]) -> set[str]:
+    """同一指标+同一日期出现不同取值**且**来自不同权威 → 权威冲突。
+
+    只在不同来源之间判冲突：同一个来源返回多行是分页/重复，不是冲突。
+    """
+    groups: dict[tuple[str, str], list[Evidence]] = {}
+    for row in rows:
+        metric = re.sub(r"\[\d+\]", "", str(row.metric or ""))
+        observed = row.as_of_date or (row.timestamp or "")[:10]
+        groups.setdefault((metric, observed), []).append(row)
+    conflicting: set[str] = set()
+    for items in groups.values():
+        if len(items) < 2:
+            continue
+        values = {str(item.value) for item in items}
+        authorities = {_normalized_token(item.authority or item.source) for item in items}
+        if len(values) > 1 and len(authorities) > 1:
+            conflicting.update(item.id for item in items)
+    return conflicting
+
+
+def plan_evidence_only_fallback(
+    evidence: list[Evidence], *, requested_date: str | None, target_instrument: str | None,
+    as_of_date: str | None = None,
+) -> FallbackDecision:
+    """判定账本里哪些行可以变成"只含直接事实"的受控降级报告。
+
+    与 :func:`build_evidence_only_fallback` 分开，是为了让**被拒绝的候选也能
+    被解释**：只有接受集合而没有拒绝原因时，blocked 的运行无法复盘究竟是哪一道
+    门禁挡住的。接受条件（全部满足）见模块常量与 P13 §一.4。
+    """
+    rows = [item for item in evidence if item is not None]
+    if not requested_date or not target_instrument:
+        reason = "missing_requested_date" if not requested_date else "missing_target_instrument"
+        candidates = tuple(
+            FallbackCandidate(item.id, str(item.metric or ""), False, (FALLBACK_INAPPLICABLE,))
+            for item in rows
+        )
+        return FallbackDecision(
+            False, reason, requested_date, target_instrument, as_of_date, candidates, (),
+        )
+
+    conflicting = _conflicting_evidence_ids(rows)
+    candidates: list[FallbackCandidate] = []
+    accepted: list[Evidence] = []
+    for item in rows:
+        reasons: list[str] = []
+        observed = item.as_of_date or (item.timestamp or "")[:10]
+        completeness = _normalized_token(item.completeness)
+        coverage = _normalized_token(item.coverage)
+        if item.status != "success":
+            reasons.append("status_not_success")
+        if bool(item.partial):
+            reasons.append("partial")
+        if completeness in _INCOMPLETE_COMPLETENESS:
+            reasons.append("incomplete")
+        elif completeness not in _ACCEPTED_COMPLETENESS:
+            # 含 "page" / "search_results"：那是响应信封（分页 / 检索集合）的
+            # 描述，不能证明 datum 自身字段完整。
+            reasons.append("unknown_completeness")
+        if coverage in _UNKNOWN_COVERAGE:
+            reasons.append("unknown_coverage")
+        if observed != requested_date:
+            reasons.append("date_mismatch")
+        if not _same_instrument(item.instrument, target_instrument):
+            reasons.append("symbol_mismatch")
+        if not str(item.source or "").strip():
+            reasons.append("missing_source")
+        if not str(item.retrieved_at or "").strip():
+            reasons.append("missing_retrieved_at")
+        if not _direct_fact_supported(item):
+            reasons.append("unsupported_fact_type")
+        if item.id in conflicting:
+            reasons.append("authority_conflict")
+        row_accepted = not reasons
+        if row_accepted:
+            accepted.append(item)
+        candidates.append(
+            FallbackCandidate(item.id, str(item.metric or ""), row_accepted, tuple(reasons))
+        )
+    return FallbackDecision(
+        True, "", requested_date, target_instrument, as_of_date,
+        tuple(candidates), tuple(accepted),
+    )
+
+
+def _fallback_fact_text(row: Evidence, label: str, requested_date: str) -> str:
+    """把一条合格的 evidence 渲染成一句**直接事实**（无推断措辞）。"""
+    value = row.value
+    if isinstance(value, dict) and str(value.get("title") or "").strip():
+        published = str(value.get("published_at") or row.as_of_date or "")[:10]
+        suffix = f"，{published}" if published else ""
+        return f"{label} 公告《{str(value['title']).strip()}》{suffix}"
+    return f"{label} {row.metric}={value}（{requested_date}）"
+
+
+def build_evidence_only_fallback(
+    evidence: list[Evidence], *, requested_date: str | None, target_instrument: str | None,
+    as_of_date: str | None = None, decision: FallbackDecision | None = None,
+) -> MarketIntelligence | None:
+    """Create a fact-only report from complete, same-date ledger rows.
+
+    ``decision`` 允许调用方复用同一次准入判定（连同诊断一起上报），避免
+    "先算一遍诊断、再算一遍报告"导致两条结果不一致。
+    """
+    plan = decision if decision is not None else plan_evidence_only_fallback(
+        evidence, requested_date=requested_date, target_instrument=target_instrument,
+        as_of_date=as_of_date,
+    )
+    resolved_date = plan.requested_date or requested_date or ""
+    rows = list(plan.accepted)[:_MAX_FALLBACK_ROWS]
+    if not rows:
+        return None
+    claims: list[ClaimEvidence] = []
+    items: list[EvidenceItem] = []
+    facts: list[str] = []
+    for row in rows:
+        items.append(EvidenceItem(**row.model_dump()))
+        label = row.instrument_name or row.instrument or target_instrument or ""
+        fact = _fallback_fact_text(row, label, resolved_date)
+        facts.append(fact)
+        claims.append(ClaimEvidence(claim=fact, evidence_ids=[row.id], claim_type="fact"))
+    return MarketIntelligence(
+        title=EVIDENCE_ONLY_FALLBACK_TITLE, requested_date=resolved_date,
+        as_of_date=plan.as_of_date or as_of_date or resolved_date, market_closed=False, partial=True,
+        source=list(dict.fromkeys(str(row.source) for row in rows if row.source)),
+        coverage=list(dict.fromkeys(str(row.coverage) for row in rows if row.coverage)),
+        market_state="仅证据事实", state_label="仅证据事实", what_happened="；".join(facts),
+        evidence=items, claims=claims,
+        data_caveats=["LLM 输出失败；仅交付同日期、同标的、完整证据事实；不含市场解释"],
+        confidence="low", used_tools=list(dict.fromkeys(row.source_tool for row in rows)),
+    )
 
 
 def build_evidence_aliases(evidence: list[Evidence]) -> dict[str, str]:
@@ -235,6 +542,8 @@ def _parse_evidence(
                             instrument_name=ev.instrument_name,
                             status=ev.status,
                             partial=ev.partial,
+                            result_partial=ev.result_partial,
+                            instrument=ev.instrument,
                             note=f"{claim} | {ev.note}" if ev.note else claim,
                         )
                     )
@@ -293,6 +602,7 @@ def _parse_evidence(
                     instrument_name=original_ev.instrument_name,
                     status=original_ev.status,
                     partial=original_ev.partial,
+                    result_partial=original_ev.result_partial,
                     note="；".join(part for part in (original_ev.note, combined_note) if part) or None,
                     instrument=original_ev.instrument,
                 )
@@ -411,6 +721,15 @@ class ReasoningEngine:
         #: ``None`` = 没量到（打桩客户端 / 端点不回 usage），与"用了 0 token"不同。
         self.last_llm_usage: Any = None
         self.last_llm_duration_ms: float | None = None
+        self.last_prompt_chars: int | None = None
+        self.last_context_build_ms: float | None = None
+        self.last_parse_duration_ms: float | None = None
+        self.last_evidence_ids: list[str] = []
+        self.last_completion_chars: int | None = None
+        self.last_finish_reason: str | None = None
+        self.last_parse_status: str | None = None
+        self.last_request_max_tokens: int | None = None
+        self.last_target_filter: dict[str, Any] = {}
 
     async def reason(
         self,
@@ -425,7 +744,10 @@ class ReasoningEngine:
         as_of_date: str | None = None,
         planned_as_of_date: str | None = None,
         market_closed: bool | None = None,
+        target_instrument: str | None = None,
+        compact_mode: bool = False,
     ) -> MarketIntelligence:
+        context_started = time.perf_counter()
         _, data_context_stats = _compact_normalized_data(
             results,
             per_tool=int(getattr(self.settings, "reasoning_context_datums_per_tool", 24) or 24),
@@ -458,10 +780,17 @@ class ReasoningEngine:
         parts.append("\n".join(date_lines))
         combined_context = "\n\n".join(parts)
 
-        aliases = evidence_aliases or build_evidence_aliases(evidence)
+        prompt_evidence = evidence
+        if compact_mode:
+            prompt_evidence, self.last_target_filter = _compact_evidence_for_target(
+                evidence, requested_date=requested_date, target_instrument=target_instrument,
+            )
+        else:
+            self.last_target_filter = {"enabled": False, "excluded_count": 0, "excluded_reasons": {}}
+        aliases = evidence_aliases or build_evidence_aliases(prompt_evidence)
         combined_context = translate_evidence_references(combined_context, {real: alias for alias, real in aliases.items()})
         evidence_payload = []
-        for item in evidence:
+        for item in prompt_evidence:
             row = item.model_dump(exclude_none=True)
             row["value"] = _compact_value(row.get("value"))
             real_id = str(row.get("id"))
@@ -472,7 +801,12 @@ class ReasoningEngine:
             if alias:
                 row["id"] = alias
             evidence_payload.append(row)
-        prompt = REASONING_PROMPT.format(
+        # Broad reports previously asked the model to echo complete evidence
+        # objects plus several overlapping narrative sections. The live P16
+        # run hit finish_reason=length. Selectors retain the same citations and
+        # schema checks; _parse_evidence fills every field from the real ledger.
+        template = REASONING_PROMPT if compact_mode else REFERENCE_REPORT_PROMPT
+        prompt = template.format(
             question=question,
             data=json.dumps([{"tool": r.tool, "status": r.status, "partial": r.partial,
                              "datum_count": len(r.normalized), "reason_codes": r.reason_codes}
@@ -483,37 +817,67 @@ class ReasoningEngine:
                 default=str,
                 separators=(",", ":"),
             ),
-            evidence_alias_context=_alias_prompt_context(evidence, aliases),
+            evidence_alias_context=_alias_prompt_context(prompt_evidence, aliases),
             history_context=combined_context,
         )
         prompt += "\n\n仅使用已展示的 evidence。最多 6 条核心 claims，每条给 claim_type、标的、日期和引用；缺失覆盖写 caveat，避免重复正文和复述 evidence 值。"
+        if compact_mode:
+            prompt += "\nCOMPACT_OUTPUT=true：单标的明确日期问题最多 3 条 fact claims；只引用真实 evidence ID；保留 requested_date、as_of_date、instrument、source、retrieved_at；省略重复正文、解释、比较和因果。"
         prompt += "\n对于仅询问单标的报价的问题：只写已返回 price 与实际观测日期的事实，解释和比较字段可留空；来源/可用性说明放 data_caveats，不生成额外市场判断。quote 的 price 不等同于任意历史日期收盘价。"
         prompt += "\n\nDATA_CONTEXT_LIMITS=" + json.dumps(data_context_stats, ensure_ascii=False)
         prompt = translate_evidence_references(prompt, {real: alias for alias, real in aliases.items()})
+        self.last_prompt_chars = len(prompt)
+        self.last_context_build_ms = (time.perf_counter() - context_started) * 1000
+        self.last_evidence_ids = [str(item.id) for item in evidence]
 
         _llm_started = time.perf_counter()
-        response = await self.client.chat.completions.create(
-            model=self.settings.openai_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你必须只返回合法 JSON。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1,
-        )
-        # 阶段 6：用量/耗时留给调用方打 run_log `llm` 事件（本层拿不到 run_id）。
-        self.last_llm_usage = getattr(response, "usage", None)
-        self.last_llm_duration_ms = (time.perf_counter() - _llm_started) * 1000
+        try:
+            request_max_tokens = int(getattr(self.settings, "llm_max_completion_tokens", 2048) or 2048)
+            self.last_request_max_tokens = request_max_tokens
+            response = await self.client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你必须只返回合法 JSON。",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=request_max_tokens,
+            )
+            self.last_llm_usage = getattr(response, "usage", None)
+            choice = response.choices[0] if response.choices else None
+            message = getattr(choice, "message", None)
+            content = getattr(message, "content", None)
+            self.last_completion_chars = len(content) if isinstance(content, str) else 0
+            self.last_finish_reason = getattr(choice, "finish_reason", None)
+            if self.last_finish_reason == "length":
+                self.last_parse_status = "invalid_json"
+                raise LLMOutputError("Reasoning completion truncated (finish_reason=length)")
+        finally:
+            self.last_llm_duration_ms = (time.perf_counter() - _llm_started) * 1000
 
-        content = response.choices[0].message.content
         # 空 completion / ```json 围栏 / 顶层数组，三种都在 parse_json_object 里
         # 统一变成 LLMOutputError（→ 502）。以前这里只有裸 json.loads：
         # 围栏直接 502（而且是在所有工具调用都已付费之后），数组会在下面的
         # payload.get(…) 上抛 AttributeError → 500。
-        payload = parse_json_object(content, source="Reasoning")
+        parse_started = time.perf_counter()
+        try:
+            payload = parse_json_object(content, source="Reasoning")
+            self.last_parse_status = "valid_json_object"
+        except LLMOutputError as exc:
+            message = str(exc)
+            self.last_parse_status = (
+                "empty_completion" if "empty completion" in message
+                else "invalid_json" if "invalid JSON" in message
+                else "non_object_json" if "expected an object" in message
+                else "output_error"
+            )
+            raise
+        finally:
+            self.last_parse_duration_ms = (time.perf_counter() - parse_started) * 1000
 
         # ── 后处理：转换为模型可接受的格式 ──
         #

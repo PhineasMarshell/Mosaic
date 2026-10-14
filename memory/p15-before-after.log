@@ -1,0 +1,3 @@
+finalize_audit: delivery_status=blocked final_audit_status=revise_exhausted�����־û���errors=0��
+persist_research: delivery_status=blocked/final_audit_status=revise_exhausted/verdict=pass������ memory���Ի��ִ��뵱��״̬��question=<redacted len=7> errors=0��
+{"scenario": "unreferenced_positive_claim", "comparison": [{"version": "P14_snapshot", "delivery_status": "verified", "reason_codes": [], "persisted": true, "isolated_sqlite_counts": {"research_records": 1, "conversations": 1, "daily_states": 1}}, {"version": "P15", "delivery_status": "blocked", "reason_codes": ["no_verified_claim", "missing_reference", "verified_provenance_failed"], "persisted": false, "isolated_sqlite_counts": {"research_records": 0, "conversations": 0, "daily_states": 0}}], "production_ready": false}

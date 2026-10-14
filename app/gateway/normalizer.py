@@ -620,6 +620,12 @@ def _extract_metrics(
                 if isinstance(value, list):
                     _items, _start = _slice_list(key, value, _tool)
                     for i, item in enumerate(_items, _start):
+                        item_timestamp = _timestamp
+                        if isinstance(item, dict):
+                            for date_key in ("date", "trade_date", "trading_date", "as_of_date", "日期", "交易日期", "交易日", "time", "datetime", "timestamp", "t"):
+                                if item.get(date_key) is not None:
+                                    item_timestamp = str(item[date_key])
+                                    break
                         _extract_metrics(
                             item,
                             parent_path=f"{path}[{i}]",
@@ -628,7 +634,7 @@ def _extract_metrics(
                             _domain=_domain,
                             _status=_status,
                             _partial=_partial,
-                            _timestamp=_timestamp,
+                            _timestamp=item_timestamp,
                             _source=_source,
                         )
                 elif isinstance(value, dict):
@@ -747,6 +753,11 @@ def _extract_metrics(
             idx_path = f"{parent_path}[{i}]" if parent_path else f"item[{i}]"
             # 列表元素是 dict/list 时递归展开，不是总结
             if isinstance(item, dict):
+                item_timestamp = _timestamp
+                for date_key in ("date", "trade_date", "trading_date", "as_of_date", "日期", "交易日期", "交易日", "time", "datetime", "timestamp", "t"):
+                    if item.get(date_key) is not None:
+                        item_timestamp = str(item[date_key])
+                        break
                 _extract_metrics(
                     item,
                     parent_path=idx_path,
@@ -755,7 +766,7 @@ def _extract_metrics(
                     _domain=_domain,
                     _status=_status,
                     _partial=_partial,
-                    _timestamp=_timestamp,
+                    _timestamp=item_timestamp,
                     _source=_source,
                 )
             elif isinstance(item, list):

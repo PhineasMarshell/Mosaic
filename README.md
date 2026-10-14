@@ -8,6 +8,8 @@ Mosaic 是一个基于 **Market Gateway MCP** 的市场情报 Agent。它不负�
 
 ## Architecture
 
+已接入同花顺问财官方公告、财务、事件、基本资料、研报、行情、新闻、宏观、行业、股东股本、指数、A股/板块筛选、公司经营和机构研究十五类 Skill，包装为 Mosaic 内部工具。可直接询问“上证指数2026年10月9日收盘价”“筛选板块：涨幅前五”；常见对应查询由规划层补齐工具调用。共用 `IWENCAI_API_KEY`，重启后可用，生产运行直接调用官方 OpenAPI。指数身份、每项日期、原单位、候选分页、经营报告期和机构预测期限制均保留；未知时间不能称实时，候选结果不证明全部条件已验证，机构预测不等于已实现业绩。详见 [接入说明与能力边界](docs/iwencai-tools.md)。
+
 Mosaic 基于 **LangGraph** 多节点架构，Supervisor 路由 + 多 Analyst 并行采集 + Critic 闭环审计：
 
 ```text
@@ -167,7 +169,7 @@ Researching...
 }
 ```
 
-### 47 个工具覆盖 5 大市场
+### 63 个工具覆盖 5 大市场及宏观经济
 
 | 类别 | 数量 | 覆盖领域 |
 |------|------|----------|
@@ -183,6 +185,7 @@ Researching...
 | 美股基本面(SEC EDGAR) | 2 | 营收/净利/EPS/毛利年报+季报(us_fundamentals)、近期申报(us_filings_recent)，XBRL 直连 |
 | 健康检查 | 2 | 网关进程、行情模块状态 |
 | 新闻舆情 | 4 | DDGS 搜索(兜底)、个股新闻聚合、财联社电报快讯、多源主题聚合 |
+| 同花顺问财 | 15 | 官方公告、财务、事件、资料、研报、证券/指数行情、新闻、宏观、行业、股东股本、A股/板块筛选、经营、机构研究；自然语言 query |
 
 > 注：`klines`、`snapshot`、`window` 为跨域通用工具，被多个市场域复用。
 >
@@ -560,11 +563,11 @@ Mosaic/
 - `hk_stock` 可通过 `quote`(腾讯HK代码) + `search`(雪球) 直接获得行情，**北向资金由 `app/research/hk_northbound.py` 直连东财 KLineJSAPI 自动注入**
 - `commodities` 已接入 OKX 永续合约贵金属品种（黄金 XAU / 白银 XAG / 铂金 XPT），铜/原油待接入
 - `us_stock` 已接入雪球通道行情：`us_klines`(历史K线) + `us_window`(复盘时间窗)，symbol 用裸代码如 AAPL；实测 `/market/snapshot` 不支持 `exchange=xueqiu`，实时快照待接入。基本面由 `app/research/sec_edgar.py` 直连 SEC EDGAR XBRL 提供：`us_fundamentals`(营收/净利/EPS/毛利的最新年报与季报值，含申报溯源) + `us_filings_recent`(最近 10 份 10-K/10-Q/8-K)，需配置 `SEC_EDGAR_CONTACT`
-- `macro` 需要后续接入专用第三方数据源
+- `macro` 已接入同花顺问财官方宏观数据，可查询 GDP/CPI/PMI/社融等；保留实际国家地区、统计期、周期和单位
 
 ### Internal Tools
 
-Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过 Market Gateway 直接调用内部函数。当前内置了八个内部工具：
+Agent 支持通过注册表中设置 `http_method="INTERNAL"` 的工具来绕过 Market Gateway 直接调用内部函数。除上文十五个同花顺工具外，还有以下八个内部工具：
 - `internal_hk_northbound` — 港股通北向资金净流入数据（直连东方财富）
 - `internal_hk_index` — 恒生指数 & 恒生科技指数快照（直连东方财富）
 - `news_search` — DDGS 新闻舆情搜索（跨域通用，**单源兜底**，限流常态化）

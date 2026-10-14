@@ -1,0 +1,13 @@
+........................................................................ [ 57%]
+......................................................                   [100%]
+============================== warnings summary ===============================
+.venv\Lib\site-packages\starlette\testclient.py:53
+  D:\Mosaic\.venv\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+.venv\Lib\site-packages\_pytest\cacheprovider.py:469
+  D:\Mosaic\.venv\Lib\site-packages\_pytest\cacheprovider.py:469: PytestCacheWarning: cache could not write path D:\Mosaic\.pytest_cache\v\cache\nodeids: [Errno 13] Permission denied: 'D:\\Mosaic\\.pytest_cache\\v\\cache\\nodeids'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+126 passed, 2 warnings in 5.62s

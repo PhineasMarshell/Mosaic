@@ -33,6 +33,7 @@ DEFAULT_DOMAINS: list[MarketDomain] = [
     "hk_stock",
     "commodities",
     "us_stock",
+    "macro",
 ]
 
 
@@ -71,6 +72,9 @@ class ToolCallPlan(BaseModel):
 class ResearchPlan(BaseModel):
     intent: ResearchIntent = Field(default_factory=ResearchIntent)
     steps: list[ToolCallPlan] = Field(default_factory=list)
+    #: Code-computed required reference-data Skills, not trusted LLM output.
+    required_tool_keys: list[str] = Field(default_factory=list)
+    missing_required_tool_keys: list[str] = Field(default_factory=list)
     early_stop: bool = False
     #: Date semantics are kept on the plan so they survive planner/route boundaries.
     requested_date: str | None = None

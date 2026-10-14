@@ -118,9 +118,10 @@ def _report():
     from app.models.response import MarketIntelligence
 
     return MarketIntelligence(
-        market_state="走强",
+        market_state="暂无可核验数据",
         state_label="RISK_ON",
-        what_happened="今日市场走强，商业航天领涨",
+        what_happened="暂无可核验数据",
+        claims=[{"claim": "暂无可核验数据", "claim_type": "structure", "evidence_ids": []}],
         confidence="high",
     )
 
@@ -203,11 +204,10 @@ async def test_pass_run_keeps_existing_behavior(monkeypatch):
     assert result.final_audit_status == "pass"
     assert result.delivery_status == "verified"
     assert result.report is not None
-    assert result.report.what_happened == "今日市场走强，商业航天领涨"
+    assert result.report.what_happened == "暂无可核验数据"
     assert result.errors == []
-    # 快乐路径不经过 finalize_audit 节点：state 里没有终态字段，由组装器按
-    # verdict=pass 兜底派生 —— 不额外花一次节点调用。
-    assert state.get("final_audit_status") is None
+    # P15: pass 也必须经过 Finalize 的逐 claim 校验并写出明确终态。
+    assert state["final_audit_status"] == "pass"
 
 
 # ------------------------------------------------------------------ #

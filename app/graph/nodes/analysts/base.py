@@ -224,6 +224,8 @@ class MarketAnalystNode:
             )
             remaining_budget = budget_seconds
         run_started = time.monotonic()
+        if hasattr(self._runtime, "set_run_id"):
+            self._runtime.set_run_id(state.get("run_id"))
         reserve = (self.settings.reasoning_min_budget_seconds + self.settings.critic_min_budget_seconds
                    + self.settings.finalize_min_budget_seconds)
         phase_deadline = min(run_started + self.settings.tools_phase_timeout_seconds,

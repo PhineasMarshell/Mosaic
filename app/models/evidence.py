@@ -21,6 +21,10 @@ class Evidence(BaseModel):
     instrument_name: str | None = None
     status: str = "success"
     partial: bool = False
+    # Coverage limitation on the parent result set.  This is distinct from
+    # ``partial`` on the datum itself: a complete row may support a narrow
+    # claim even when sibling rows were incomplete.
+    result_partial: bool = False
     note: str | None = None
     #: 阶段 4：这条证据针对的标的（工具调用参数里的 ``symbol``）。
     #: 报告里的公司名必须对得上某个 ``instrument``，否则只能是"未验证实体"。

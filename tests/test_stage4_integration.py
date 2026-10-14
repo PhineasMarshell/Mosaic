@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from verified_report_fixture import verified_quote_report
 
 import app.main as main
 from app.agent.persistence import persist_research
@@ -27,11 +28,10 @@ CONTROLLED_TMP = REPO_ROOT / ".tmp" / "stage4-integration"
 
 
 def _report() -> MarketIntelligence:
-    return MarketIntelligence(
+    return verified_quote_report(
         title="今日市场情报",
         market_state="震荡偏强",
         state_label="Neutral",
-        what_happened="指数震荡，成交额保持稳定",
         confidence="medium",
     )
 

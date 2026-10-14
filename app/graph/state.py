@@ -129,6 +129,7 @@ class ResearchState(BaseModel):
     intent: object | None = None
     #: Supervisor 产出的按 analyst 分组的工具分配（P2.5-3）
     route: list = []  # list[AnalystAssignment]，不加 reducer —— research_more 回环时整体覆盖
+    required_tool_keys: list[str] = []
 
     # ── analyst 产出（P3：三节点 Send 并行）──
     report: object | None = None
@@ -174,6 +175,10 @@ class ResearchState(BaseModel):
     #: 终态机器可读原因码，供 sync/SSE 与 delivery 日志保持一致。
     reason_codes: list[str] = []
     degraded_reason_codes: list[str] = []
+    #: P13：evidence-only fallback 的结构化准入诊断（候选数 / 接受数 / 拒绝原因）。
+    #: 由 ReasoningNode 在进入 fallback 时写入，sync/SSE 共用同一份，
+    #: 因此两条传输路径的交付诊断不会漂移。
+    fallback_diagnostics: dict = {}
     elapsed_ms: float | None = None
     exception_type: str | None = None
     stage: str | None = None

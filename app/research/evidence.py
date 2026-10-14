@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from app.agent.evidence_gate import is_usable_datum
+from app.gateway.iwencai_contracts import IWENCAI_TOOL_KEYS
 from app.gateway.normalizer import _is_eastmoney_f10_tool, infer_domain_from_tool
 from app.models.evidence import Evidence
 from app.models.market import ToolResult
@@ -163,6 +164,36 @@ def _extract_candle_summary_from_metrics(
         summary["timestamp_last"] = timestamps[-1]
 
     return summary
+
+
+def _extract_candle_rows_from_metrics(metrics: list[tuple[str, Any]]) -> list[dict[str, Any]]:
+    """Preserve each candle's own timestamp and values for claim-level evidence."""
+    candle_pattern = re.compile(r"candles?\[(\d+)\]\.(\w+)$", re.IGNORECASE)
+    groups: dict[int, dict[str, Any]] = {}
+    for metric, value in metrics:
+        match = candle_pattern.search(metric.lower())
+        if match:
+            groups.setdefault(int(match.group(1)), {})[match.group(2).lower()] = value
+    return [groups[index] for index in sorted(groups)]
+
+
+def _candle_date(candle: dict[str, Any]) -> str | None:
+    value = candle.get("t") or candle.get("date") or candle.get("time")
+    if value is None:
+        return None
+    text = str(value)
+    match = re.search(r"\d{4}-\d{2}-\d{2}", text)
+    if match:
+        return match.group()
+    if isinstance(value, (int, float)):
+        import datetime
+
+        stamp = float(value) / (1000 if abs(float(value)) > 100_000_000_000 else 1)
+        try:
+            return datetime.datetime.fromtimestamp(stamp, datetime.UTC).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
 
 
 def _extract_snapshot_summary(response: dict[str, Any], tool: str) -> dict[str, Any]:
@@ -343,13 +374,42 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
                             timestamp=None,
                             source=None,
                             status=result.status,
+                            # A summary covers the whole result set, so a
+                            # result-level coverage limitation applies to the
+                            # aggregate itself.  Individual normalized rows
+                            # below retain their own partial flag.
                             partial=result.partial,
+                            result_partial=result.partial,
                             note=f"聚合了 {summary['count']} 条 K 线数据",
                             instrument=instrument,
                             as_of_date=getattr(result, "as_of_date", None),
                             retrieved_at=getattr(result, "retrieved_at", None),
                             authority=getattr(result, "authority", None),
                             completeness=getattr(result, "completeness", "unknown"),
+                        )
+                    )
+                    counter += 1
+                for candle in _extract_candle_rows_from_metrics(candle_metrics):
+                    candle_date = _candle_date(candle)
+                    evidence.append(
+                        Evidence(
+                            id=f"{id_prefix}-{counter:03d}",
+                            source_tool=_operation_id(result),
+                            domain=_evidence_domain(result),
+                            metric="candle",
+                            value=candle,
+                            timestamp=str(candle.get("t")) if candle.get("t") is not None else candle_date,
+                            as_of_date=candle_date,
+                            source=getattr(result, "authority", None),
+                            status=result.status,
+                            partial=result.partial,
+                            result_partial=result.partial,
+                            note="单根 K 线；日期取自该记录的时间字段",
+                            instrument=instrument,
+                            retrieved_at=getattr(result, "retrieved_at", None),
+                            authority=getattr(result, "authority", None),
+                            completeness=getattr(result, "completeness", "unknown"),
+                            coverage="instrument",
                         )
                     )
                     counter += 1
@@ -368,6 +428,10 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
                         value = flattened
                     else:
                         value = str(value)[:200]
+                elif _operation_id(result) in IWENCAI_TOOL_KEYS and isinstance(value, (dict, list)):
+                    # Adapter already bounds text; keep the announcement URL and
+                    # summary intact so the report's citations remain reviewable.
+                    value = dict(value) if isinstance(value, dict) else list(value)
                 elif isinstance(value, (dict, list)):
                     value = str(value)[:200]
 
@@ -380,8 +444,13 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
                         value=value,
                         timestamp=datum.timestamp,
                         source=datum.source,
-                        status="partial" if datum.status == "partial" or result.status == "partial" else result.status,
-                        partial=datum.partial or result.partial,
+                        # Result-level partial describes coverage of the set,
+                        # not every row.  Keep datum-level validity isolated so
+                        # a dated, complete row can support its own claim even
+                        # when a sibling row is missing a date or field.
+                        status=datum.status,
+                        partial=datum.partial,
+                        result_partial=result.partial,
                         note=datum.note or getattr(result, "note", None),
                         instrument=datum.instrument or instrument,
                         instrument_name=getattr(datum, "instrument_name", None),
@@ -417,7 +486,7 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
                 or (item.timestamp[:10] if item.timestamp and re.match(r"^20\d{2}[-/]\d{1,2}[-/]\d{1,2}", item.timestamp) else None)
                 or "unknown"
             )
-            item.completeness = "partial" if item.partial or result.status == "partial" else (
+            item.completeness = "partial" if item.partial else (
                 item.completeness if item.completeness not in (None, "", "unknown") else getattr(result, "completeness", None) or "unknown"
             )
             if item.coverage in (None, "", "unknown"):

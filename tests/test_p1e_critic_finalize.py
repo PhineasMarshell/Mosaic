@@ -7,6 +7,7 @@ import types
 
 import pytest
 
+from app.agent.evidence_gate import match_claims_to_evidence
 from app.config import Settings
 from app.graph.nodes.critic import CriticNode, _code_level_issues, _coverage_issues
 from app.graph.nodes.finalize import FinalizeAuditNode
@@ -95,6 +96,88 @@ async def test_real_quote_or_limit_up_evidence_can_pass(claim, metric, value):
     }
     out = await _critic({"verdict": "pass", "reason": "matched evidence"})(state)
     assert out["critique"].verdict == "pass"
+
+
+def test_partial_result_set_can_support_one_complete_dated_kline_fact():
+    evidence = Evidence(
+        id="kline-close-20261009",
+        source_tool="get_market_klines",
+        tool_key="klines",
+        operation_id="get_market_klines",
+        domain="cross",
+        metric="iwencai_market[1].收盘价[20261009]",
+        value=1263.0,
+        instrument="SH600519",
+        instrument_name="贵州茅台",
+        as_of_date="2026-10-09",
+        timestamp="2026-10-09",
+        retrieved_at="2026-10-13T00:00:00Z",
+        source="同花顺问财",
+        authority="同花顺问财",
+        completeness="page",
+        coverage="instrument",
+        status="success",
+        result_partial=True,
+    )
+    claim = "贵州茅台(600519)在2026-10-09收盘价为1263.0元"
+    report = {"claims": [{"claim": claim, "claim_type": "fact", "evidence_ids": [evidence.id]}]}
+    rows = match_claims_to_evidence(
+        report, [evidence], expected_date="2026-10-09", requested_date="2026-10-09", expected_domain="a_share"
+    )
+    assert rows == [{
+        "claim": claim,
+        "evidence_ids": [evidence.id],
+        "matched_evidence_ids": [evidence.id],
+        "supported": True,
+        "reason_codes": [],
+    }]
+
+
+def test_partial_result_set_still_blocks_market_sentiment_and_full_coverage_claims():
+    evidence = Evidence(
+        id="kline-close-20261009", source_tool="get_market_klines", tool_key="klines",
+        metric="close", value=1263.0, instrument="SH600519", instrument_name="贵州茅台",
+        as_of_date="2026-10-09", timestamp="2026-10-09", source="wire", authority="wire",
+        completeness="page", coverage="instrument", status="success", result_partial=True,
+    )
+    for claim in ("市场情绪偏弱", "2026-10-09行情覆盖完整", "贵州茅台当日行情全貌如下"):
+        rows = match_claims_to_evidence(
+            {"claims": [{"claim": claim, "claim_type": "fact", "evidence_ids": [evidence.id]}]},
+            [evidence], expected_date="2026-10-09", requested_date="2026-10-09", expected_domain="a_share",
+        )
+        assert not rows[0]["supported"]
+        assert "partial_only" in rows[0]["reason_codes"]
+
+
+@pytest.mark.asyncio
+async def test_announcement_market_domain_is_checked_before_verified_delivery():
+    for instrument, instrument_name, expected in (
+        ("600519", "贵州茅台", "verified"),
+        ("HK00700", "腾讯控股", "blocked"),
+        ("HK600519", "贵州茅台", "blocked"),
+    ):
+        evidence = Evidence(
+            id="announcement-001", source_tool="internal_iwencai_announcement_search",
+            domain="media", metric="announcement_1", value={"title": f"{instrument_name}公告"},
+            instrument=instrument, instrument_name=instrument_name,
+            as_of_date="2026-10-09", retrieved_at="2026-10-09T10:00:00Z",
+            source="同花顺问财", authority="同花顺问财", coverage="instrument", completeness="complete",
+        )
+        claim = f"{instrument_name}在2026-10-09发布公告"
+        report = {
+            "what_happened": claim,
+            "claims": [{"claim": claim, "claim_type": "fact", "evidence_ids": [evidence.id]}],
+        }
+        state = {
+            "question": claim, "domain": "a_share", "planned_as_of_date": "2026-10-09",
+            "requested_date": "2026-10-09", "report": report, "evidence": [evidence], "results": [],
+        }
+        audited = await _critic({"verdict": "pass", "reason": "matched evidence"})(state)
+        finalized = await FinalizeAuditNode(Settings(_env_file=None))(state | audited)
+        assert finalized["delivery_status"] == expected
+        if expected == "blocked":
+            assert any("domain_mismatch" in issue.reason_codes for issue in audited["critique"].issues)
+            assert finalized["report"] is None
 
 
 @pytest.mark.asyncio

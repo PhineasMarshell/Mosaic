@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.gateway.iwencai_contracts import QUERY_TOOLS, SEARCH_TOOLS
+
 
 class ArgumentValidationError(ValueError):
     """Raised when a tool's canonical argument contract cannot be satisfied."""
@@ -98,6 +100,39 @@ def canonicalize_tool_arguments(tool_name: str, arguments: Any) -> dict[str, Any
     if not isinstance(arguments, dict):
         raise ArgumentValidationError("arguments must be an object")
     result = dict(arguments)
+    if tool_name in QUERY_TOOLS:
+        if set(result) - {"query", "page", "limit", "is_cache", "expand_index"}:
+            raise ArgumentValidationError("Iwencai query accepts only query, page, limit, is_cache and expand_index")
+        query = result.get("query")
+        if not isinstance(query, str) or not query.strip() or len(query) > 2000:
+            raise ArgumentValidationError("query must be a non-empty string of at most 2000 characters")
+        canonical = {"query": query.strip()}
+        for key, default, high in (("page", 1, 10000), ("limit", 10, 20)):
+            value = result.get(key, default)
+            if isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()):
+                value = int(value)
+            if type(value) is not int or not 1 <= value <= high:
+                raise ArgumentValidationError(f"{key} must be a positive integer from 1 to {high}")
+            canonical[key] = value
+        for key, default in (("is_cache", True), ("expand_index", True)):
+            value = result.get(key, default)
+            if isinstance(value, str) and value.lower() in {"0", "1", "true", "false"}:
+                value = value.lower() in {"1", "true"}
+            if type(value) is not bool:
+                raise ArgumentValidationError(f"{key} must be a boolean")
+            canonical[key] = value
+        result = canonical
+    if tool_name in SEARCH_TOOLS:
+        unexpected = set(result) - {"query", "size"}
+        if unexpected:
+            raise ArgumentValidationError("Iwencai search accepts only query and size")
+        query = result.get("query")
+        if not isinstance(query, str) or not query.strip() or len(query) > 2000:
+            raise ArgumentValidationError("query must be a non-empty string of at most 2000 characters")
+        size = result.get("size", 10)
+        if isinstance(size, bool) or not isinstance(size, int) or not 1 <= size <= 20:
+            raise ArgumentValidationError("size must be an integer from 1 to 20")
+        result = {"query": query.strip(), "size": size}
     if tool_name == "get_market_quotes":
         if "symbols" in result:
             values = _symbols(result["symbols"])

@@ -8,17 +8,18 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from verified_report_fixture import verified_quote_report
 
 import app.main as main
 from app.agent.persistence import persist_research
 from app.memory.storage import MarketMemory
-from app.models.response import MarketIntelligence, ResearchResponse
+from app.models.response import ResearchResponse
 
 
 def _result(run_id: str, conversation_id: str = "conv") -> ResearchResponse:
     return ResearchResponse(
         question=f"question-{run_id}",
-        report=MarketIntelligence(title="t", market_state="stable", state_label="Neutral", confidence="low"),
+        report=verified_quote_report(title="t", market_state="stable", state_label="Neutral", confidence="low"),
         conversation_id=conversation_id,
         critique={"verdict": "pass"},
         final_audit_status="pass",
@@ -130,7 +131,7 @@ class _ParallelGraph:
         yield "updates", {"supervisor": {"run_id": input_state["run_id"]}}
         yield "values", {
             **input_state,
-            "report": MarketIntelligence(title="t", market_state="stable", state_label="Neutral", confidence="low"),
+            "report": verified_quote_report(title="t", market_state="stable", state_label="Neutral", confidence="low"),
             "critique": {"verdict": "pass"},
             "errors": [],
         }

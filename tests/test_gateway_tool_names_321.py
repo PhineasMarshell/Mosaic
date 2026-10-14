@@ -130,8 +130,9 @@ def test_tool_counts_unchanged():
     舆情分析师（sentiment A0）再 +1 → ALL_TOOLS 48；BY_NAME 仍 40——xq_discussions
     复用已登记的 list_stock_discussions（timeline），name 可复用、键唯一。
     """
-    assert len(ALL_TOOLS) == 48
-    assert len(BY_NAME) == 40
+    # 同花顺共15个内部工具，不改变已有 Gateway operationId。
+    assert len(ALL_TOOLS) == 63
+    assert len(BY_NAME) == 55
     assert len(NEW_TOOL_NAMES) == 32
 
 

@@ -22,6 +22,7 @@ class NormalizedDatum(BaseModel):
     retrieved_at: str | None = None
     completeness: str = "unknown"
     instrument_scope: str = "unknown"
+    coverage: str = "unknown"
     instrument_name: str | None = None
     source: str | None = None
     tool: str
@@ -54,6 +55,7 @@ class ToolResult(BaseModel):
     as_of_date: str | None = None
     authority: str | None = None
     completeness: str = "unknown"
+    coverage: str = "unknown"
     #: 数据不完整的原因（上游自己的 note，或本地截断说明）。
     #: gateway 的契约是 partial=true 时"另有 note 说明"，以前这个字段被
     #: _METADATA_KEYS 直接丢掉了，用户和 LLM 都看不到数据为什么不全。
@@ -72,3 +74,22 @@ class ToolResult(BaseModel):
     transport_exception: bool = False
     upstream_status: str | None = None
     attempts: list[dict[str, Any]] = Field(default_factory=list)
+    # P6：统一外部 Skill / Gateway 审计字段。 这些字段只描述本次调用的
+    # 链路，不改变 Evidence Gate 的日期、标的、authority 或 partial 判定。
+    run_id: str | None = None
+    transport: str | None = None
+    endpoint: str | None = None
+    skill_id: str | None = None
+    skill_version: str | None = None
+    source_tool: str | None = None
+    primary_source: str | None = None
+    fallback_source: str | None = None
+    fallback_reason: str | None = None
+    source_switch: bool = False
+    mcp_initialize: bool | None = None
+    mcp_list_tools: bool | None = None
+    mcp_real_call: bool | None = None
+
+    @property
+    def datum_count(self) -> int:
+        return len(self.normalized)

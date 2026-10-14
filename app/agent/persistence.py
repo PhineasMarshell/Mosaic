@@ -74,6 +74,40 @@ def _daily_state_data(report: MarketIntelligence) -> dict:
     return state_data
 
 
+_NON_PERSISTABLE_TRANSPORT_CODES = frozenset(
+    {
+        "timeout",
+        "research_deadline_exhausted",
+        "deadline_exhausted",
+        "gateway_timeout",
+        "mcp_upstream_timeout",
+        "gateway_tls_error",
+        "gateway_auth_error",
+        "ths_invalid_credentials",
+        "mcp_fallback_not_attempted_auth",
+        "fallback_transport_error",
+    }
+)
+
+
+def _transport_failure_blocks_persistence(result: ResearchResponse) -> bool:
+    """Keep transient/auth/fallback failures out of reusable memory.
+
+    A report may still be useful when an optional source is unavailable, but
+    persisting it would make the next request treat a known incomplete run as
+    verified history.  The public response retains the exact reason codes.
+    """
+    for item in result.tool_results or []:
+        if not isinstance(item, dict):
+            item = item.model_dump() if hasattr(item, "model_dump") else dict(getattr(item, "__dict__", {}) or {})
+        codes = {str(code) for code in (item.get("reason_codes") or [])}
+        if codes & _NON_PERSISTABLE_TRANSPORT_CODES:
+            return True
+        if item.get("status") == "error" and item.get("fallback_source") == "mcp":
+            return True
+    return bool(set(result.reason_codes or []) & _NON_PERSISTABLE_TRANSPORT_CODES)
+
+
 async def persist_research(
     result: ResearchResponse,
     question: str,
@@ -92,21 +126,13 @@ async def persist_research(
     - ``degraded`` 与 ``blocked`` / ``failed`` 一律不写入 memory；
       诊断信息保留在响应和结构化运行日志中。
     - ``result.report is None`` 时不写任何持久化记录，以免空值污染历史状态。
+    - 写入前复用 Finalize 的逐 claim 严格校验；缺引用等问题在初始化 memory
+      之前拒绝，并保留具体 reason_codes。
     - 使用结果 ``run_id`` 作为幂等键；锁冲突只在事务回滚后有限重试。
 
     Returns:
         是否把结论写进了可复用的研究 / 记忆（完整 verified 审计才为 True）。
     """
-    if memory is None:
-        try:
-            from app.memory.storage import get_memory
-
-            memory = get_memory()
-        except Exception as exc:  # noqa: BLE001 — persistence must not fake success
-            result.persisted = False
-            logger.warning("Memory initialization failed (non-fatal): %s", type(exc).__name__)
-            return False
-
     delivery_status = result.delivery_status
     critique = result.critique or {}
     verdict = critique.get("verdict") if isinstance(critique, dict) else getattr(critique, "verdict", None)
@@ -116,6 +142,24 @@ async def persist_research(
         and str(verdict or "").lower() == "pass"
         and result.report is not None
     )
+
+    if verified and _transport_failure_blocks_persistence(result):
+        verified = False
+
+    if verified:
+        from app.graph.nodes.finalize import _strict_verified_issues
+
+        issues = _strict_verified_issues({
+            "question": question,
+            "requested_date": result.requested_date,
+            "as_of_date": result.as_of_date,
+            "market_closed": result.market_closed,
+            "results": result.tool_results,
+        }, result.report)
+        if issues:
+            verified = False
+            result.reason_codes = list(dict.fromkeys([*result.reason_codes, *issues, "unverified_claim"]))
+            logger.warning("persist_research: provenance gate rejected reason_codes=%s", issues)
 
     if not verified:
         result.persisted = False
@@ -139,6 +183,16 @@ async def persist_research(
             len(result.errors),
         )
         return False
+
+    if memory is None:
+        try:
+            from app.memory.storage import get_memory
+
+            memory = get_memory()
+        except Exception as exc:  # noqa: BLE001 — persistence must not fake success
+            result.persisted = False
+            logger.warning("Memory initialization failed (non-fatal): %s", type(exc).__name__)
+            return False
 
     max_retries, retry_backoff_ms = _retry_options(max_retries, retry_backoff_ms)
     max_attempts = max_retries + 1

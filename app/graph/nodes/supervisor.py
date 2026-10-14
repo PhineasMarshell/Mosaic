@@ -20,6 +20,7 @@ from app.graph.gap_loop import (
     gap_key_decision,
     render_gap_context,
 )
+from app.graph.iwencai_plan import apply_required_iwencai_tools
 from app.graph.market_plan import apply_as_of_date_to_plan, apply_market_summary_prefix
 from app.llm_json import parse_json_object
 from app.models.research import DEFAULT_DOMAINS, ResearchPlan
@@ -99,6 +100,7 @@ class SupervisorNode:
             result: dict = {
                 "intent": plan.intent,
                 "route": self._build_route(plan),
+                "required_tool_keys": plan.required_tool_keys,
                 "requested_date": plan.requested_date,
                 "planned_as_of_date": plan.as_of_date,
                 "market_closed": plan.market_closed,
@@ -130,6 +132,14 @@ class SupervisorNode:
                     f"tool_call_filtered: {key}（不在本次域过滤后的注册表文本中，疑似幻觉/串域，已跳过）"
                     for key in filtered_keys
                 ]
+            if plan.missing_required_tool_keys:
+                result.update(
+                    finalize_after_gap=True, blocked_reason="tool_call_budget_insufficient",
+                    reason_codes=["required_tool_budget_insufficient"],
+                )
+                result.setdefault("errors", []).append(
+                    "Required tools could not be planned: " + ", ".join(plan.missing_required_tool_keys)
+                )
             return result
         except StageBudgetExceeded:
             return {
@@ -251,6 +261,7 @@ class SupervisorNode:
             ],
             response_format={"type": "json_object"},
             temperature=0,
+            max_tokens=int(getattr(self.settings, "llm_max_completion_tokens", 2048) or 2048),
         )
         reserve = (
             float(getattr(self.settings, "tools_min_budget_seconds", 45) or 45)
@@ -373,6 +384,9 @@ class SupervisorNode:
         apply_as_of_date_to_plan(plan, plan.as_of_date)
         if forced_gap:
             logger.info("Supervisor: 代码级补齐 Critic 缺口工具: %s", forced_gap)
+        plan.missing_required_tool_keys = apply_required_iwencai_tools(
+            plan, question=question, registry=registry, max_steps=self.settings.max_research_steps, results=results,
+        )
         self._last_forced_gap = list(forced_gap)
         prior_disposition = []
         if critique is not None:

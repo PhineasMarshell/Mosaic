@@ -51,7 +51,8 @@ _NON_BLOCKING_REASONS = {"unknown_date", "unknown_source", "unknown_tool_key", "
 
 
 def _field(obj: Any, key: str, default=None):
-    return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
+    value = obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
+    return default if value is None else value
 
 
 def is_usable_datum(datum: Any) -> bool:
@@ -108,6 +109,18 @@ def evidence_date_scope(tool_key: str | None, operation_id: str | None) -> str:
         except KeyError:
             continue
     if meta is not None:
+        if meta.key == "iwencai_finance":
+            return "reporting_period"
+        if meta.key == "iwencai_basicinfo":
+            return "static"
+        if meta.key == "iwencai_macro":
+            return "economic_period"
+        if meta.key == "iwencai_management":
+            return "snapshot"
+        if meta.key == "iwencai_industry":
+            return "mixed_reference"
+        if meta.key == "iwencai_report_search":
+            return "event"
         if meta.category == "news" or meta.key == "timeline":
             return "event"
         if meta.category in {"technical", "moneyflow"} and meta.key not in {"search", "hk_search"}:
@@ -151,6 +164,9 @@ def run_evidence_gate(
         operation_id = _field(result, "operation_id") or _field(result, "tool")
         date_scope = evidence_date_scope(raw_tool_key, operation_id)
         expected_date = event_expected_date if date_scope == "event" else market_expected_date
+        if date_scope in {"reporting_period", "economic_period", "static"}:
+            # A report period/static attribute is not today's trading observation.
+            expected_date = None
         status = _field(result, "status")
         raw_normalized = list(_field(result, "normalized", []) or [])
         datums = _result_datums(result)
@@ -178,6 +194,18 @@ def run_evidence_gate(
             gate.evidence_quality.append({"tool_key": tool, "operation_id": _field(result, "operation_id") or _field(result, "tool"), "valid": False, "reason_codes": reasons, "evidence_ids": []})
             continue
         for index, datum in enumerate(datums):
+            # Typed normalized fields can have mixed scopes in one response.
+            # Reset per datum; a report field must not change the next quote's
+            # date requirement. No Skill-specific admission branches here.
+            date_scope = evidence_date_scope(raw_tool_key, operation_id)
+            expected_date = event_expected_date if date_scope == "event" else market_expected_date
+            if date_scope in {"reporting_period", "economic_period", "static", "snapshot"}:
+                expected_date = None
+            value = _field(datum, "value")
+            datum_scope = value.get("date_scope") if isinstance(value, dict) else None
+            if datum_scope in {"market", "event", "reporting_period", "snapshot", "static"}:
+                date_scope = datum_scope
+                expected_date = market_expected_date if date_scope == "market" else event_expected_date if date_scope == "event" else None
             # as_of_date is the observation date.  A timestamp may be a
             # retrieval/event timestamp, and retrieved_at is never eligible.
             timestamp = (
@@ -209,13 +237,16 @@ def run_evidence_gate(
             instrument = returned_instrument or (expected_instruments[0] if len(expected_instruments) == 1 else None)
             declared_scope = str(_field(datum, "instrument_scope", "") or "").strip().lower()
             coverage = declared_scope if declared_scope and declared_scope != "unknown" else ("instrument" if instrument else "market")
-            partial = bool(_field(result, "partial") or _field(datum, "partial") or status == "partial" or _field(datum, "status") == "partial")
+            # A partial result limits set-wide claims, but does not make each
+            # complete, dated row partial. Keep both scopes visible to Critic.
+            partial = bool(_field(datum, "partial") or _field(datum, "status") == "partial")
+            result_partial = bool(_field(result, "partial") or status == "partial")
             hard_reasons = [reason for reason in reasons if reason not in _NON_BLOCKING_REASONS]
             source = _field(datum, "source") or _field(datum, "authority") or _field(result, "authority") or "unknown"
             if not (_field(datum, "source") or _field(datum, "authority") or _field(result, "authority")):
                 reasons.append("unknown_source")
             metric = str(_field(datum, "metric", "") or "")
-            row = {"tool_key": tool, "operation_id": operation_id, "datum_index": index, "metric": metric, "datum_value": _field(datum, "value"), "evidence_id": f"{tool}-{index}", "source": source, "requested_instruments": expected_instruments, "returned_instrument": returned_instrument or "unknown", "instrument": instrument or "unknown", "as_of_date": timestamp or "unknown", "date_scope": date_scope, "retrieved_at": _field(datum, "retrieved_at") or _field(result, "retrieved_at") or "unknown", "completeness": "partial" if partial else (_field(datum, "completeness") or _field(result, "completeness") or "unknown"), "coverage": coverage, "valid": not hard_reasons, "reason_codes": reasons}
+            row = {"tool_key": tool, "operation_id": operation_id, "datum_index": index, "metric": metric, "datum_value": _field(datum, "value"), "evidence_id": f"{tool}-{index}", "source": source, "requested_instruments": expected_instruments, "returned_instrument": returned_instrument or "unknown", "instrument": instrument or "unknown", "as_of_date": timestamp or "unknown", "date_scope": date_scope, "retrieved_at": _field(datum, "retrieved_at") or _field(result, "retrieved_at") or "unknown", "completeness": "partial" if partial else (_field(datum, "completeness") or _field(result, "completeness") or "unknown"), "coverage": coverage, "partial": partial, "result_partial": result_partial, "valid": not hard_reasons, "reason_codes": reasons}
             gate.evidence_quality.append(row)
             hard_reasons = [reason for reason in reasons if reason not in _NON_BLOCKING_REASONS]
             gate.reason_codes.extend(reasons)
@@ -239,7 +270,28 @@ def run_evidence_gate(
 
 
 def _claim_needs_price(claim: str) -> bool:
-    return bool(re.search(r"价格|股价|上涨|下跌|涨停|跌停|收涨|收跌|行情|报价|突破", claim))
+    return bool(re.search(r"价格|股价|点位|指数值|上涨|下跌|涨停|跌停|收涨|收跌|行情|报价|突破", claim))
+
+
+def evidence_domain_compatible(item: Any, claim: str, expected_domain: str) -> bool:
+    """Separate source categories from an explicitly different security market."""
+    item_domain = str(_field(item, "domain", "") or "").strip().lower()
+    if not expected_domain or expected_domain == "cross" or not item_domain or item_domain in {"unknown", expected_domain}:
+        return True
+    if expected_domain != "a_share":
+        return False
+    if item_domain in {"hk_stock", "us_stock", "crypto"}:
+        return False
+    if item_domain not in {"media", "reference"}:
+        return True
+    instrument = str(_field(item, "instrument", "") or "").upper().replace(" ", "")
+    if item_domain == "reference":
+        # Reference also labels index and industry rows. It is a source kind,
+        # not a foreign market; reject only an explicitly foreign instrument.
+        return not (instrument.startswith("HK") or instrument.endswith(".HK"))
+    if not re.search(r"新闻|消息|公告|报道|研报|事件", claim):
+        return False
+    return bool(re.fullmatch(r"(?:(?:SH|SZ|BJ)?\d{6}|\d{6}\.(?:SH|SZ|BJ))", instrument))
 
 
 def _claim_codes(claim: str) -> set[str]:
@@ -305,12 +357,72 @@ _THEME_OR_INDEX_TERMS = {
     "科创50",
     "中证500",
     "中证1000",
+    "恒生指数",
+    "纳斯达克指数",
+    "道琼斯指数",
+    "标普500",
 }
 
 
-def _market_predicate_reason(claim: str, item: Any) -> str | None:
+def _market_metric_value(item: Any) -> tuple[str, Any]:
+    """Read market fields inside typed normalized row context."""
     metric = str(_field(item, "metric", "") or "").lower()
     value = _field(item, "value")
+    if isinstance(value, dict) and "value" in value:
+        if value.get("date_scope") == "market":
+            semantic = metric + " " + str(value.get("indicator", ""))
+            if re.search(r"涨跌幅|涨幅|跌幅", semantic):
+                metric += ".change_pct"
+            elif re.search(r"最新价|收盘价|开盘价|价格|点位|指数值", semantic):
+                metric += ".price"
+            value = value.get("value")
+    return metric, value
+
+
+def _typed_claim_reasons(claim: str, item: Any) -> list[str]:
+    """An attributed opinion cannot become an observed or realized fact."""
+    value = _field(item, "value")
+    if not isinstance(value, dict) or value.get("data_kind") != "institutional_opinion":
+        return []
+    reasons = []
+    institution = value.get("institution_name")
+    if not institution:
+        reasons.append("missing_institution_provenance")
+    elif str(institution) not in claim:
+        reasons.append("unattributed_institutional_opinion")
+    if not value.get("publication_date"):
+        reasons.append("missing_publication_date")
+    if not (_field(item, "source") or _field(item, "authority")):
+        reasons.append("unknown_source")
+    if not _field(item, "instrument"):
+        reasons.append("unknown_returned_instrument")
+    if re.search(r"已实现|实际(?:利润|业绩|收入|股价)|实现.{0,8}(?:利润|收入)|保证|必然", claim):
+        reasons.append("institutional_opinion_not_realized")
+    kind = value.get("opinion_kind")
+    if kind == "forecast":
+        target = str(value.get("target_period") or "")
+        if not target:
+            reasons.append("missing_forecast_period")
+        else:
+            years = set(re.findall(r"(20\d{2})年", claim))
+            if years and not any(year in target for year in years):
+                reasons.append("forecast_period_mismatch")
+    qualifiers = {
+        "forecast": r"预测|预期",
+        "target_price": r"目标价",
+        "rating": r"评级|评分|星级",
+        "recommendation": r"金股|推荐|机构观点",
+        "research_report": r"研报|研究观点|机构观点|标题",
+    }
+    if kind in qualifiers and not re.search(qualifiers[kind], claim):
+        reasons.append("institutional_opinion_not_observation")
+    return reasons
+
+
+def _market_predicate_reason(claim: str, item: Any) -> str | None:
+    metric, value = _market_metric_value(item)
+    if re.search(r"股价|股票价格|个股|股票", claim) and _field(item, "coverage") in {"industry", "industry_index", "index"}:
+        return "unmatched_instrument"
     direction_metric = bool(re.search(r"(?:^|[.\[\]])(?:change|change_pct|pct_change|return|涨跌幅|涨幅|跌幅|涨跌额)(?:$|[._\[\]])", metric))
     price_metric = bool(re.search(r"(?:^|[.\[\]])(?:price|last|close|报价|收盘价)(?:$|[._\[\]])", metric))
     if "涨停" in claim:
@@ -341,10 +453,9 @@ def _market_predicate_reason(claim: str, item: Any) -> str | None:
 
 
 def _numeric_claim_reason(claim: str, item: Any) -> str | None:
-    metric = str(_field(item, "metric", "") or "").lower()
-    value = _field(item, "value")
+    metric, value = _market_metric_value(item)
     percent = re.search(r"(?:上涨|下跌|收涨|收跌|涨幅|跌幅|涨跌幅)\s*([+-]?\d+(?:\.\d+)?)\s*[%％]", claim)
-    price = re.search(r"(?:价格|股价|报价|收盘价)(?:为|是|达|到)?\s*([+-]?\d+(?:\.\d+)?)\s*元?", claim)
+    price = re.search(r"(?:价格|股价|报价|收盘价|点位|指数值)(?:为|是|达|到)?\s*([+-]?\d+(?:\.\d+)?)\s*(?:元|点)?", claim)
     if percent:
         if not re.search(r"pct|percent|涨跌幅|涨幅|跌幅", metric):
             return "missing_percent_metric"
@@ -363,6 +474,55 @@ def _numeric_claim_reason(claim: str, item: Any) -> str | None:
     return None if abs(abs(actual) - abs(expected)) <= tolerance else "numeric_mismatch"
 
 
+def _code_owned_limitation(
+    text: str,
+    *,
+    requested_date: str | None,
+    expected_date: str | None,
+    market_closed: bool | None,
+) -> bool:
+    """Allow only complete calendar/data-gap templates, never positive prose.
+
+    A structure label or a neighbouring caveat is not proof. Calendar clauses
+    must agree with code-owned request metadata; every other clause must be
+    an explicit statement of unavailable/unverified data.
+    """
+    clauses = [part.strip() for part in re.split(r"[，,；;。\n]+", text) if part.strip()]
+    if not clauses:
+        return False
+    date_pattern = r"20\d{2}-\d{2}-\d{2}"
+    known_dates = {value for value in (requested_date, expected_date) if value}
+    for clause in clauses:
+        dates = re.findall(date_pattern, clause)
+        if dates and (not known_dates or any(value not in known_dates for value in dates)):
+            return False
+        calendar = re.fullmatch(rf"(?:请求日\s*)?(?:({date_pattern})\s*)?(?:A股|市场)?休市", clause)
+        if calendar:
+            if market_closed is not True:
+                return False
+            if calendar.group(1) and calendar.group(1) != requested_date:
+                return False
+            continue
+        if re.fullmatch(rf"(?:可核验)?数据截至\s*{date_pattern}", clause):
+            if not expected_date or dates != [expected_date]:
+                return False
+            continue
+        gap = re.fullmatch(
+            rf"(?:(?:请求日|最近交易日)\s*(?:{date_pattern})?\s*)?"
+            r"(?:(?:A股)?(?:行情|数据|行情数据|行情证据)\s*)?"
+            r"(?:暂无|尚无)(?:可核验|可用交易日)(?:行情数据|行情证据|数据|证据|行情)?",
+            clause,
+        )
+        unverified = re.fullmatch(
+            rf"(?:(?:请求日|最近交易日)\s*(?:{date_pattern})?\s*)?"
+            r"(?:(?:行情|数据|行情数据)\s*)?(?:尚)?(?:未验证|未核实|无法确认)",
+            clause,
+        )
+        if not gap and not unverified:
+            return False
+    return True
+
+
 def match_claims_to_evidence(
     report: Any,
     evidence: list[Any],
@@ -370,20 +530,38 @@ def match_claims_to_evidence(
     *,
     requested_date: str | None = None,
     market_closed: bool | None = None,
+    expected_domain: str | None = None,
+    strict_provenance: bool = False,
+    expected_instruments: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Check every claim's cited IDs and observable scope after Reasoning."""
+    """Check every claim's cited IDs and observable scope after Reasoning.
+
+    ``strict_provenance`` is used by the terminal audit/replay boundary.  The
+    legacy matcher remains permissive for old analytical callers, while the
+    strict path requires an explicit source, retrieval timestamp, dated
+    observation and usable coverage before an evidence item can support a
+    delivered claim. Only exact code-owned calendar/data-gap templates are
+    exempt from citations; a structure label or possibility word is not enough.
+    """
     by_id = {str(_field(item, "id")): item for item in evidence or [] if _field(item, "id")}
     planned_date = normalize_date(expected_date)
     request_date = normalize_date(requested_date)
     rows: list[dict[str, Any]] = []
     for claim in _field(report, "claims", []) or []:
         text = str(_field(claim, "claim", "") or "")
+        claim_type = str(_field(claim, "claim_type", "") or "").lower()
         ids = [str(x) for x in (_field(claim, "evidence_ids", []) or [])]
         hard_reasons: list[str] = []
         candidate_reasons: list[str] = []
         predicate_failures: list[str] = []
         matched: list[str] = []
         candidates: list[Any] = []
+        if strict_provenance and not ids and _code_owned_limitation(
+            text, requested_date=request_date, expected_date=planned_date, market_closed=market_closed,
+        ):
+            rows.append({"claim": text, "evidence_ids": [], "matched_evidence_ids": [],
+                         "supported": True, "reason_codes": []})
+            continue
         for eid in ids:
             item = by_id.get(eid)
             if item is None:
@@ -397,7 +575,14 @@ def match_claims_to_evidence(
             if status == "error" or metric == "tool_status":
                 hard_reasons.append("invalid_evidence")
                 continue
-            if _claim_needs_price(text) and ("news" in source_tool or "telegraph" in source_tool) and not re.search(r"price|close|last|change|涨跌|涨停", metric):
+            if strict_provenance and (status.lower() not in {"success", "partial"} or not is_usable_datum(item)):
+                hard_reasons.append("invalid_evidence")
+                continue
+            if expected_domain and not evidence_domain_compatible(item, text, expected_domain):
+                hard_reasons.append("domain_mismatch")
+                continue
+            local_reasons.extend(_typed_claim_reasons(text, item))
+            if _claim_needs_price(text) and any(token in source_tool for token in ("news", "telegraph", "announcement", "iwencai_report_search")) and not re.search(r"price|close|last|change|涨跌|涨停", metric):
                 local_reasons.append("news_mention_not_price")
             is_partial = bool(
                 _field(item, "partial")
@@ -406,9 +591,61 @@ def match_claims_to_evidence(
             )
             if is_partial and not re.search(r"部分|样本|观察|截至|限定|可能|无法确认", text):
                 local_reasons.append("partial_only")
-            date = normalize_date(_field(item, "as_of_date")) or normalize_date(_field(item, "timestamp"))
+            if _field(item, "result_partial", False) and re.search(
+                r"最强|全市场|所有|全部|全貌|完整(?:行情|覆盖|数据)|(?:行情|数据|覆盖).{0,8}(?:完整|全貌)|前[一二三四五六七八九十0-9]+|排名|领先|第一|市场情绪|资金流向|资金流入|资金流出",
+                text,
+            ):
+                local_reasons.append("partial_only")
+            # A retrieved timestamp describes when we fetched data, never the
+            # observation date.  Terminal verification therefore uses the
+            # explicit as_of_date and does not fall back to timestamp.
+            date = normalize_date(_field(item, "as_of_date"))
+            if not strict_provenance:
+                date = date or normalize_date(_field(item, "timestamp"))
             if _claim_needs_date(text) and not date:
                 local_reasons.append("unknown_date")
+            if strict_provenance:
+                if not source_tool or source_tool in {"unknown", "reasoning_engine"}:
+                    local_reasons.append("missing_source_tool")
+                if not date:
+                    local_reasons.append("missing_as_of_date")
+                elif planned_date and date != planned_date:
+                    local_reasons.append("stale_date")
+                month = re.search(r"(20\d{2})\s*年\s*(1[0-2]|0?[1-9])\s*月", text)
+                if month and (not date or not date.startswith(f"{month.group(1)}-{int(month.group(2)):02d}")):
+                    local_reasons.append("stale_month")
+                if expected_instruments:
+                    instrument = str(_field(item, "instrument", "") or "")
+                    if not instrument:
+                        local_reasons.append("missing_instrument")
+                    elif not any(_same_instrument(instrument, value) for value in expected_instruments):
+                        local_reasons.append("unmatched_instrument")
+                source = str(_field(item, "source", "") or "").strip().lower()
+                authority = str(_field(item, "authority", "") or "").strip().lower()
+                placeholders = {"", "unknown", "none", "null", "fake", "forged", "synthetic", "test"}
+                forged_marker = re.compile(r"(?:^|[-_ ])(?:fake|forged|synthetic|mock|dummy|test)(?:$|[-_ ])")
+                # Terminal verification needs both provenance dimensions.  A
+                # valid-looking authority cannot repair a forged/missing
+                # source, and vice versa.
+                if source in placeholders or forged_marker.search(source):
+                    local_reasons.extend(("missing_source", "unknown_source"))
+                if authority in placeholders or forged_marker.search(authority):
+                    local_reasons.append("missing_authority")
+                if not str(_field(item, "retrieved_at", "") or "").strip():
+                    local_reasons.append("missing_retrieved_at")
+                completeness = str(_field(item, "completeness", "") or "").strip().lower()
+                coverage = str(_field(item, "coverage", "") or "").strip().lower()
+                if is_partial or bool(_field(item, "result_partial", False)):
+                    local_reasons.append("partial_only")
+                if completeness not in {"complete", "full"}:
+                    local_reasons.append(
+                        "unknown_completeness" if completeness in {"", "unknown"} else "incomplete_completeness"
+                    )
+                if coverage in {"", "unknown", "partial", "sample", "insufficient", "unverified_instrument"}:
+                    if coverage in {"", "unknown"}:
+                        local_reasons.extend(("unknown_coverage", "insufficient_coverage"))
+                    else:
+                        local_reasons.append("insufficient_coverage")
             claim_dates = _claim_explicit_dates(text, request_date or planned_date)
             evidence_date = date or ""
             current_wording = bool(re.search(r"今日|今天|当日|当天", text))
@@ -428,8 +665,10 @@ def match_claims_to_evidence(
             ):
                 local_reasons.append("stale_date")
             source = _field(item, "source") or _field(item, "authority")
-            if re.search(r"新闻|消息|公告|报道", text) and (not source or str(source).lower() == "unknown"):
+            if (market_claim or re.search(r"新闻|消息|公告|报道", text)) and (not source or str(source).lower() == "unknown"):
                 local_reasons.append("unknown_source")
+            if market_claim and _field(item, "coverage") == "unverified_instrument":
+                local_reasons.append("unknown_returned_instrument")
             codes = {re.sub(r"[^0-9]", "", code) for code in _claim_codes(text)}
             instrument = str(_field(item, "instrument", "") or "").upper()
             instrument_codes = set(re.findall(r"\d{6}", instrument))
@@ -465,7 +704,7 @@ def match_claims_to_evidence(
             for item in candidates:
                 date_key = str(_field(item, "as_of_date") or _field(item, "timestamp") or "")[:10].replace("/", "-")
                 instrument_key = str(_field(item, "instrument", "") or "").upper()
-                metric_key = str(_field(item, "metric", "") or "").lower()
+                metric_key = _market_metric_value(item)[0]
                 family = "direction" if re.search(r"(?:^|[.\[\]])(?:change|change_pct|pct_change|return|涨跌|涨幅|跌幅)(?:$|[._\[\]])", metric_key) else "price" if re.search(r"(?:^|[.\[\]])(?:price|last|close)(?:$|[._\[\]])", metric_key) else "other"
                 groups.setdefault((date_key, instrument_key, family), []).append(item)
             for group_items in groups.values():
@@ -481,11 +720,21 @@ def match_claims_to_evidence(
                     predicate_failures.append("conflicting_evidence")
                 if any(reason is None for reason in numeric_reasons) and "numeric_mismatch" in numeric_reasons:
                     predicate_failures.append("conflicting_evidence")
+        # A single instrument price observation does not establish a causal,
+        # comparative, ranked, or market-wide inference.  Keep this claim
+        # scoped so a direct fact (close/volume/change) remains admissible.
+        if candidates and claim_type in {"inference", "comparison", "causation"}:
+            broad_inference = re.search(
+                r"导致|带动|引发|造成|因为|由于|相比|相较|高于|低于|超过|排名|领先|第一|最强|主线|全市场|所有|全部|市场情绪|资金流向",
+                text,
+            )
+            if broad_inference and len(candidates) < 2:
+                predicate_failures.append("inference_scope_exceeded")
         if not ids:
             hard_reasons.append("missing_reference")
-        # A news citation may provide context alongside a complete quote.
-        # Scope/date/partial shortcomings only block when no cited datum can
-        # actually support the claim; forged or failed references always block.
-        reasons = hard_reasons + predicate_failures + (candidate_reasons if not candidates else [])
+        # Analytical callers may keep a contextual citation alongside a valid
+        # quote. Strict delivery preserves every cited datum's scope/provenance
+        # failures; a good citation cannot hide a bad one.
+        reasons = hard_reasons + predicate_failures + (candidate_reasons if strict_provenance or not candidates else [])
         rows.append({"claim": text, "evidence_ids": ids, "matched_evidence_ids": matched, "supported": bool(candidates) and not reasons, "reason_codes": list(dict.fromkeys(reasons))})
     return rows

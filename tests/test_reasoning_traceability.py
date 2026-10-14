@@ -503,7 +503,7 @@ class TestCriticEndToEnd:
             claims=[{"claim": "沪深300 收跌 0.4%", "evidence_ids": [REAL_ID], "claim_type": "fact"}]
         )
 
-        out = await node(_state(report, evidence=[_ledger(metric="change_pct", value=-0.4, instrument_name="沪深300", timestamp="2026-10-09")]))
+        out = await node(_state(report, evidence=[_ledger(metric="change_pct", value=-0.4, instrument_name="沪深300", timestamp="2026-10-09", source="synthetic_quote_provider", authority="synthetic_quote_provider")]))
 
         assert out["critique"].verdict == "pass"
         assert "errors" not in out

@@ -61,9 +61,10 @@ def _report():
     from app.models.response import MarketIntelligence
 
     return MarketIntelligence(
-        market_state="走强",
+        market_state="暂无可核验数据",
         state_label="RISK_ON",
-        what_happened="今日市场走强，商业航天领涨",
+        what_happened="暂无可核验数据",
+        claims=[{"claim": "暂无可核验数据", "claim_type": "structure", "evidence_ids": []}],
         confidence="high",
     )
 

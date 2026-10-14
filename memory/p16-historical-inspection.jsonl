@@ -1,0 +1,4 @@
+{"artifact": "memory/p12-focused-acceptance.jsonl", "historical_only": true, "live_executed": false, "row_count": 19, "bytes": 374980}
+{"artifact": "memory/p13-focused-acceptance.jsonl", "historical_only": true, "live_executed": false, "row_count": 30, "bytes": 83919}
+{"artifact": "memory/p13-focused-acceptance-final.jsonl", "historical_only": true, "live_executed": false, "row_count": 5, "bytes": 16529}
+{"artifact": "memory/p14-acceptance.jsonl", "historical_only": true, "live_executed": false, "row_count": 9, "bytes": 5619}
