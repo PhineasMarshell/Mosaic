@@ -37,11 +37,11 @@ def _settings(**overrides):
     return Settings(**values)
 
 
-def _datum(code="600519", date="2026-10-09", source="同花顺问财"):
+def _datum(code="600519", date="2026-10-09", source="同花顺问财", scope="instrument"):
     return NormalizedDatum(
         tool="internal_iwencai_market_query", metric="close", value=100,
         instrument=code, as_of_date=date, source=source, authority=source,
-        retrieved_at="2026-10-12T00:00:00Z", instrument_scope="instrument",
+        retrieved_at="2026-10-12T00:00:00Z", instrument_scope=scope,
     )
 
 
@@ -113,10 +113,38 @@ async def test_ths_error_uses_mcp_and_keeps_provenance(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_partial_ths_is_retained_without_mcp_replacement(monkeypatch):
+async def test_partial_ths_missing_required_fields_triggers_mcp_fallback(monkeypatch):
+    """契约更新（P0-B）：primary 是 partial 且缺"必需字段"（此处为日期）时，
+
+    旧行为是"partial 一律保留"，结果把缺日期的行情当成可用证据。现在按能力
+    的必需字段判断：缺日期就允许回退，且回退结果必须自证 provenance。
+    """
     partial = ToolResult(tool="internal_iwencai_market_query", operation_id="internal_iwencai_market_query",
                          arguments={}, status="partial", partial=True,
                          reason_codes=["missing_as_of_date", "unknown_date"], normalized=[_datum(date=None)])
+    skill = _Skill(partial)
+    monkeypatch.setattr("app.graph.tool_runtime.skill_adapter_for", lambda settings: skill)
+    _Gateway.calls = 0
+    _Gateway.result = ToolResult(
+        tool="get_market_quotes", operation_id="get_market_quotes", arguments={}, status="success",
+        authority="tencent", normalized=[_datum(date="2026-10-09", source="tencent")],
+    )
+    runtime = ToolRuntime(_settings())
+    runtime._gateway_class = lambda: _Gateway
+    output = await runtime.execute("get_market_quotes", {"symbol": "600519", "date": "2026-10-09"}, set())
+    assert _Gateway.calls == 1
+    assert output.status == "success" and output.normalized
+    assert output.source_switch is True
+    assert output.fallback_source == "mcp" and output.primary_source == "ths_skill"
+
+
+@pytest.mark.asyncio
+async def test_partial_ths_with_required_fields_is_retained(monkeypatch):
+    """partial 但必需字段齐全（有日期、有目标标的）→ 不回退，保留 primary。"""
+    partial = ToolResult(tool="internal_iwencai_market_query", operation_id="internal_iwencai_market_query",
+                         arguments={}, status="partial", partial=True,
+                         reason_codes=["unknown_completeness"],
+                         authority="同花顺问财", normalized=[_datum(date="2026-10-09", source="同花顺问财")])
     skill = _Skill(partial)
     monkeypatch.setattr("app.graph.tool_runtime.skill_adapter_for", lambda settings: skill)
     _Gateway.calls = 0
@@ -125,6 +153,7 @@ async def test_partial_ths_is_retained_without_mcp_replacement(monkeypatch):
     output = await runtime.execute("get_market_quotes", {"symbol": "600519", "date": "2026-10-09"}, set())
     assert output.status == "partial" and output.normalized
     assert _Gateway.calls == 0
+
 
 
 def test_route_table_covers_kline_and_limit_up_capabilities():

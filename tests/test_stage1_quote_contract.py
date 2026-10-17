@@ -8,7 +8,7 @@ from app.gateway.arguments import canonicalize_tool_arguments, freeze_arguments,
 from app.gateway.http_client import MarketGatewayHttpClient
 from app.graph import run_log
 from app.graph.gap_loop import drop_repeat_steps
-from app.graph.market_plan import A_SHARE_BENCHMARK_SYMBOL, apply_market_summary_prefix
+from app.graph.market_plan import A_SHARE_BENCHMARK_SYMBOL, A_SHARE_BENCHMARK_SYMBOLS, apply_market_summary_prefix
 from app.graph.nodes.analysts.technical import TechnicalAnalystNode
 from app.models.market import NormalizedDatum, ToolResult
 from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
@@ -31,8 +31,10 @@ def test_market_plan_quote_is_symbols_array_and_prompt_uses_canonical_contract()
     plan = _market_plan(ToolCallPlan(tool_key="quote", arguments={"symbol": "600519"}, purpose="quote"))
     apply_market_summary_prefix(plan, question="今天 A 股发生了什么？", registry=_registry(), max_steps=8)
     quote = next(step for step in plan.steps if step.tool_key == "quote")
-    assert quote.arguments == {"symbols": [A_SHARE_BENCHMARK_SYMBOL]}
-    assert "quote(symbols=[\"000300\"])" in PLANNER_PROMPT
+    assert quote.arguments == {"symbols": list(A_SHARE_BENCHMARK_SYMBOLS)}
+    # 契约更新（P0-C）：提示词必须给出带交易所前缀的规范写法，裸 000300 会在
+    # Gateway 边界被补成 SH000300，两者不能同时出现在计划口径里。
+    assert "quote(symbols=[\"SH000001\",\"SH000300\",\"SZ399006\"])" in PLANNER_PROMPT
     assert "quote 用 symbols" in PLANNER_PROMPT
 
 
@@ -45,6 +47,20 @@ def test_legacy_symbol_is_converted_only_at_gateway_argument_boundary():
     }
 
 
+def test_bare_index_code_is_promoted_to_its_exchange_form():
+    """裸指数代码是唯一的（000300 只可能是沪深300），必须在边界统一成 SH000300。"""
+    assert canonicalize_tool_arguments("get_market_quotes", {"symbols": ["000300"]}) == {"symbols": ["SH000300"]}
+    assert canonicalize_tool_arguments("get_market_quotes", {"symbol": "399006"}) == {"symbols": ["SZ399006"]}
+    # 个股裸代码保持原样（000001 是平安银行，不是上证指数）
+    assert canonicalize_tool_arguments("get_market_quotes", {"symbols": ["600519", "000001"]}) == {
+        "symbols": ["000001", "600519"]
+    }
+    assert A_SHARE_BENCHMARK_SYMBOL == "SH000300"
+    assert list(A_SHARE_BENCHMARK_SYMBOLS) == ["SH000001", "SH000300", "SZ399006"]
+
+
+
+
 def test_first_market_plan_has_no_unexecutable_quote_step():
     plan = _market_plan(
         ToolCallPlan(tool_key="quote", arguments={"symbol": "000300"}, purpose="old quote"),
@@ -53,8 +69,10 @@ def test_first_market_plan_has_no_unexecutable_quote_step():
     _prefix, dropped = apply_market_summary_prefix(
         plan, question="今天 A 股发生了什么？", registry=_registry(), max_steps=8
     )
-    assert plan.steps[0].arguments == {"symbols": ["000300"]}
+    # 单个指数口径仍属"代码口径基准"：被替换成规范三指数，且不出现重复 quote
+    assert plan.steps[0].arguments == {"symbols": list(A_SHARE_BENCHMARK_SYMBOLS)}
     assert all(step.arguments.get("symbols") for step in plan.steps if step.tool_key == "quote")
+    assert len([step for step in plan.steps if step.tool_key == "quote"]) == 1
     assert "quote" not in dropped
 
 
@@ -64,7 +82,7 @@ def test_research_more_replaces_old_quote_and_drops_same_semantic_signature():
     result = ToolResult(
         tool="get_market_quotes",
         tool_key="quote",
-        arguments={"symbols": ["000300"]},
+        arguments={"symbols": ["SH000300"]},
         status="success",
         normalized=[NormalizedDatum(tool="get_market_quotes", metric="last", value=1)],
     )
@@ -139,7 +157,7 @@ async def test_http_gateway_encodes_canonical_symbols_for_query_schema():
     client.client = FakeHttp()
     result = await client.call("get_market_quotes", {"symbols": ["SZ399001", "SH000001"]})
     assert result.arguments == {"symbols": ["SH000001", "SZ399001"]}
-    assert seen["params"]["symbols"] == "SH000001,SZ399001"
+    assert seen["params"]["symbols"] == "sh000001,sz399001"
 
 
 @pytest.mark.asyncio
@@ -160,7 +178,7 @@ def test_execution_log_contains_trace_fields_and_canonical_arguments():
             ToolResult(
                 tool="get_market_quotes",
                 tool_key="quote",
-                arguments={"symbols": ["000300"]},
+                arguments={"symbols": ["SH000300"]},
                 status="success",
                 normalized=[],
             )
@@ -169,4 +187,4 @@ def test_execution_log_contains_trace_fields_and_canonical_arguments():
     row = payload["results"][0]
     assert row["tool_key"] == "quote"
     assert row["operation_id"] == "get_market_quotes"
-    assert row["arguments"] == {"symbols": ["000300"]}
+    assert row["arguments"] == {"symbols": ["SH000300"]}

@@ -1,0 +1,5 @@
+﻿layer,case,tool,attempts,statuses,classification,repeat_outcome,ms,business_datums,dated_business_datums,reason_codes,capability_gap,error,observed
+source_control,klines_HK.800300,eastmoney_klines,1,empty,no_business_data,single_probe,122.4,,,,,,True
+source_control,kline_HK.800300,eastmoney_klines,1,empty,no_business_data,single_probe,37.7,,,,,,True
+source_control,kline_100.HSI,eastmoney_klines,1,success,data_returned,single_probe,330.2,,,,,,True
+source_control,kline_100.HSTECH,eastmoney_klines,1,empty,no_business_data,single_probe,39.5,,,,,,True

@@ -12,7 +12,12 @@ from typing import Any
 import httpx
 
 from app.config import Settings
-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, quote_transport_symbols
+from app.gateway.arguments import (
+    ArgumentValidationError,
+    canonicalize_tool_arguments,
+    gateway_transport_arguments,
+    quote_transport_symbols,
+)
 from app.gateway.normalizer import normalize_tool_result
 
 logger = logging.getLogger(__name__)
@@ -131,7 +136,7 @@ class MarketGatewayHttpClient:
         meta = resolve_tool_by_name(tool_name)
 
         async def request(timeout):
-            encoded = dict(arguments)
+            encoded = gateway_transport_arguments(tool_name, arguments)
             if tool_name == "get_market_quotes":
                 encoded["symbols"] = ",".join(quote_transport_symbols(arguments["symbols"]))
             response = await self.client.request(

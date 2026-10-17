@@ -26,9 +26,12 @@ from app.models.research import ResearchIntent, ResearchPlan, ToolCallPlan
 
 logger = logging.getLogger(__name__)
 
-#: A 股大盘基准：沪深300。腾讯行情对指数用纯数字代码（见 ``stock_codes.INDEX_CODE_MAP_A_SHARE``），
-#: PLANNER_PROMPT 也把 "000300" 列为 A 股 quote 的合法取值。
-A_SHARE_BENCHMARK_SYMBOL = "000300"
+#: A 股大盘基准：上证指数 / 沪深300 / 创业板指。腾讯行情对指数要求带交易所
+#: 前缀，裸 ``000300`` 在传输层会变成空行情，因此代码口径一律用规范写法。
+A_SHARE_BENCHMARK_SYMBOLS: tuple[str, ...] = ("SH000001", "SH000300", "SZ399006")
+
+#: 向后兼容别名：旧代码（与旧测试）把它当作单个沪深300 代码使用。
+A_SHARE_BENCHMARK_SYMBOL = "SH000300"
 
 #: 6 位证券代码：命中即视为"点名了具体标的"，不加市场级前缀。
 _STOCK_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
@@ -42,8 +45,8 @@ MARKET_TASKS: frozenset[str] = frozenset({"market_summary", "market_diagnosis"})
 MARKET_SUMMARY_MINIMUM: tuple[tuple[str, dict[str, Any], str], ...] = (
     (
         "quote",
-        {"symbols": [A_SHARE_BENCHMARK_SYMBOL]},
-        "A股大盘基准：沪深300 指数当日表现（点位与涨跌幅）",
+        {"symbols": list(A_SHARE_BENCHMARK_SYMBOLS)},
+        "A股大盘基准：上证指数 / 沪深300 / 创业板指当日表现（点位与涨跌幅）",
     ),
     ("sentiment", {}, "A股市场情绪：风险偏好 / 涨跌家数"),
     ("limit_up_count", {}, "A股当日涨停家数（市场活跃度）"),
@@ -53,7 +56,42 @@ MARKET_SUMMARY_MINIMUM: tuple[tuple[str, dict[str, Any], str], ...] = (
 
 # The allowed Gateway contract lists no query parameters for these endpoints.
 # A planned observation date is an audit target, not a supported transport arg.
-UNPARAMETERIZED_LIMIT_UP_TOOLS: frozenset[str] = frozenset({"limit_up_count", "limit_up_sectors", "limit_up_pool"})
+UNPARAMETERIZED_LIMIT_UP_TOOLS: frozenset[str] = frozenset({"limit_up_count", "limit_up_sectors"})
+
+#: 这些市场级端点在 Gateway 契约里同样没有日期参数；planner/critic 偶尔会带上
+#: ``{"date": ...}``，清成 ``{}`` 才能与代码口径的前缀步骤合并为同一个变体，
+#: 避免"同一工具两个参数变体"造成重复调用。
+UNPARAMETERIZED_DATE_TOOLS: frozenset[str] = UNPARAMETERIZED_LIMIT_UP_TOOLS | frozenset({"sentiment", "telegraph", "market_breadth"})
+# ``limit_up_pool`` retains its requested date in the research plan: distinct
+# historical coverage issues are independent variants, and THS consumes the
+# date in its query. A current-only fallback cannot satisfy that variant unless
+# the returned observation date matches it.
+
+
+def _default_quote_arguments() -> dict[str, Any]:
+    return {"symbols": list(A_SHARE_BENCHMARK_SYMBOLS)}
+
+
+def quote_symbols(step: Any) -> list[str]:
+    """Read the quote targets of a planned step without inventing any."""
+    arguments = getattr(step, "arguments", None) or {}
+    values = arguments.get("symbols")
+    if isinstance(values, (list, tuple)):
+        return [str(value) for value in values if str(value).strip()]
+    single = arguments.get("symbol")
+    if single:
+        return [str(single)]
+    return []
+
+
+def _is_explicit_multi_index_quote(step: Any) -> bool:
+    """True for a quote step the planner/critic deliberately asked for.
+
+    A single symbol (often one stock code) is not a market-level benchmark
+    request; two or more targets are an explicit multi-index ask and must not
+    be overwritten by the code-owned default.
+    """
+    return len(quote_symbols(step)) >= 2
 
 
 def apply_as_of_date_to_plan(plan: ResearchPlan, as_of_date: str | None) -> ResearchPlan:
@@ -61,7 +99,7 @@ def apply_as_of_date_to_plan(plan: ResearchPlan, as_of_date: str | None) -> Rese
     plan.as_of_date = as_of_date
     plan.intent.as_of_date = as_of_date
     for step in plan.steps:
-        if step.tool_key in UNPARAMETERIZED_LIMIT_UP_TOOLS:
+        if step.tool_key in UNPARAMETERIZED_DATE_TOOLS:
             step.arguments = {}
     return plan
 
@@ -90,6 +128,31 @@ def is_market_level_question(intent: ResearchIntent | Any, question: str) -> boo
 def _in_registry(tool_key: str, registry: str) -> bool:
     """与 supervisor 的域守卫同一约定：key 必须出现在本次渲染的注册表文本里。"""
     return f"- {tool_key}:" in registry
+
+
+def _dedupe_steps(plan: ResearchPlan) -> None:
+    """One tool + one argument variant = at most one planned step.
+
+    The ``{date}`` variant of an unparameterized market tool and its ``{}``
+    variant are the same call; keeping both would execute the same endpoint
+    twice and inflate the budget ledger.  First occurrence wins (prefix steps
+    come first, so the code-owned variant survives).
+    """
+    from app.gateway.tool_registry import resolve_tool
+
+    unique: list[ToolCallPlan] = []
+    seen: set[str] = set()
+    for step in plan.steps:
+        try:
+            operation_id = resolve_tool(step.tool_key).tool_name
+            signature = semantic_signature(operation_id, canonicalize_tool_arguments(operation_id, step.arguments or {}))
+        except (KeyError, ArgumentValidationError):
+            signature = semantic_signature(step.tool_key, step.arguments or {})
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique.append(step)
+    plan.steps = unique
 
 
 def unexecutable_steps(plan: ResearchPlan, question: str) -> list[str]:
@@ -126,6 +189,7 @@ def apply_market_summary_prefix(
     question: str,
     registry: str,
     max_steps: int,
+    include_sentiment: bool | None = None,
 ) -> tuple[list[str], list[str]]:
     """注入 A 股市场级最低证据集，返回 ``(prefix_keys, dropped_unexecutable_keys)``。
 
@@ -166,20 +230,36 @@ def apply_market_summary_prefix(
 
     prefix_steps: list[ToolCallPlan] = []
     for tool_key, arguments, purpose in MARKET_SUMMARY_MINIMUM:
+        # Supervisor passes the runtime switch.  ``None`` preserves the
+        # historical direct-call behavior used by plan-level tests and tools.
+        if tool_key == "sentiment" and include_sentiment is False:
+            logger.info("市场级最低证据集跳过 sentiment（sentiment_enabled=False）")
+            continue
         if not _in_registry(tool_key, registry):
             logger.warning("市场级最低证据集跳过 %s（不在本次域过滤后的注册表文本中）", tool_key)
             continue
-        replaced = [s for s in plan.steps if s.tool_key == tool_key]
-        if replaced:
+        existing = next((s for s in plan.steps if s.tool_key == tool_key), None)
+        if existing is not None:
+            if tool_key == "quote" and _is_explicit_multi_index_quote(existing):
+                # Planner/critic 已明确点名多个指数口径 —— 保留它，不再用代码
+                # 口径覆盖（否则会把 critic 的多指数请求压成单一口径）。
+                prefix_keys.append(tool_key)
+                logger.info("市场级最低证据集保留 planner/critic 的多指数 quote 参数：%s", existing.arguments)
+                continue
+            if (existing.arguments or {}) == arguments:
+                # 已经是同一变体：原地复用，只把它升为高优先级，绝不复制成两条。
+                existing.priority = "high"
+                prefix_keys.append(tool_key)
+                continue
+            # 单个标的口径（常是个股）不是市场级基准请求：删除并由代码口径基准承担。
             plan.steps = [s for s in plan.steps if s.tool_key != tool_key]
-            for old in replaced:
-                if (old.arguments or {}) and old.arguments != arguments:
-                    logger.info(
-                        "市场级最低证据集用代码口径覆盖 planner 的 %s 参数：%s → %s",
-                        tool_key,
-                        old.arguments,
-                        arguments,
-                    )
+            if existing.arguments:
+                logger.info(
+                    "市场级最低证据集用代码口径覆盖 planner 的 %s 参数：%s → %s",
+                    tool_key,
+                    existing.arguments,
+                    arguments,
+                )
         prefix_steps.append(
             ToolCallPlan(
                 tool_key=tool_key,
@@ -194,6 +274,7 @@ def apply_market_summary_prefix(
         return prefix_keys, dropped
 
     plan.steps = (prefix_steps + plan.steps)[:max_steps]
+    _dedupe_steps(plan)
     # A planner quote can be removed and replaced by the canonical prefix.  It
     # is executable now, so it must not remain in unexecutable_keys telemetry.
     present_keys = {step.tool_key for step in plan.steps}

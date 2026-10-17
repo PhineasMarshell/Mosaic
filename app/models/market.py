@@ -25,10 +25,27 @@ class NormalizedDatum(BaseModel):
     coverage: str = "unknown"
     instrument_name: str | None = None
     source: str | None = None
+    #: 该 datum 是**顶层信封元数据**（count/total/row_count/page…），不是业务事实。
+    #: 它描述"这一批响应有几条"，因此不参与 provenance 的逐条校验；容器内部的
+    #: 同名字段（如 total_share 这类真实业务值）保持 False，照常要求 provenance。
+    structural_metadata: bool = False
     tool: str
     status: Status = "success"
     partial: bool = False
     note: str | None = None
+    #: MCP 语义补标注（执行单 mcp-semantic-annotation-execution-plan）。
+    #: ``semantic_annotation`` 记录这条 datum 的标准化来源：
+    #:   contract —— 工具契约已声明的字段映射；
+    #:   payload  —— 原始 payload 自带的标准字段；
+    #:   request_context —— 由契约允许的请求日期推导。
+    #: ``date_annotation`` 记录观察日期来源：
+    #:   observed / envelope / request_context / contract_snapshot。
+    #: 两者均为审计元数据，绝不会被扁平化成新的业务 datum。
+    semantic_annotation: str | None = None
+    date_annotation: str | None = None
+    #: 映射所用的语义契约 id 与原始字段路径（如 ``data.count``），便于审计回溯。
+    annotation_contract_id: str | None = None
+    original_field_path: str | None = None
 
 
 class ToolResult(BaseModel):
@@ -89,6 +106,20 @@ class ToolResult(BaseModel):
     mcp_initialize: bool | None = None
     mcp_list_tools: bool | None = None
     mcp_real_call: bool | None = None
+    #: MCP 语义补标注结果（sidecar）。记录观察日期及来源、provider/authority、
+    #: 业务 datum 数、结构元数据数、逐行日期 lineage 与诊断码。它是审计元数据，
+    #: 不进入用户报告正文，也不会被扁平化成业务 datum。
+    date_annotation: dict[str, Any] | None = None
+    #: 业务 datum 数与结构元数据数（两者之和等于 normalized 总条数）。
+    business_datum_count: int = 0
+    structural_metadata_count: int = 0
+    #: MCP 语义适配器逐字段/逐行诊断码（如 ``mcp_missing_date``）。
+    semantic_diagnostics: list[str] = Field(default_factory=list)
+    #: fallback 候选 provenance 校验逐项失败码（如 ``fallback_missing_date``）。
+    #: 兼容汇总码 ``fallback_provenance_insufficient`` 继续保留在 reason_codes。
+    fallback_provenance_failures: list[str] = Field(default_factory=list)
+    #: 至少一条业务 datum 通过完整性、日期与来源检查、能够生成 evidence 时为 true。
+    evidence_created: bool = False
 
     @property
     def datum_count(self) -> int:

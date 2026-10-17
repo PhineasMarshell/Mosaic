@@ -73,12 +73,20 @@ def test_unparameterized_limit_up_tools_do_not_receive_planned_date():
     assert plan.as_of_date == "2026-10-09"
     assert plan.intent.as_of_date == "2026-10-09"
     assert [step.arguments for step in plan.steps] == [
-        {}, {}, {}, {"symbols": ["000300"]}
+        {}, {}, {"date": "2026-10-09"}, {"symbols": ["000300"]}
     ]
+    from app.gateway.source_routing import skill_route_for
+
+    # Research targets survive for THS; the current-only Gateway transport is
+    # checked separately below and must not pretend to support historical data.
+    operation, capability, arguments = skill_route_for("list_limit_up_stocks", plan.steps[2].arguments)
+    assert operation == "internal_iwencai_market_query" and capability == "limit_up_pool"
+    assert "2026-10-09" in arguments["query"]
 
 
 @pytest.mark.asyncio
-async def test_supervisor_strips_unsupported_date_from_critic_gap_step():
+@pytest.mark.parametrize("key", ["limit_up_pool", "limit_up_count", "limit_up_sectors", "sentiment"])
+async def test_supervisor_strips_unsupported_date_from_critic_gap_step(key):
     from app.graph.nodes.supervisor import SupervisorNode
 
     async def create(**_kwargs):
@@ -104,19 +112,59 @@ async def test_supervisor_strips_unsupported_date_from_critic_gap_step():
         "results": [],
         "critique": {
             "verdict": "research_more",
-            "missing_tool_keys": ["limit_up_pool"],
+            "missing_tool_keys": [key],
             "issues": [{
                 "action": "research_more",
-                "required_tool_keys": ["limit_up_pool"],
+                "required_tool_keys": [key],
                 "required_coverage": {"arguments": {"date": "2026-10-09"}},
             }],
         },
     }
 
     plan, _, _ = await node._plan(state)
-    pool_steps = [step for step in plan.steps if step.tool_key == "limit_up_pool"]
+    pool_steps = [step for step in plan.steps if step.tool_key == key]
     assert len(pool_steps) == 1
-    assert pool_steps[0].arguments == {}
+    assert pool_steps[0].arguments == ({"date": "2026-10-09"} if key == "limit_up_pool" else {})
+
+
+@pytest.mark.parametrize("mode", ["http", "mcp"])
+@pytest.mark.parametrize("day", ["2026-10-08", "2026-10-09"])
+async def test_pool_transport_strips_research_date_without_forging_returned_date(mode, day):
+    import httpx
+
+    from app.config import Settings
+    from app.gateway.controlled_fallback import fallback_satisfies_provenance
+    from app.gateway.http_client import MarketGatewayHttpClient
+    from app.gateway.mcp_client import MarketGatewayClient
+    from app.gateway.normalizer import normalize_tool_result
+
+    seen = []
+    raw = {"source": "ashare-master", "items": [{"limit_up_stock": "SH600519"}]}
+    settings = Settings(_env_file=None)
+    if mode == "http":
+        def handler(request):
+            seen.append(dict(request.url.params))
+            return httpx.Response(200, json=raw)
+
+        client = MarketGatewayHttpClient(settings)
+        client.client = httpx.AsyncClient(base_url="http://offline", transport=httpx.MockTransport(handler))
+    else:
+        async def call_tool(name, arguments):
+            seen.append(arguments)
+            return SimpleNamespace(isError=False, structured_content=raw)
+
+        client = MarketGatewayClient(settings)
+        client.session = SimpleNamespace(call_tool=call_tool)
+    try:
+        result = await client.call("list_limit_up_stocks", {"date": day})
+    finally:
+        if mode == "http":
+            await client.close()
+    assert seen == [{}]
+    assert result.arguments == {"date": day}
+    assert result.as_of_date is None and all(d.as_of_date is None for d in result.normalized)
+    primary = normalize_tool_result("list_limit_up_stocks", {"date": day}, None, error="timeout")
+    assert not fallback_satisfies_provenance(primary, result, "limit_up_pool", {"date": day})
 
 
 @pytest.mark.asyncio

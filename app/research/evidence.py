@@ -417,8 +417,17 @@ def build_evidence(results: list[ToolResult], id_prefix: str = "evidence", *, st
                 # openInterest）必须照常写入；单个 candle 指标已聚合进 summary，
                 # valid_metrics 本就不含 candle 项，不会重复添加。
 
+            # 语义契约工具（涨停家数/板块）：partial 或无观察日期的业务 datum 无法
+            # 证明交易日，绝不生成 Evidence；同一批里完整、有日期的窄事实照常保留。
+            semantic_contract = bool(getattr(result, "date_annotation", None))
+
             # 添加其他有效指标
             for metric, value, datum in valid_metrics:
+                if semantic_contract and (
+                    bool(getattr(datum, "partial", False))
+                    or not getattr(datum, "as_of_date", None)
+                ):
+                    continue
                 # F10 数据：尝试进一步解析不可读值（dict/list → 数值）
                 if _is_eastmoney_f10_tool(result.tool) and isinstance(value, (dict, list)):
                     from app.gateway.normalizer import _deep_flatten_value

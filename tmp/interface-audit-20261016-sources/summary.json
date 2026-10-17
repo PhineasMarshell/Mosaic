@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-16",
+  "elapsed_seconds": 8.1,
+  "registered_operations": 55,
+  "call_rows": 5,
+  "classification_counts": {
+    "data_returned": 5
+  },
+  "interfaces": [
+    {
+      "layer": "source",
+      "case": "eastmoney_stock_news",
+      "tool": "eastmoney_stock_news",
+      "attempts": 1,
+      "statuses": "success",
+      "classification": "data_returned",
+      "repeat_outcome": "single_probe",
+      "ms": "116.7",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    },
+    {
+      "layer": "source",
+      "case": "cls_telegraph",
+      "tool": "cls_telegraph",
+      "attempts": 1,
+      "statuses": "success",
+      "classification": "data_returned",
+      "repeat_outcome": "single_probe",
+      "ms": "138.5",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    },
+    {
+      "layer": "source",
+      "case": "google_news_rss",
+      "tool": "google_news_rss",
+      "attempts": 1,
+      "statuses": "success",
+      "classification": "data_returned",
+      "repeat_outcome": "single_probe",
+      "ms": "1003.9",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    },
+    {
+      "layer": "source",
+      "case": "ddgs_news",
+      "tool": "ddgs_news",
+      "attempts": 1,
+      "statuses": "success",
+      "classification": "data_returned",
+      "repeat_outcome": "single_probe",
+      "ms": "1212.8",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    },
+    {
+      "layer": "source",
+      "case": "ashare_code_name_map",
+      "tool": "ashare_code_name_map",
+      "attempts": 1,
+      "statuses": "success",
+      "classification": "data_returned",
+      "repeat_outcome": "single_probe",
+      "ms": "5580.7",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    }
+  ]
+}

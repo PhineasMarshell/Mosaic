@@ -1,0 +1,1305 @@
+[
+  {
+    "name": "get_company_overview",
+    "title": null,
+    "description": "A股一览表：全市场估值/市值 + 两融 + 全部未来限售解禁，按代码 join 成一张表。\n\n⚠️ 三块数据时效口径不同：市值/涨跌为收盘、两融为 T+1、解禁为未来事件。\n首次构建要打约 55 次上游请求，结果走 Redis+内存两级缓存，默认存 1 天。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "force": {
+          "default": false,
+          "description": "绕过缓存强制拉最新数据",
+          "title": "Force",
+          "type": "boolean"
+        },
+        "ttl": {
+          "default": 86400,
+          "description": "缓存有效期（秒），默认 1 天",
+          "maximum": 604800,
+          "minimum": 60,
+          "title": "Ttl",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_market_orderbook",
+    "title": null,
+    "description": "规范化盘口；休市或无档位时返回空数组，不伪造报价。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "const": "xueqiu",
+          "default": "xueqiu",
+          "description": "盘口来源；当前证券盘口支持 xueqiu",
+          "title": "Source",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "证券代码：A股用 SH600519 / SZ000001 / BJ430047；港股推荐带市场前缀，如腾讯控股 HK00700（兼容裸代码 00700，调用雪球时自动去掉 HK）；美股用 AAPL",
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_ashare_capital_flow",
+    "title": null,
+    "description": "返回 as_of 时已公开且网关已取得的最近一条股本状态。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "description": "带时区的历史可见性截止时间（RFC 3339）",
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "as_of"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_ashare_unlocks",
+    "title": null,
+    "description": "返回 as_of 时已知的历史及未来解禁事件，并区分 scheduled/effective。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "description": "带时区的历史可见性截止时间（RFC 3339）",
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "as_of"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_market_trades",
+    "title": null,
+    "description": "规范化最近逐笔成交；不承担下单或账户能力。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "source": {
+          "const": "xueqiu",
+          "default": "xueqiu",
+          "description": "成交来源；当前证券逐笔成交支持 xueqiu",
+          "title": "Source",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "证券代码：A股用 SH600519 / SZ000001 / BJ430047；港股推荐带市场前缀，如腾讯控股 HK00700（兼容裸代码 00700，调用雪球时自动去掉 HK）；美股用 AAPL",
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_limit_up_stocks",
+    "title": null,
+    "description": "A股当日涨停股票明细。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_ashare_holders",
+    "title": null,
+    "description": "返回 as_of 时各自最新可见的十大股东、流通股东和股东户数。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "description": "带时区的历史可见性截止时间（RFC 3339）",
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "as_of"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_hyperliquid_symbols",
+    "title": null,
+    "description": "Hyperliquid 支持查询的币种清单 + 各币种总持仓（liqmap 的 symbol 只能从这里取值）。\n\n为什么需要它：symbol **大小写敏感**且不是简单全大写——千倍合约是小写 k 前缀\n（kPEPE / kBONK / kSHIB / kFLOKI / kLUNC / kNEIRO / kDOGS），写成 KPEPE 上游直接 Server Error。\n调用方没法靠猜，只能从这个清单取。\n\n上游还夹带一个 coin=\"all\" 的伪条目（数值全 0，拿去查 liqmap 会报错），这里已剔除。\ndetail=false 时丢掉 result 字段——它是按仓位规模分的 16 个鲸鱼分组明细，\n带上会让响应从几十 KB 涨到近 1 MB。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "default": false,
+          "description": "是否带上按仓位规模分组的多空明细（响应会大很多）",
+          "title": "Detail",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_hyperliquid_user_count",
+    "title": null,
+    "description": "Hyperliquid **全站**多空持仓地址数时序（五分钟粒度，非按币种）。\n\n上游同样无视 symbol（BTC/ETH 两次请求返回完全相同），所以这里不开放该参数，\n免得调用方以为拿到的是单币种口径。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_company_detail",
+    "title": null,
+    "description": "个股筹码详情：股东户数序列 + 十大股东 + 十大流通股东 + 实控人 + 两融序列 + 全部解禁批次。\n\n刻意不含 K 线——K 线走 `POST /market/klines`（多源、带缓存、已规范化）。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "days": {
+          "default": 250,
+          "description": "两融序列取最近多少个交易日（250≈一年）",
+          "maximum": 500,
+          "minimum": 20,
+          "title": "Days",
+          "type": "integer"
+        },
+        "force": {
+          "default": false,
+          "description": "绕过缓存强制拉最新",
+          "title": "Force",
+          "type": "boolean"
+        },
+        "symbol": {
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        },
+        "ttl": {
+          "default": 86400,
+          "description": "缓存有效期（秒），默认 1 天",
+          "maximum": 604800,
+          "minimum": 60,
+          "title": "Ttl",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_company_finance",
+    "title": null,
+    "description": "主要财务指标：营收/净利/ROE/毛利率/负债率/每股收益 等历史序列（datacenter）。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "periods": {
+          "default": 8,
+          "description": "返回多少期主要财务指标",
+          "maximum": 40,
+          "minimum": 1,
+          "title": "Periods",
+          "type": "integer"
+        },
+        "symbol": {
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_limit_up_count",
+    "title": null,
+    "description": "A股当日涨停家数。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_ashare_reductions",
+    "title": null,
+    "description": "返回 as_of 时可见的减持公告和已经发生的股东增减持事实。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "description": "带时区的历史可见性截止时间（RFC 3339）",
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "as_of"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_exchanges",
+    "title": null,
+    "description": "列支持的交易所：各自可用周期、出口模式、以及该所的注意事项。不出网、零成本。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_stock_longhu",
+    "title": null,
+    "description": "雪球龙虎榜：按上榜日期分组，组内含买入榜、卖出榜席位与汇总。仅 A股。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "default": 1,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "size": {
+          "default": 30,
+          "description": "返回多少个上榜日期组",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Size",
+          "type": "integer"
+        },
+        "source": {
+          "const": "xueqiu",
+          "default": "xueqiu",
+          "description": "龙虎榜来源；当前支持 xueqiu",
+          "title": "Source",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "A股代码，如 SZ300136",
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_market_quotes",
+    "title": null,
+    "description": "批量获取 A股 level-1 实时行情与五档盘口。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "const": "tencent",
+          "default": "tencent",
+          "description": "行情来源；当前实时 A股报价支持 tencent",
+          "title": "Source",
+          "type": "string"
+        },
+        "symbols": {
+          "description": "逗号分隔，如 sh600519,sz000001 或 600519",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Symbols",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbols"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "search_stocks",
+    "title": null,
+    "description": "雪球搜索框联想；只产出候选，不代替 AssetHub 的资产身份核验。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 10,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "q": {
+          "description": "股票名称、代码或关键词",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Q",
+          "type": "string"
+        },
+        "source": {
+          "const": "xueqiu",
+          "default": "xueqiu",
+          "description": "搜索来源；当前支持 xueqiu",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "q"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_crypto_funding_rates",
+    "title": null,
+    "description": "资金费率榜：各币种在各交易所的当前资金费率（稳定币/币本位分列）。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "page_num": {
+          "default": 1,
+          "description": "页码，从 1 开始",
+          "minimum": 1,
+          "title": "Page Num",
+          "type": "integer"
+        },
+        "page_size": {
+          "default": 20,
+          "description": "每页条数",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Page Size",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_market_klines",
+    "title": null,
+    "description": "取一段规范化历史 K 线(裸 OHLCV，不做任何加工)。\n\n出参: {exchange, symbol, interval, tz:\"UTC\", candles:[{t,o,h,l,c,v,a}], cache_hit, count, partial}\n  - t: open 时间(UTC 毫秒)；o/h/l/c/v: 数值；a: 可选成交额，无可靠值时为 null。\n  - 只含**已收盘**的 K 线；当前未收盘的那根不返回。\n  - cache_hit: 本次是否全部命中缓存(true 即未出网)。\n  - partial: 上游未能证明完整覆盖；note 说明缺口原因，未确认区间不会写入 coverage。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "带时区的可见性截止时间；只返回该时点已完成的 K 线",
+          "title": "As Of"
+        },
+        "cache": {
+          "default": false,
+          "description": "是否写入 SQLite 缓存；默认可读已有数据但不写入，显式设为 true 才留存",
+          "title": "Cache",
+          "type": "boolean"
+        },
+        "end": {
+          "description": "结束：同 start 格式(UTC)",
+          "title": "End"
+        },
+        "exchange": {
+          "default": "binance",
+          "description": "交易所：binance | okx | bybit | aster | hyperliquid | xueqiu | tencent | sina | ths",
+          "title": "Exchange",
+          "type": "string"
+        },
+        "include_open": {
+          "default": false,
+          "description": "是否包含当前未收盘 K 线；仅可与 cache=false 同时使用",
+          "title": "Include Open",
+          "type": "boolean"
+        },
+        "interval": {
+          "description": "K 线周期，如 1m/5m/1h/4h/1d；各所支持的档位不同",
+          "title": "Interval",
+          "type": "string"
+        },
+        "start": {
+          "description": "起始：ISO 日期 YYYY-MM-DD / ISO 时间 / 毫秒时间戳(UTC)",
+          "title": "Start"
+        },
+        "symbol": {
+          "description": "优先使用 ccxt 统一写法：现货 BTC/USDT；永续 BTC/USDT:USDT(binance/okx/bybit/aster)、BTC/USDC:USDC(hyperliquid)；也接受只对应一个市场的交易所原生代码，如 Binance TradFi 的 HK0700USDT、UNITREEUSDT；股票源 A股 SH600519/SZ000001，同花顺概念指数 THS885844，雪球港股推荐 HK00700（兼容 00700，内部自动去掉 HK）、美股 SPCX",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "interval",
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_market_window",
+    "title": null,
+    "description": "复盘取数：给锚定日期，取其**前 days_before 天 ~ 后 days_after 天**的 K 线。\n\n语义：以锚点当天 00:00(UTC)为界，窗口 =\n    [锚点 - days_before 天, 锚点 + (days_after+1) 天 - 1ms]\n即含锚点当天在内、往后再数 days_after 个整天。内部换算成一次 klines 取数，\n出参与 /market/klines 一致，另附 window 字段说明实际窗口。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "description": "锚定日期(复盘中心)：ISO 日期 / 时间 / 毫秒",
+          "title": "Anchor"
+        },
+        "cache": {
+          "default": false,
+          "description": "是否写入 SQLite 缓存；默认可读已有数据但不写入，显式设为 true 才留存",
+          "title": "Cache",
+          "type": "boolean"
+        },
+        "days_after": {
+          "default": 3,
+          "description": "锚点往后几天(默认 3)，含锚点当天",
+          "maximum": 365,
+          "minimum": 0,
+          "title": "Days After",
+          "type": "integer"
+        },
+        "days_before": {
+          "default": 3,
+          "description": "锚点往前几天(默认 3)",
+          "maximum": 365,
+          "minimum": 0,
+          "title": "Days Before",
+          "type": "integer"
+        },
+        "exchange": {
+          "default": "binance",
+          "description": "交易所：binance | okx | bybit | aster | hyperliquid | xueqiu | tencent | sina | ths",
+          "title": "Exchange",
+          "type": "string"
+        },
+        "interval": {
+          "description": "K 线周期，如 1m/5m/1h/4h/1d",
+          "title": "Interval",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "优先使用 ccxt 统一写法：现货 BTC/USDT；永续 BTC/USDT:USDT(binance/okx/bybit/aster)、BTC/USDC:USDC(hyperliquid)；也接受只对应一个市场的交易所原生代码，如 Binance TradFi 的 HK0700USDT、UNITREEUSDT；股票源 A股 SH600519/SZ000001，同花顺概念指数 THS885844，雪球港股推荐 HK00700（兼容 00700，内部自动去掉 HK）、美股 SPCX",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "interval",
+        "anchor"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_latest_ashare_holders",
+    "title": null,
+    "description": "返回查询时网关已经取得的最新标准化股东结构。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_hyperliquid_liquidation_map",
+    "title": null,
+    "description": "Hyperliquid 大户清算价位图：每个大户仓位的开仓价/杠杆/清算价/浮盈亏/地址。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "default": "ETH",
+          "description": "币种，如 ETH/BTC",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_company_survey",
+    "title": null,
+    "description": "公司概况：基本资料(jbzl) + 发行相关(fxxg)。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_derivatives_history",
+    "title": null,
+    "description": "Derivatives History",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "datasets": {
+          "items": {
+            "enum": [
+              "funding",
+              "metrics"
+            ],
+            "type": "string"
+          },
+          "title": "Datasets",
+          "type": "array"
+        },
+        "end": {
+          "description": "UTC 日期/ISO 时间/毫秒时间戳，含边界",
+          "title": "End"
+        },
+        "exchange": {
+          "default": "binance",
+          "description": "当前只支持 Binance U 本位永续官方归档",
+          "title": "Exchange",
+          "type": "string"
+        },
+        "include_data": {
+          "default": true,
+          "description": "false 时只补库并返回摘要，适合按年批量预热",
+          "title": "Include Data",
+          "type": "boolean"
+        },
+        "refresh": {
+          "default": false,
+          "description": "重新校验已经记录为缺失的官方归档",
+          "title": "Refresh",
+          "type": "boolean"
+        },
+        "start": {
+          "description": "UTC 日期/ISO 时间/毫秒时间戳",
+          "title": "Start"
+        },
+        "symbol": {
+          "description": "Binance 原生合约名，如 BTCUSDT",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "verify_upstream",
+    "title": null,
+    "description": "Verify Upstream",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_limit_up_sectors",
+    "title": null,
+    "description": "A股当日涨停题材与板块分布。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_latest_ashare_reductions",
+    "title": null,
+    "description": "返回查询时网关已经取得的最新标准化减持事实。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_company_business",
+    "title": null,
+    "description": "主营：主营范围(zyfw) + 主营构成分析(zygcfx) + 经营评述(jyps)。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_company_concepts",
+    "title": null,
+    "description": "核心题材：所属板块(ssbk) + 核心题材(hxtc)。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_stock_discussions",
+    "title": null,
+    "description": "雪球股票页统一信息流；由真实游客浏览器按网页标签读取公开 JSON。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "default": 10,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "feed": {
+          "default": "discussion",
+          "description": "信息流类型",
+          "enum": [
+            "all",
+            "discussion",
+            "trade",
+            "news",
+            "announcement",
+            "research",
+            "ir"
+          ],
+          "title": "Feed",
+          "type": "string"
+        },
+        "page": {
+          "default": 1,
+          "description": "讨论类时间线需从第一页逐页点击，最多 20 页",
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "sort": {
+          "default": "time",
+          "description": "讨论流排序：time=时间排序，hot=热门排序；仅适用于 feed=discussion",
+          "enum": [
+            "time",
+            "hot"
+          ],
+          "title": "Sort",
+          "type": "string"
+        },
+        "source": {
+          "const": "xueqiu",
+          "default": "xueqiu",
+          "description": "社区来源；当前支持 xueqiu",
+          "title": "Source",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "证券代码：A股用 SH600519 / SZ000001 / BJ430047；港股推荐带市场前缀，如腾讯控股 HK00700（兼容裸代码 00700，调用雪球时自动去掉 HK）；美股用 AAPL",
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_ashare_sentiment",
+    "title": null,
+    "description": "A股 0—100 市场情绪时间序列。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_stock_abnormal_reasons",
+    "title": null,
+    "description": "雪球日 K 的 AI 单日异常涨跌与趋势区间归因；指定区间一次返回，无分页。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "结束：同 start；省略时取当前时间",
+          "title": "End"
+        },
+        "source": {
+          "const": "xueqiu",
+          "default": "xueqiu",
+          "description": "归因来源；当前支持 xueqiu",
+          "title": "Source",
+          "type": "string"
+        },
+        "start": {
+          "default": "2024-01-01",
+          "description": "起始：YYYY-MM-DD / ISO 时间 / UTC 毫秒时间戳",
+          "title": "Start",
+          "type": "string"
+        },
+        "symbol": {
+          "description": "证券代码：A股用 SH600519 / SZ000001 / BJ430047；港股推荐带市场前缀，如腾讯控股 HK00700（兼容裸代码 00700，调用雪球时自动去掉 HK）；美股用 AAPL",
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_stock_post_comments",
+    "title": null,
+    "description": "使用一次性游客浏览器读取公开帖子的首批顶层评论及接口内嵌楼中楼回复。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "expand_replies": {
+          "default": false,
+          "description": "是否点击“查看回复”补取楼中楼",
+          "title": "Expand Replies",
+          "type": "boolean"
+        },
+        "max_pages": {
+          "default": 1,
+          "description": "最多翻取多少页顶层评论",
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Pages",
+          "type": "integer"
+        },
+        "max_reply_requests": {
+          "default": 20,
+          "description": "最多触发多少次楼中楼补取请求",
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Reply Requests",
+          "type": "integer"
+        },
+        "post_url": {
+          "description": "timeline.items[].url 返回的公开帖子 URL；原样传入，不要解析",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Post Url",
+          "type": "string"
+        },
+        "source": {
+          "const": "xueqiu",
+          "default": "xueqiu",
+          "description": "社区来源；当前支持 xueqiu",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "post_url"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_market_snapshot",
+    "title": null,
+    "description": "获取统一的实时 ticker、资金费率、未平仓量，并可选返回盘口和近期成交。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "exchange": {
+          "default": "binance",
+          "description": "交易所：binance | okx | bybit | aster | hyperliquid",
+          "title": "Exchange",
+          "type": "string"
+        },
+        "include_order_book": {
+          "default": false,
+          "description": "是否同时返回前 50 档盘口",
+          "title": "Include Order Book",
+          "type": "boolean"
+        },
+        "include_trades": {
+          "default": false,
+          "description": "是否同时返回最近 100 笔成交",
+          "title": "Include Trades",
+          "type": "boolean"
+        },
+        "symbol": {
+          "description": "数字货币优先使用 ccxt 统一写法：现货 BTC/USDT；永续 BTC/USDT:USDT（binance/okx/bybit/aster）、BTC/USDC:USDC（hyperliquid）。也接受只对应一个市场的交易所原生代码，如 Binance TradFi 的 HK0700USDT、UNITREEUSDT",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_latest_ashare_capital_flow",
+    "title": null,
+    "description": "返回查询时网关已经取得的最新标准化股本状态。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_latest_ashare_unlocks",
+    "title": null,
+    "description": "返回查询时网关已经取得的最新标准化解禁事件。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "description": "明确的 A 股证券代码",
+          "maxLength": 12,
+          "minLength": 6,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_hyperliquid_top_position",
+    "title": null,
+    "description": "Hyperliquid 大户持仓明细（全币种）：仓位方向/规模/保证金/资金费累计。\n\n注意：上游 topPosition 接口**无视 symbol 参数**，恒返回全币种约 1500 条\n（实测 BTC/ETH/SOL 三次请求结果逐字节相同）。所以这里的 symbol 是网关本地过滤，\n只为省调用方的传输量，不代表上游支持按币种查。要单币种清算价位用 /hyperliquid/liqmap。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "按币种过滤（本地过滤，上游不支持）；不传则返回全部",
+          "title": "Symbol"
+        }
+      },
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "list_hyperliquid_vaults",
+    "title": null,
+    "description": "Hyperliquid 金库列表：各金库 APR / 领投地址 / 最大回撤。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_crypto_liquidation_today",
+    "title": null,
+    "description": "今日全网爆仓统计：多空爆仓金额 + 该币种行情快照。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "default": "BTC",
+          "description": "币种，如 BTC/ETH",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  },
+  {
+    "name": "get_company_shareholders",
+    "title": null,
+    "description": "股东：十大股东(sdgd)/十大流通股东(sdltgd)/机构持仓(jgcc)/股东人数(gdrs)/基金持股(jjcg) 等。",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "symbol": {
+          "maxLength": 12,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "type": "object"
+    },
+    "execution": null,
+    "outputSchema": null,
+    "icons": null,
+    "annotations": null,
+    "_meta": null
+  }
+]

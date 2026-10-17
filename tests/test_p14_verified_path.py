@@ -174,7 +174,6 @@ async def test_real_graph_nodes_with_deterministic_complete_tool_result(monkeypa
         ({"completeness": "unknown"}, "unknown_completeness"),
         ({"coverage": "unknown"}, "unknown_coverage"),
         ({"partial": True}, "partial_only"),
-        ({"result_partial": True}, "partial_only"),
         ({"as_of_date": "2026-10-08"}, "stale_date"),
         ({"instrument": "SZ000001"}, "unmatched_instrument"),
         ({"source": None}, "missing_source"),
@@ -194,6 +193,21 @@ def test_strict_provenance_negative_gate(overrides, expected):
     )
     assert not rows[0]["supported"]
     assert expected in rows[0]["reason_codes"]
+
+
+def test_result_partial_allows_a_complete_narrow_fact():
+    evidence = [_quote(result_partial=True)]
+    claim = "贵州茅台(600519)在2026-10-09收盘价为1488元"
+    rows = match_claims_to_evidence(
+        {"claims": [{"claim": claim, "claim_type": "fact", "evidence_ids": [evidence[0].id]}]},
+        evidence,
+        expected_date="2026-10-09",
+        requested_date="2026-10-09",
+        expected_domain="a_share",
+        strict_provenance=True,
+    )
+    assert rows[0]["supported"] is True
+    assert "partial_only" not in rows[0]["reason_codes"]
 
 
 @pytest.mark.parametrize(

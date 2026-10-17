@@ -79,7 +79,8 @@ async def test_finalize_records_actual_claim_rejection_and_original_metadata(mis
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-async def test_report_hydration_cannot_drop_upstream_partial_before_persistence(tmp_path, legacy):
+@pytest.mark.parametrize("scope", ["narrow", "datum_partial", "all_market"])
+async def test_report_hydration_cannot_drop_upstream_partial_before_persistence(tmp_path, legacy, scope):
     from app.agent.persistence import persist_research
     from app.memory.storage import MarketMemory
     from app.models.response import ResearchResponse
@@ -87,8 +88,16 @@ async def test_report_hydration_cannot_drop_upstream_partial_before_persistence(
     state = quote_state()
     original = state["evidence"][0]
     original.result_partial = True
+    if scope == "datum_partial":
+        original.partial = True
+    if scope == "all_market":
+        state["report"].claims[0].claim = "2026-10-09 全市场完整行情已确认"
     selector = {"claim": state["report"].claims[0].claim, "evidence_ids": [original.id]} if legacy else {"id": original.id}
     state["report"].evidence = _parse_evidence([selector], [original])
+    hydrated = state["report"].evidence[0]
+    for key in ("instrument", "partial", "result_partial", "status", "completeness", "coverage",
+                "source", "authority", "as_of_date", "retrieved_at"):
+        assert getattr(hydrated, key) == getattr(original, key)
     # The last persistence boundary has only the hydrated report, not Graph's
     # ledger. Losing result_partial here used to erase a real upstream limit.
     result = ResearchResponse(question=state["question"], requested_date=state["requested_date"],
@@ -97,9 +106,13 @@ async def test_report_hydration_cannot_drop_upstream_partial_before_persistence(
                               final_audit_status="pass", delivery_status="verified")
     memory = MarketMemory(db_path=tmp_path / "memory.db")
     try:
-        assert await persist_research(result, result.question, "p16-partial", memory=memory) is False
-        assert "partial_only" in result.reason_codes
-        assert memory.conn.execute("SELECT COUNT(*) FROM research_records").fetchone()[0] == 0
+        allowed = scope == "narrow"
+        assert await persist_research(result, result.question, f"p16-partial-{scope}-{legacy}", memory=memory) is allowed
+        if not allowed:
+            assert "partial_only" in result.reason_codes and result.persisted is False
+        counts = {table: memory.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                  for table in ("research_records", "conversations", "daily_states")}
+        assert set(counts.values()) == {int(allowed)}
         assert result.report.evidence[0].instrument == "SH600519"
     finally:
         memory.close()

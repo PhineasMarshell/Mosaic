@@ -1,0 +1,142 @@
+{
+  "date": "2026-10-16",
+  "elapsed_seconds": 12.8,
+  "registered_operations": 55,
+  "call_rows": 9,
+  "classification_counts": {
+    "capability_contract_gap": 4,
+    "error": 3
+  },
+  "interfaces": [
+    {
+      "layer": "primary_route",
+      "case": "klines_ashare_primary",
+      "tool": "get_market_klines",
+      "attempts": 2,
+      "statuses": "partial/partial",
+      "classification": "capability_contract_gap",
+      "repeat_outcome": "repeated_issue",
+      "ms": "2372.5/477.9",
+      "business_datums": 14,
+      "dated_business_datums": 12,
+      "reason_codes": [
+        "missing_as_of_date",
+        "unknown_date"
+      ],
+      "capability_gap": "missing_required_fields:kline",
+      "error": "",
+      "observed": true
+    },
+    {
+      "layer": "primary_route",
+      "case": "overview_with_symbol_primary",
+      "tool": "get_company_overview",
+      "attempts": 2,
+      "statuses": "partial/partial",
+      "classification": "capability_contract_gap",
+      "repeat_outcome": "repeated_issue",
+      "ms": "354.5/313.5",
+      "business_datums": 5,
+      "dated_business_datums": 4,
+      "reason_codes": [
+        "missing_as_of_date",
+        "unknown_date"
+      ],
+      "capability_gap": "missing_required_fields:quote",
+      "error": "",
+      "observed": true
+    },
+    {
+      "layer": "primary_route",
+      "case": "get_limit_up_count_dated_control",
+      "tool": "get_limit_up_count",
+      "attempts": 1,
+      "statuses": "partial",
+      "classification": "capability_contract_gap",
+      "repeat_outcome": "single_probe",
+      "ms": "1988.4",
+      "business_datums": 2,
+      "dated_business_datums": 0,
+      "reason_codes": [
+        "missing_as_of_date",
+        "unknown_date"
+      ],
+      "capability_gap": "missing_required_fields:limit_up_count",
+      "error": "",
+      "observed": true
+    },
+    {
+      "layer": "primary_route",
+      "case": "list_limit_up_sectors_dated_control",
+      "tool": "list_limit_up_sectors",
+      "attempts": 1,
+      "statuses": "error",
+      "classification": "error",
+      "repeat_outcome": "single_probe",
+      "ms": "2573.0",
+      "business_datums": 0,
+      "dated_business_datums": 0,
+      "reason_codes": [
+        "empty_normalized"
+      ],
+      "capability_gap": "empty_normalized",
+      "error": "未返回有效目标字段（代码/简称不算指标，默认行情不算财务/事件/宏观数据）；可保留标的与时间重新查询，或访问 https://www.iwencai.com/unifiedwap/chat",
+      "observed": true
+    },
+    {
+      "layer": "primary_route",
+      "case": "get_ashare_sentiment_dated_control",
+      "tool": "get_ashare_sentiment",
+      "attempts": 1,
+      "statuses": "partial",
+      "classification": "capability_contract_gap",
+      "repeat_outcome": "single_probe",
+      "ms": "2778.5",
+      "business_datums": 4,
+      "dated_business_datums": 2,
+      "reason_codes": [
+        "missing_as_of_date",
+        "unknown_date"
+      ],
+      "capability_gap": "missing_required_fields:market_breadth",
+      "error": "",
+      "observed": true
+    },
+    {
+      "layer": "http",
+      "case": "quote_hk_format_hk00700",
+      "tool": "get_market_quotes",
+      "attempts": 1,
+      "statuses": "error",
+      "classification": "error",
+      "repeat_outcome": "single_probe",
+      "ms": "1077.3",
+      "business_datums": 0,
+      "dated_business_datums": 0,
+      "reason_codes": [
+        "gateway_error"
+      ],
+      "capability_gap": null,
+      "error": "HTTP 422",
+      "observed": true
+    },
+    {
+      "layer": "http",
+      "case": "quote_hk_format_00700",
+      "tool": "get_market_quotes",
+      "attempts": 1,
+      "statuses": "error",
+      "classification": "error",
+      "repeat_outcome": "single_probe",
+      "ms": "814.5",
+      "business_datums": 0,
+      "dated_business_datums": 0,
+      "reason_codes": [
+        "empty_gateway_response"
+      ],
+      "capability_gap": null,
+      "error": "Gateway returned no data (empty response)",
+      "observed": true
+    }
+  ]
+}

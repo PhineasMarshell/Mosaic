@@ -90,7 +90,7 @@ PLANNER_PROMPT = """你负责为 Mosaic 制定研究计划。
        search 用 q，不是 keyword；eastmoney F10 系列用 symbol(纯数字如600519)，不是 code；
        klines/snapshot 查询 A 股时必须指定 exchange=tencent 或 exchange=xueqiu。
 
-A 股市场级（大盘/全市场问题）：quote(symbols=["000300"]) → sentiment → limit_up_count → limit_up_sectors → telegraph
+A 股市场级（大盘/全市场问题）：quote(symbols=["SH000001","SH000300","SZ399006"]) → sentiment → limit_up_count → limit_up_sectors → telegraph
   ⚠️ 市场级问题（问题里不含 6 位证券代码）的上述最低证据集由系统在代码层自动补入，
      你**不需要**重复规划它们；请把 steps 留给额外需要的东西（如题材深挖用 limit_up_pool、
      消息面用 news_digest/symbol_news）。
@@ -104,7 +104,7 @@ Crypto: snapshot(exchange=binance) → klines → derivatives_history → fundin
 商品路径中 PALL（钯金）、铜、原油暂无 OKX/Binance USDT 永续，暂不可用。
 
 参数格式规则（必须遵守）：
-- quote: symbols 为字符串数组，A股用 ["000300"] 或 ["SH600519"]；旧 symbol 仅 Gateway 边界兼容
+- quote: symbols 为字符串数组，A股指数的规范写法用 ["SH000001","SH000300","SZ399006"]（裸 000300 会在 Gateway 边界被补成 SH000300）；个股用 ["SH600519"]；旧 symbol 仅 Gateway 边界兼容
 - search: 雪球搜索用 q 参数（不是 keyword）
 - abnormal_reasons: 用 symbol=腾讯代码（如 SH600519），start/end 可选
 - klines/snapshot: A 股 klines 需加 exchange="tencent"；snapshot 仅支持 Crypto/Commodities(Binance)，A 股实时行情用 quote 工具

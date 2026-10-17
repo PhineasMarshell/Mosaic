@@ -1,0 +1,1110 @@
+{
+  "summary": {
+    "total": 69,
+    "ok": 52,
+    "warning": 16,
+    "error": 0,
+    "pending": 1
+  },
+  "by_category": {
+    "[1] HTTP API Endpoints": [
+      "GET /health",
+      "GET /api/brief/morning",
+      "GET /api/brief/evening",
+      "POST /api/ask (sync)",
+      "POST /api/ask/stream",
+      "GET /"
+    ],
+    "[2] Health Checks": [
+      "get_service_health",
+      "get_market_health"
+    ],
+    "[3] A-share Master (ashare-master)": [
+      "get_ashare_sentiment",
+      "get_limit_up_count",
+      "list_limit_up_sectors",
+      "list_limit_up_stocks"
+    ],
+    "[4] Eastmoney Fundamental": [
+      "get_company_overview",
+      "get_company_detail",
+      "get_company_business",
+      "get_company_concepts",
+      "get_company_finance",
+      "get_company_shareholders",
+      "get_company_survey"
+    ],
+    "[5] Xueqiu/Tencent Market Micro": [
+      "get_market_quotes",
+      "get_stock_longhu",
+      "get_stock_abnormal_reasons",
+      "get_market_orderbook",
+      "list_market_trades",
+      "list_stock_discussions",
+      "search_stocks",
+      "commodity_gold (get_market_klines)",
+      "commodity_platinum (get_market_snapshot)",
+      "commodity_silver (get_market_snapshot)",
+      "hk_quote (get_market_quotes)",
+      "hk_search (search_stocks)",
+      "us_klines (get_market_klines)",
+      "us_window (get_market_window)",
+      "xq_discussions (list_stock_discussions)"
+    ],
+    "[6] iwencai Official Query Tools": [
+      "internal_iwencai_sector_selector",
+      "internal_iwencai_business_query",
+      "internal_iwencai_insresearch_query",
+      "internal_iwencai_index_query",
+      "internal_iwencai_astock_selector",
+      "internal_iwencai_industry_query",
+      "internal_iwencai_management_query",
+      "internal_iwencai_market_query",
+      "internal_iwencai_macro_query",
+      "internal_iwencai_finance_query",
+      "internal_iwencai_basicinfo_query",
+      "internal_iwencai_event_query"
+    ],
+    "[7] iwencai Search Tools": [
+      "internal_iwencai_announcement_search",
+      "internal_iwencai_report_search",
+      "internal_iwencai_news_search"
+    ],
+    "[8] THS Skill Adapter Route": [
+      "[THS] internal_iwencai_sector_selector",
+      "[THS] internal_iwencai_business_query",
+      "[THS] internal_iwencai_insresearch_query",
+      "[THS] internal_iwencai_index_query",
+      "[THS] internal_iwencai_astock_selector",
+      "[THS] internal_iwencai_industry_query",
+      "[THS] internal_iwencai_management_query",
+      "[THS] internal_iwencai_market_query",
+      "[THS] internal_iwencai_macro_query",
+      "[THS] internal_iwencai_finance_query",
+      "[THS] internal_iwencai_basicinfo_query",
+      "[THS] internal_iwencai_event_query",
+      "[THS] internal_iwencai_announcement_search",
+      "[THS] internal_iwencai_report_search",
+      "[THS] internal_iwencai_news_search"
+    ],
+    "[9] CoinGlass/Hyperliquid": [
+      "list_hyperliquid_symbols",
+      "get_hyperliquid_liquidation_map",
+      "get_hyperliquid_top_position",
+      "get_hyperliquid_user_count",
+      "list_hyperliquid_vaults",
+      "get_crypto_liquidation_today",
+      "list_crypto_funding_rates"
+    ],
+    "[10] OKX Perpetual Contracts": [
+      "get_market_klines_commodity",
+      "get_market_snapshot_crypto",
+      "get_market_window_crypto",
+      "list_exchanges",
+      "get_derivatives_history"
+    ],
+    "[11] SEC EDGAR US Fundamentals": [
+      "internal_us_fundamentals",
+      "internal_us_filings_recent"
+    ],
+    "[12] News/Telegraph": [
+      "news_search",
+      "internal_symbol_news",
+      "internal_market_telegraph",
+      "internal_news_digest"
+    ],
+    "[13] HK Northbound/Stock Connect": [
+      "internal_hk_northbound",
+      "internal_hk_index"
+    ]
+  },
+  "results": {
+    "GET /health": {
+      "status": "OK",
+      "code": 200,
+      "elapsed_ms": "29ms",
+      "body_preview": "{\"status\": \"ok\", \"service\": \"mosaic\", \"gateway_mode\": \"http\", \"gateway_channel\": \"not_applicable\", \"model\": \"qwen3.7-flash\", \"max_tool_calls\": 12, \"research_budget_seconds\": 1000, \"graph_recursion_lim",
+      "error": null
+    },
+    "GET brief/morning": {
+      "status": "WARN",
+      "code": "-",
+      "elapsed_ms": "-",
+      "body_preview": "",
+      "error": ""
+    },
+    "GET brief/evening": {
+      "status": "WARN",
+      "code": "-",
+      "elapsed_ms": "-",
+      "body_preview": "",
+      "error": ""
+    },
+    "POST /api/ask": {
+      "status": "OK",
+      "code": "-",
+      "elapsed_ms": "-",
+      "body_preview": "",
+      "error": "Research accepted but timed out waiting (expected, budget ~1000s)"
+    },
+    "POST /api/ask/stream": {
+      "status": "ERR",
+      "code": "-",
+      "elapsed_ms": "-",
+      "body_preview": "",
+      "error": "'Response' object has no attribute 'areadline'"
+    },
+    "GET /": {
+      "status": "OK",
+      "code": 200,
+      "elapsed_ms": "21ms",
+      "body_preview": "<!doctype html>\r\n<html lang=\"zh-CN\">\r\n<head>\r\n<meta charset=\"utf-8\">\r\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no\">\r\n<title>Mosaic — Market Intel",
+      "error": null
+    },
+    "get_service_health": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/health domain=unknown priority=low category=shared",
+      "error": null,
+      "details": {
+        "key": "health",
+        "domain": "unknown",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/health",
+        "category": "shared"
+      }
+    },
+    "get_market_health": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/health domain=unknown priority=low category=shared",
+      "error": null,
+      "details": {
+        "key": "market_health",
+        "domain": "unknown",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/market/health",
+        "category": "shared"
+      }
+    },
+    "get_ashare_sentiment": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/ashare-master/sentiment domain=a_share priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "sentiment",
+        "domain": "a_share",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/ashare-master/sentiment",
+        "category": "technical"
+      }
+    },
+    "get_limit_up_count": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/ashare-master/limit-up/count domain=a_share priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "limit_up_count",
+        "domain": "a_share",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/ashare-master/limit-up/count",
+        "category": "technical"
+      }
+    },
+    "list_limit_up_sectors": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/ashare-master/limit-up/sectors domain=a_share priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "limit_up_sectors",
+        "domain": "a_share",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/ashare-master/limit-up/sectors",
+        "category": "technical"
+      }
+    },
+    "list_limit_up_stocks": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/ashare-master/limit-up/pool domain=a_share priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "limit_up_pool",
+        "domain": "a_share",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/ashare-master/limit-up/pool",
+        "category": "technical"
+      }
+    },
+    "get_company_overview": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/eastmoney/overview domain=a_share priority=high category=fundamental",
+      "error": null,
+      "details": {
+        "key": "overview",
+        "domain": "a_share",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/eastmoney/overview",
+        "category": "fundamental"
+      }
+    },
+    "get_company_detail": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/eastmoney/detail domain=a_share priority=medium category=fundamental",
+      "error": null,
+      "details": {
+        "key": "detail",
+        "domain": "a_share",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/eastmoney/detail",
+        "category": "fundamental"
+      }
+    },
+    "get_company_business": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/eastmoney/f10/business domain=a_share priority=low category=fundamental",
+      "error": null,
+      "details": {
+        "key": "business",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/eastmoney/f10/business",
+        "category": "fundamental"
+      }
+    },
+    "get_company_concepts": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/eastmoney/f10/concept domain=a_share priority=low category=fundamental",
+      "error": null,
+      "details": {
+        "key": "concept",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/eastmoney/f10/concept",
+        "category": "fundamental"
+      }
+    },
+    "get_company_finance": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/eastmoney/f10/finance domain=a_share priority=low category=fundamental",
+      "error": null,
+      "details": {
+        "key": "finance",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/eastmoney/f10/finance",
+        "category": "fundamental"
+      }
+    },
+    "get_company_shareholders": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/eastmoney/f10/shareholders domain=a_share priority=low category=fundamental",
+      "error": null,
+      "details": {
+        "key": "shareholders",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/eastmoney/f10/shareholders",
+        "category": "fundamental"
+      }
+    },
+    "get_company_survey": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/eastmoney/f10/survey domain=a_share priority=low category=fundamental",
+      "error": null,
+      "details": {
+        "key": "survey",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/eastmoney/f10/survey",
+        "category": "fundamental"
+      }
+    },
+    "get_market_quotes": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/quotes domain=a_share priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "quote",
+        "domain": "a_share",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/market/quotes",
+        "category": "technical"
+      }
+    },
+    "get_stock_longhu": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/longhu domain=a_share priority=medium category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "longhu",
+        "domain": "a_share",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/market/longhu",
+        "category": "moneyflow"
+      }
+    },
+    "get_stock_abnormal_reasons": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/abnormal-reasons domain=a_share priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "abnormal_reasons",
+        "domain": "a_share",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/market/abnormal-reasons",
+        "category": "technical"
+      }
+    },
+    "get_market_orderbook": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/orderbook domain=a_share priority=low category=technical",
+      "error": null,
+      "details": {
+        "key": "orderbook",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/market/orderbook",
+        "category": "technical"
+      }
+    },
+    "list_market_trades": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/trades domain=a_share priority=low category=technical",
+      "error": null,
+      "details": {
+        "key": "trades",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/market/trades",
+        "category": "technical"
+      }
+    },
+    "list_stock_discussions": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/discussions domain=a_share priority=low category=technical",
+      "error": null,
+      "details": {
+        "key": "timeline",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/market/discussions",
+        "category": "technical"
+      }
+    },
+    "search_stocks": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/search domain=a_share priority=low category=technical",
+      "error": null,
+      "details": {
+        "key": "search",
+        "domain": "a_share",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/market/search",
+        "category": "technical"
+      }
+    },
+    "internal_iwencai_sector_selector": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=technical",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_sector_selector",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "technical"
+      }
+    },
+    "internal_iwencai_business_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_business",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_insresearch_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_insresearch",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_index_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=technical",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_index",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "technical"
+      }
+    },
+    "internal_iwencai_astock_selector": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=technical",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_astock_selector",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "technical"
+      }
+    },
+    "internal_iwencai_industry_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_industry",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_management_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_management",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_market_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=technical",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_market",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "technical"
+      }
+    },
+    "internal_iwencai_macro_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_macro",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_finance_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_finance",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_basicinfo_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_basicinfo",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_event_query": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=news",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_events",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "news"
+      }
+    },
+    "internal_iwencai_announcement_search": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=news",
+      "error": null,
+      "details": {
+        "key": "announcement_search",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "news"
+      }
+    },
+    "internal_iwencai_report_search": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=fundamental",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_report_search",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_iwencai_news_search": {
+      "status": "WARN",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=high category=news",
+      "error": "Missing: IWENCAI_API_KEY",
+      "details": {
+        "key": "iwencai_news_search",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "news"
+      }
+    },
+    "list_hyperliquid_symbols": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/coinglass/hyperliquid/symbols domain=crypto priority=medium category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "hyperliquid_symbols",
+        "domain": "crypto",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/coinglass/hyperliquid/symbols",
+        "category": "moneyflow"
+      }
+    },
+    "get_hyperliquid_liquidation_map": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/coinglass/hyperliquid/liqmap domain=crypto priority=high category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "liqmap",
+        "domain": "crypto",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/coinglass/hyperliquid/liqmap",
+        "category": "moneyflow"
+      }
+    },
+    "get_hyperliquid_top_position": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/coinglass/hyperliquid/top-position domain=crypto priority=high category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "top_position",
+        "domain": "crypto",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/coinglass/hyperliquid/top-position",
+        "category": "moneyflow"
+      }
+    },
+    "get_hyperliquid_user_count": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/coinglass/hyperliquid/user-count domain=crypto priority=medium category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "user_count",
+        "domain": "crypto",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/coinglass/hyperliquid/user-count",
+        "category": "moneyflow"
+      }
+    },
+    "list_hyperliquid_vaults": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/coinglass/hyperliquid/vaults domain=crypto priority=low category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "vaults",
+        "domain": "crypto",
+        "priority": "low",
+        "http_method": "GET",
+        "path": "/coinglass/hyperliquid/vaults",
+        "category": "moneyflow"
+      }
+    },
+    "get_crypto_liquidation_today": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/coinglass/liquidation/today domain=crypto priority=high category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "liquidation_today",
+        "domain": "crypto",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/coinglass/liquidation/today",
+        "category": "moneyflow"
+      }
+    },
+    "list_crypto_funding_rates": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/coinglass/funding-rate domain=crypto priority=high category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "funding_rate",
+        "domain": "crypto",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/coinglass/funding-rate",
+        "category": "moneyflow"
+      }
+    },
+    "get_market_klines_commodity": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/klines domain=cross priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "klines",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "POST",
+        "path": "/market/klines",
+        "category": "technical"
+      }
+    },
+    "get_market_snapshot_crypto": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/snapshot domain=cross priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "snapshot",
+        "domain": "cross",
+        "priority": "high",
+        "http_method": "POST",
+        "path": "/market/snapshot",
+        "category": "technical"
+      }
+    },
+    "get_market_window_crypto": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/window domain=cross priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "window",
+        "domain": "cross",
+        "priority": "medium",
+        "http_method": "POST",
+        "path": "/market/window",
+        "category": "technical"
+      }
+    },
+    "list_exchanges": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/exchanges domain=crypto priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "exchanges",
+        "domain": "crypto",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/market/exchanges",
+        "category": "technical"
+      }
+    },
+    "get_derivatives_history": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/derivatives/history domain=crypto priority=high category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "derivatives_history",
+        "domain": "crypto",
+        "priority": "high",
+        "http_method": "POST",
+        "path": "/market/derivatives/history",
+        "category": "moneyflow"
+      }
+    },
+    "internal_us_fundamentals": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=us_stock priority=high category=fundamental",
+      "error": null,
+      "details": {
+        "key": "us_fundamentals",
+        "domain": "us_stock",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "internal_us_filings_recent": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=us_stock priority=medium category=fundamental",
+      "error": null,
+      "details": {
+        "key": "us_filings_recent",
+        "domain": "us_stock",
+        "priority": "medium",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "fundamental"
+      }
+    },
+    "news_search": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=medium category=news",
+      "error": null,
+      "details": {
+        "key": "news_search",
+        "domain": "cross",
+        "priority": "medium",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "news"
+      }
+    },
+    "internal_symbol_news": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=a_share priority=high category=news",
+      "error": null,
+      "details": {
+        "key": "symbol_news",
+        "domain": "a_share",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "news"
+      }
+    },
+    "internal_market_telegraph": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=a_share priority=high category=news",
+      "error": null,
+      "details": {
+        "key": "telegraph",
+        "domain": "a_share",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "news"
+      }
+    },
+    "internal_news_digest": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=cross priority=medium category=news",
+      "error": null,
+      "details": {
+        "key": "news_digest",
+        "domain": "cross",
+        "priority": "medium",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "news"
+      }
+    },
+    "internal_hk_northbound": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=hk_stock priority=high category=moneyflow",
+      "error": null,
+      "details": {
+        "key": "hk_northbound_daily",
+        "domain": "hk_stock",
+        "priority": "high",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "moneyflow"
+      }
+    },
+    "internal_hk_index": {
+      "status": "REGISTERED",
+      "code": "[INTERNAL]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=(INTERNAL) domain=hk_stock priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "hk_index_snapshot",
+        "domain": "hk_stock",
+        "priority": "medium",
+        "http_method": "INTERNAL",
+        "path": "",
+        "category": "technical"
+      }
+    },
+    "commodity_gold (get_market_klines)": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/klines domain=commodities priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "commodity_gold",
+        "domain": "commodities",
+        "priority": "high",
+        "http_method": "POST",
+        "path": "/market/klines",
+        "category": "technical"
+      }
+    },
+    "commodity_platinum (get_market_snapshot)": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/snapshot domain=commodities priority=low category=technical",
+      "error": null,
+      "details": {
+        "key": "commodity_platinum",
+        "domain": "commodities",
+        "priority": "low",
+        "http_method": "POST",
+        "path": "/market/snapshot",
+        "category": "technical"
+      }
+    },
+    "commodity_silver (get_market_snapshot)": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/snapshot domain=commodities priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "commodity_silver",
+        "domain": "commodities",
+        "priority": "medium",
+        "http_method": "POST",
+        "path": "/market/snapshot",
+        "category": "technical"
+      }
+    },
+    "hk_quote (get_market_quotes)": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/quotes domain=hk_stock priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "hk_quote",
+        "domain": "hk_stock",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/market/quotes",
+        "category": "technical"
+      }
+    },
+    "hk_search (search_stocks)": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/search domain=hk_stock priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "hk_search",
+        "domain": "hk_stock",
+        "priority": "medium",
+        "http_method": "GET",
+        "path": "/market/search",
+        "category": "technical"
+      }
+    },
+    "us_klines (get_market_klines)": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/klines domain=us_stock priority=high category=technical",
+      "error": null,
+      "details": {
+        "key": "us_klines",
+        "domain": "us_stock",
+        "priority": "high",
+        "http_method": "POST",
+        "path": "/market/klines",
+        "category": "technical"
+      }
+    },
+    "us_window (get_market_window)": {
+      "status": "REGISTERED",
+      "code": "[POST]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/window domain=us_stock priority=medium category=technical",
+      "error": null,
+      "details": {
+        "key": "us_window",
+        "domain": "us_stock",
+        "priority": "medium",
+        "http_method": "POST",
+        "path": "/market/window",
+        "category": "technical"
+      }
+    },
+    "xq_discussions (list_stock_discussions)": {
+      "status": "REGISTERED",
+      "code": "[GET]",
+      "elapsed_ms": "0ms",
+      "body_preview": "path=/market/discussions domain=a_share priority=high category=sentiment",
+      "error": null,
+      "details": {
+        "key": "xq_discussions",
+        "domain": "a_share",
+        "priority": "high",
+        "http_method": "GET",
+        "path": "/market/discussions",
+        "category": "sentiment"
+      }
+    }
+  }
+}

@@ -27,7 +27,7 @@ import time
 from collections import Counter
 from typing import Any, Literal
 
-from app.agent.evidence_gate import match_claims_to_evidence
+from app.agent.evidence_gate import _single_news_evidence_allowed, match_claims_to_evidence
 from app.graph import run_log
 from app.graph.budget import elapsed_ms
 
@@ -130,7 +130,9 @@ _GLOBAL_DEGRADED_BLOCKERS = frozenset(
 )
 
 
-def _strict_verified_issues(state: dict[str, Any], report: Any) -> list[str]:
+def _strict_verified_issues(
+    state: dict[str, Any], report: Any, *, include_tool_failures: bool = True,
+) -> list[str]:
     """Return concrete reasons a passing Critic cannot become ``verified``.
 
     The ordinary claim matcher is intentionally useful for research/degraded
@@ -168,7 +170,7 @@ def _strict_verified_issues(state: dict[str, Any], report: Any) -> list[str]:
     if payload.get("evidence_violations"):
         codes.append("invalid_reference")
 
-    for item in state.get("results") or []:
+    for item in state.get("results") or [] if include_tool_failures else []:
         status = str(_evidence_field(item, "status", "") or "").lower()
         reasons = {str(code).lower() for code in (_evidence_field(item, "reason_codes", []) or [])}
         if status == "error" or reasons & {
@@ -264,6 +266,10 @@ def _degraded_evidence_ok(item: Any, claim: str) -> bool:
     source_tool = str(
         _evidence_field(item, "source_tool", _evidence_field(item, "operation_id", "")) or ""
     ).strip().lower()
+    if completeness in {"search_results", "page"} and not _single_news_evidence_allowed(
+        item, is_partial=False, source_tool=source_tool, claim=claim
+    ):
+        return False
     source = str(_evidence_field(item, "source", "") or "").strip().lower()
     authority = str(_evidence_field(item, "authority", "") or "").strip().lower()
     if not source_tool or source_tool in {"unknown", "reasoning_engine"}:
@@ -440,6 +446,15 @@ def build_degraded_report(
             if value and str(value) not in target:
                 target.append(str(value))
 
+    # The LLM is allowed to omit this presentation field.  Degraded reports
+    # are code assembled from retained evidence, so derive the tool list from
+    # those rows instead of rendering ``Tools Used (0)`` beside real facts.
+    used_tools = list(dict.fromkeys(
+        str(_evidence_field(item, "source_tool", None) or _evidence_field(item, "tool_key", ""))
+        for item in kept_evidence
+        if str(_evidence_field(item, "source_tool", None) or _evidence_field(item, "tool_key", "")).strip()
+    ))
+
     structural = _structural_date_fact(payload, state)
     body_parts = [str(_evidence_field(c, "claim", "")).strip() for c in retained if str(_evidence_field(c, "claim", "")).strip()]
     if structural:
@@ -476,6 +491,7 @@ def build_degraded_report(
             "partial": True,
             "source": sources,
             "coverage": coverages,
+            "used_tools": used_tools,
         }
     )
     try:
@@ -506,6 +522,8 @@ def infer_blocked_reason(state: dict[str, Any], critique: Any, settings: Any = N
     if explicit:
         return explicit
     state_reasons = set(state.get("reason_codes") or [])
+    if not state.get("report") and state_reasons & {"reasoning_timeout", "llm_output_error", "reasoning_failed_no_report"}:
+        return "reasoning_failed_no_report"
     if "missing_as_of_date" in state_reasons:
         return "missing_as_of_date"
     if settings is not None:
@@ -579,10 +597,19 @@ class FinalizeAuditNode:
             # Evidence-only fallback is explicitly non-persistent even if a
             # later audit happens to accept its narrow facts.
             fallback_codes = set(s.get("reason_codes") or []) | set(s.get("degraded_reason_codes") or [])
+            fallback_claim_issues: list[str] = []
             if "evidence_only_fallback" in fallback_codes and s.get("report") is not None:
-                audit_status, delivery_status = "revise_exhausted", "degraded"
-                reason = "evidence_only_fallback: 仅交付账本中的直接事实"
-                blocked_reason = ""
+                fallback_claim_issues = _strict_verified_issues(
+                    s, s.get("report"), include_tool_failures=False,
+                )
+                if fallback_claim_issues:
+                    audit_status, delivery_status = "revise_exhausted", "blocked"
+                    reason = "evidence_only_fallback_claim_audit_failed: " + ", ".join(fallback_claim_issues)
+                    blocked_reason = "evidence_only_fallback_claim_audit_failed"
+                else:
+                    audit_status, delivery_status = "revise_exhausted", "degraded"
+                    reason = "evidence_only_fallback: 仅交付账本中的直接事实"
+                    blocked_reason = ""
 
             degraded_report = None
             degraded_issues: list[str] = []
@@ -590,7 +617,11 @@ class FinalizeAuditNode:
             # Only an exhausted, non-error audit may enter the controlled
             # degraded path.  The helper is deterministic and returns a
             # rebuilt report, so no unverified model prose survives.
-            if delivery_status == "blocked" and s.get("report") is not None:
+            if (
+                delivery_status == "blocked"
+                and s.get("report") is not None
+                and "evidence_only_fallback" not in fallback_codes
+            ):
                 degraded_report, degraded_issues, degraded_codes = build_degraded_report(
                     s, s.get("report"), critique
                 )
@@ -603,7 +634,11 @@ class FinalizeAuditNode:
                         else "degraded_partial_evidence: 仅交付可验证 claim"
                     )
                     blocked_reason = ""
-            if "evidence_only_fallback" in fallback_codes and s.get("report") is not None:
+            if (
+                "evidence_only_fallback" in fallback_codes
+                and s.get("report") is not None
+                and not fallback_claim_issues
+            ):
                 # The fallback report has already been deterministically built
                 # from complete, same-date, same-instrument ledger rows. Keep
                 # it intact; never re-run free-form degraded reconstruction.
@@ -622,6 +657,7 @@ class FinalizeAuditNode:
                 *(s.get("reason_codes") or []),
                 *degraded_codes,
                 *strict_issues,
+                *fallback_claim_issues,
             ]))
             if blocked_reason and blocked_reason not in terminal_codes and delivery_status != "verified":
                 terminal_codes.append(str(blocked_reason))

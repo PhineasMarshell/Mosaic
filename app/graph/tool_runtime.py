@@ -14,6 +14,7 @@ analyst 节点通过此层执行分配给自己的工具。
 """
 
 import asyncio
+import inspect
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -27,7 +28,7 @@ from app.gateway.http_client import MarketGatewayHttpClient
 from app.gateway.mcp_client import MarketGatewayClient
 from app.gateway.source_routing import is_mcp_fallback_enabled, is_primary_skill_enabled, skill_route_for
 from app.gateway.ths_skill_adapter import is_registered_skill, skill_adapter_for
-from app.gateway.tool_registry import resolve_tool_by_name
+from app.gateway.tool_registry import declared_provider_for_operation, resolve_tool_by_name
 from app.models.market import STATUS_ERROR, STATUS_PARTIAL, STATUS_SUCCESS, NormalizedDatum, ToolResult
 from app.research.hk_northbound import fetch_all_hk_context as fetch_hk_context_data
 from app.research.news_search import extract_news_entries as _extract_news_entries
@@ -221,6 +222,26 @@ def _normalize_us_filings(filings: list[dict]) -> list[NormalizedDatum]:
 # 子任务看到会话、兄弟任务看不到。gateway/available 成组放 dict，一次 set 成组读写。
 _session: ContextVar[dict | None] = ContextVar("gateway_session", default=None)
 _run_id: ContextVar[str | None] = ContextVar("tool_runtime_run_id", default=None)
+
+
+def _research_as_of_date(arguments: dict) -> str | None:
+    """从计划参数里提取研究目标日期（独立上下文，不进入无参工具的 wire 参数）。
+
+    对无入参的当日快照工具（涨停家数/板块），这个日期只作为
+    ``requested_as_of_date`` 传给归一化做语义判断；契约 ``date_from_request``
+    为 False 时不会被用来补观察日，只会产生 ``mcp_request_date_ignored`` 诊断。
+    """
+    if not isinstance(arguments, dict):
+        return None
+    raw = arguments.get("as_of_date") or arguments.get("date") or arguments.get("trade_date")
+    if raw in (None, ""):
+        return None
+    try:
+        from app.research.trading_calendar import normalize_date
+
+        return normalize_date(raw)
+    except Exception:
+        return None
 
 
 def _normalize_hk_entries(hk_data: dict) -> list[NormalizedDatum]:
@@ -670,12 +691,14 @@ class ToolRuntime:
                 gateway = await self._ensure_gateway(session)
                 available = session.get("available")
                 result = await self._call_gateway(gateway, available, tool_name, arguments, deadline=deadline,
-                                                  route_fallback=False)
+                                                  route_fallback=False,
+                                                  declared_provider=declared_provider_for_operation(tool_name))
             else:
                 gateway_cls = self._gateway_class()
                 async with gateway_cls(self.settings) as gateway:
                     result = await self._call_gateway(gateway, None, tool_name, arguments, deadline=deadline,
-                                                      route_fallback=False)
+                                                      route_fallback=False,
+                                                      declared_provider=declared_provider_for_operation(tool_name))
             if self.settings.market_gateway_mode.lower() == "mcp":
                 result.mcp_initialize = True
                 result.mcp_list_tools = True
@@ -722,6 +745,7 @@ class ToolRuntime:
         deadline: float | None = None,
         route_fallback: bool = True,
         refresh: bool = False,
+        declared_provider: str | None = None,
     ) -> ToolResult:
         """通过已连接的 gateway 执行一次调用；available 为 None 时按模式现场解析。"""
         if available is None:
@@ -742,7 +766,22 @@ class ToolRuntime:
                 reason_codes=["gateway_tool_unavailable"],
             )
         else:
-            primary = await gateway.call(tool_name, arguments, deadline=deadline)
+            accepts_declared_provider = False
+            accepts_request_date = False
+            try:
+                call_params = inspect.signature(gateway.call).parameters
+            except (TypeError, ValueError):
+                call_params = {}
+            if declared_provider is not None and self.settings.market_gateway_mode.lower() == "mcp":
+                accepts_declared_provider = "declared_provider" in call_params
+            accepts_request_date = "requested_as_of_date" in call_params
+            call_kwargs = {"deadline": deadline}
+            if accepts_declared_provider:
+                call_kwargs["declared_provider"] = declared_provider
+            if accepts_request_date:
+                # 研究目标日期只做上下文，不改变无参工具的 wire arguments/去重签名。
+                call_kwargs["requested_as_of_date"] = _research_as_of_date(arguments)
+            primary = await gateway.call(tool_name, arguments, **call_kwargs)
         return await self._route_fallback(primary, tool_name, arguments, deadline, refresh=refresh) if route_fallback else primary
 
     async def _route_fallback(
@@ -790,6 +829,7 @@ class ToolRuntime:
                     "capability": item.capability,
                     "status": item.result.status,
                     "reason_codes": item.result.reason_codes,
+                    "fallback_provenance_failures": getattr(item, "fallback_provenance_failures", []),
                     "datum_count": len(item.result.normalized),
                     "latency_ms": item.latency_ms,
                 }

@@ -18,6 +18,7 @@ import pytest
 import app.main as main
 from app.cache import Cache
 from app.config import Settings
+from app.gateway.arguments import canonicalize_tool_arguments
 from app.gateway.http_client import MarketGatewayHttpClient
 from app.gateway.mcp_client import MarketGatewayClient
 from app.graph import run_log
@@ -278,7 +279,7 @@ async def test_fixture_quote_attempts_and_both_timeout_tools_replay(schema_type)
     gateway.tools = [{"name": "get_market_quotes", "inputSchema": {"properties": {"symbols": {"type": schema_type}}}}]
     for row in FIXTURE["quote_attempts"]:
         result = await gateway.call(row["tool"], row["arguments"], deadline=time.monotonic() + 1)
-        expected = sorted(row["arguments"]["symbols"])
+        expected = canonicalize_tool_arguments(row["tool"], row["arguments"])["symbols"]
         assert result.status == "success"
         assert result.arguments == {"symbols": expected}
         from app.gateway.arguments import quote_transport_symbols

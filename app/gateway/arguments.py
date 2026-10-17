@@ -140,25 +140,60 @@ def canonicalize_tool_arguments(tool_name: str, arguments: Any) -> dict[str, Any
                 legacy = _symbols(result["symbol"])
                 if values != legacy:
                     raise ArgumentValidationError("symbol and symbols specify different quote targets")
-            result["symbols"] = values
+            result["symbols"] = [_canonical_quote_symbol(symbol) for symbol in values]
             result.pop("symbol", None)
         elif "symbol" in result:
-            result["symbols"] = _symbols(result.pop("symbol"))
+            result["symbols"] = [_canonical_quote_symbol(symbol) for symbol in _symbols(result.pop("symbol"))]
         else:
             raise ArgumentValidationError("missing required argument: symbols")
     return result
 
 
-def quote_transport_symbols(symbols: list[str]) -> list[str]:
-    """Tencent requires an exchange prefix for known index codes.
+def _canonical_quote_symbol(symbol: str) -> str:
+    """Return the canonical Quote target: an uppercase exchange-prefixed code.
 
-    Preserve canonical arguments and code-only equities; 000300 otherwise
-    becomes an empty quote rather than the requested CSI 300 index.
+    Bare six-digit codes stay untouched for real equities (``600519``), but a
+    bare A-share **index** code is only ever one thing (``000300`` is the CSI
+    300, never a stock), so it is promoted to its exchange form here.  Fixing
+    that once at canonicalization time keeps planner, critic, route, cache and
+    transport encoding on one variant instead of two.
     """
     from app.gateway.stock_codes import INDEX_CODE_MAP_A_SHARE, _infer_index_exchange
 
-    indices = set(INDEX_CODE_MAP_A_SHARE.values())
-    return [f"{_infer_index_exchange(symbol)}{symbol}" if symbol in indices else symbol for symbol in symbols]
+    text = symbol.strip()
+    if not text:
+        return symbol
+    upper = text.upper()
+    if re.fullmatch(r"(?:SH|SZ|BJ)\d{6}", upper):
+        return upper
+    if re.fullmatch(r"\d{6}", upper) and upper in set(INDEX_CODE_MAP_A_SHARE.values()):
+        return f"{_infer_index_exchange(upper).upper()}{upper}"
+    return text
+
+
+def quote_transport_symbols(symbols: list[str]) -> list[str]:
+    """Tencent requires an exchange prefix for known index codes.
+
+    Canonical arguments already carry the prefix; a bare index code arriving
+    from a legacy caller is promoted here too so it cannot silently become an
+    empty quote.
+    """
+    encoded = [_canonical_quote_symbol(symbol) for symbol in symbols]
+    # Tencent wire format is lowercase. Canonical plan/cache/audit targets stay
+    # uppercase; a bare 000001 remains ambiguous and must never become SH000001.
+    return [symbol.lower() if re.fullmatch(r"(?:SH|SZ|BJ)\d{6}", symbol) else symbol for symbol in encoded]
+
+
+def gateway_transport_arguments(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Remove research-only parameters from current-only Gateway endpoints.
+
+    Research plans and THS queries retain historical targets. This encoding is
+    deliberately separate from canonical arguments used for cache and audit.
+    """
+    if tool_name in {"list_limit_up_stocks", "get_limit_up_count", "list_limit_up_sectors", "get_ashare_sentiment", "get_telegraph"}:
+        return {}
+    return dict(arguments)
+
 
 
 def freeze_argument(value: Any) -> Any:

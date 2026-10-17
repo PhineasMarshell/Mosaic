@@ -22,7 +22,9 @@ from app.research.reasoning import (
     _get_evidence_key,
     build_evidence_aliases,
     build_evidence_only_fallback,
+    build_market_evidence_only_fallback,
     plan_evidence_only_fallback,
+    plan_market_evidence_fallback,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,9 +73,9 @@ def _log_fallback(engine, state, plan, *, phase: str, applied: bool) -> dict:
         rejected_count=plan.rejected_count,
         rejection_reasons=diagnostics["rejection_reasons"],
         candidate_evidence_ids=diagnostics["candidate_evidence_ids"],
-        rejected_candidates=diagnostics["rejected_candidates"],
-        requested_date=plan.requested_date,
-        target_instrument=plan.target_instrument,
+        rejected_candidates=diagnostics.get("rejected_candidates", []),
+        requested_date=getattr(plan, "requested_date", None) or getattr(plan, "expected_date", None),
+        target_instrument=getattr(plan, "target_instrument", None),
         finish_reason=getattr(engine, "last_finish_reason", None),
         parse_status=getattr(engine, "last_parse_status", None),
     )
@@ -89,27 +91,46 @@ def _evidence_fallback_update(
     只实现一次，sync/SSE 因此不可能各自漂移出不同结论（P13 §一/§二.1）。
     """
     ledger = _ledger_evidence(state)
-    plan = plan_evidence_only_fallback(
-        ledger,
-        requested_date=requested_date,
-        target_instrument=target_instrument,
-        as_of_date=state.get("as_of_date"),
-    )
-    report = build_evidence_only_fallback(
-        ledger,
-        requested_date=requested_date,
-        target_instrument=target_instrument,
-        as_of_date=state.get("as_of_date"),
-        decision=plan,
-    )
+    intent = state.get("intent")
+    domain = str(_field(intent, "domain", state.get("domain", "")) or "").lower()
+    task = str(_field(intent, "task", "") or "").lower()
+    market_level = domain == "a_share" and task in {"market_summary", "market_diagnosis"} and not target_instrument
+    if market_level:
+        plan = plan_market_evidence_fallback(
+            ledger, requested_date=requested_date,
+            planned_as_of_date=state.get("planned_as_of_date") or _field(intent, "as_of_date"),
+            as_of_date=state.get("as_of_date"),
+        )
+        report = build_market_evidence_only_fallback(
+            ledger, requested_date=requested_date,
+            planned_as_of_date=state.get("planned_as_of_date") or _field(intent, "as_of_date"),
+            as_of_date=state.get("as_of_date"), decision=plan,
+        )
+    else:
+        plan = plan_evidence_only_fallback(
+            ledger,
+            requested_date=requested_date,
+            target_instrument=target_instrument,
+            as_of_date=state.get("as_of_date"),
+        )
+        report = build_evidence_only_fallback(
+            ledger,
+            requested_date=requested_date,
+            target_instrument=target_instrument,
+            as_of_date=state.get("as_of_date"),
+            decision=plan,
+        )
     diagnostics = _log_fallback(engine, state, plan, phase=phase, applied=report is not None)
-    if report is None:
+    if report is None and not market_level:
         return None
-    return {"report": report, "fallback_diagnostics": diagnostics}
+    return {"report": report, "fallback_diagnostics": diagnostics, "fallback_applied": report is not None}
 
 
-def _select_evidence(items: list, previous_report, *, total_limit: int = 500, per_tool: int = 80) -> tuple[list, dict]:
-    if len(items) <= total_limit:
+def _select_evidence(
+    items: list, previous_report, *, total_limit: int = 500, per_tool: int = 80,
+    market_summary: bool = False, planned_as_of_date: str | None = None,
+) -> tuple[list, dict]:
+    if len(items) <= total_limit and not market_summary:
         return items, {"kept": len(items), "omitted": 0, "reason": "within_limit"}
     referenced = {
         str(eid)
@@ -119,22 +140,79 @@ def _select_evidence(items: list, previous_report, *, total_limit: int = 500, pe
     referenced.update(str(_field(e, "id")) for e in (_field(previous_report, "evidence", []) or []))
     selected: set[int] = set()
     per_source: dict[str, int] = {}
-    reasons = {"report_reference": 0, "market_minimum": 0, "tool_quota": 0}
+    reasons = {
+        "report_reference": 0, "market_minimum": 0, "tool_quota": 0,
+        "date_mismatch": 0, "tool_cap": 0, "field_whitelist": 0,
+    }
+    tool_caps = {
+        "quote": 18,
+        "sentiment": 12,
+        "limit_up_count": 8,
+        "limit_up_sectors": 18,
+        "telegraph": 4,
+        "news": 4,
+        "iwencai_market": 8,
+        "iwencai_industry": 8,
+    }
+
+    def tool_cap(tool: str) -> int:
+        lowered = tool.lower()
+        return next((cap for key, cap in tool_caps.items() if key in lowered), per_tool)
+
+    def market_field_allowed(index: int) -> bool:
+        if not market_summary:
+            return True
+        item = items[index]
+        tool = _get_evidence_key(item).lower()
+        metric = str(_field(item, "metric", "") or "").casefold().rsplit(".", 1)[-1]
+        if "quote" in tool:
+            return any(token in metric for token in ("price", "close", "latest", "涨跌幅", "change", "pct"))
+        if "sentiment" in tool or "breadth" in tool:
+            return any(token in metric for token in ("up_count", "down_count", "上涨家数", "下跌家数", "成交额", "advance", "decline"))
+        if "limit_up_count" in tool:
+            return any(token in metric for token in ("count", "涨停家数", "涨停数"))
+        if "limit_up_sectors" in tool:
+            return any(token in metric for token in ("板块", "题材", "行业", "概念", "sector", "theme", "industry", "涨停家数", "涨停数", "rank", "排名", "涨幅", "pct"))
+        if "telegraph" in tool or "news" in tool:
+            return metric in {"title", "headline", "subject", "summary", "digest", "abstract"}
+        if "iwencai_market" in tool or "iwencai_industry" in tool:
+            return any(token in metric for token in ("行业", "板块", "概念", "industry", "sector", "theme", "涨跌幅", "change_pct"))
+        return True
 
     def take(index: int, reason: str, *, force: bool = False) -> None:
         if index in selected or (len(selected) >= total_limit and not force):
             return
         tool = _get_evidence_key(items[index])
-        if not force and per_source.get(tool, 0) >= per_tool:
+        if not market_field_allowed(index):
+            reasons["field_whitelist"] += 1
             return
+        cap = tool_cap(tool) if market_summary else per_tool
+        if not force and per_source.get(tool, 0) >= cap:
+            reasons["tool_cap"] += 1
+            return
+        if market_summary and planned_as_of_date and any(key in tool.lower() for key in ("telegraph", "news")):
+            observed = _field(items[index], "as_of_date") or str(_field(items[index], "timestamp") or "")[:10]
+            if observed != planned_as_of_date:
+                reasons["date_mismatch"] += 1
+                return
         selected.add(index)
         per_source[tool] = per_source.get(tool, 0) + 1
         reasons[reason] += 1
 
-    for i, item in enumerate(items):
+    market_priority = ("quote", "sentiment", "breadth", "limit_up_count", "limit_up_sectors", "telegraph", "news")
+    market_indices = sorted(
+        range(len(items)),
+        key=lambda i: next(
+            (rank for rank, token in enumerate(market_priority) if token in _get_evidence_key(items[i]).lower()),
+            len(market_priority),
+        ),
+    ) if market_summary else range(len(items))
+    for i in market_indices:
+        item = items[i]
         if str(_field(item, "id")) in referenced:
             take(i, "report_reference", force=True)
-    for i, item in enumerate(items):
+    for i in market_indices:
+        item = items[i]
         metric = str(_field(item, "metric", "") or "").lower()
         tool = _get_evidence_key(item).lower()
         if (
@@ -147,11 +225,20 @@ def _select_evidence(items: list, previous_report, *, total_limit: int = 500, pe
     for i in range(len(items) - 1, -1, -1):
         take(i, "tool_quota")
     selected_items = [item for i, item in enumerate(items) if i in selected]
+    omitted_by_tool: dict[str, int] = {}
+    kept_by_tool: dict[str, int] = {}
+    for index, item in enumerate(items):
+        tool = _get_evidence_key(item)
+        target = kept_by_tool if index in selected else omitted_by_tool
+        target[tool] = target.get(tool, 0) + 1
     return selected_items, {
         "kept": len(selected_items),
         "omitted": len(items) - len(selected_items),
-        "reason": "total_and_per_tool_limit",
+        "reason": "market_summary_bounded" if market_summary else "total_and_per_tool_limit",
         "kept_reasons": reasons,
+        "kept_by_tool": kept_by_tool,
+        "omitted_by_tool": omitted_by_tool,
+        "planned_as_of_date": planned_as_of_date if market_summary else None,
     }
 
 
@@ -211,6 +298,13 @@ class ReasoningNode:
             # the market/breadth/sector ledger before the real model saw it.
             target_instrument = code_matches[0] if len(set(code_matches)) == 1 else None
             requested_date = state.get("requested_date") or _field(state.get("intent"), "requested_date")
+            intent = state.get("intent")
+            market_summary = (
+                str(_field(intent, "domain", state.get("domain", "")) or "").lower() == "a_share"
+                and str(_field(intent, "task", "") or "").lower() in {"market_summary", "market_diagnosis"}
+                and not target_instrument
+            )
+            planned_date = state.get("planned_as_of_date") or _field(intent, "as_of_date")
             compact_mode = bool(requested_date and target_instrument)
 
             all_evidence_items = state.get("evidence", [])
@@ -219,6 +313,8 @@ class ReasoningNode:
                 state.get("report"),
                 total_limit=int(getattr(self.settings, "reasoning_context_evidence_limit", 180) or 180),
                 per_tool=int(getattr(self.settings, "reasoning_context_datums_per_tool", 24) or 24),
+                market_summary=market_summary,
+                planned_as_of_date=planned_date,
             )
             if truncation["omitted"]:
                 run_log.emit("reasoning_context", run_id=state.get("run_id"), context_truncation=truncation)
@@ -290,6 +386,7 @@ class ReasoningNode:
                 usage=getattr(self._engine, "last_llm_usage", None),
                 target_filter=getattr(self._engine, "last_target_filter", None),
                 phase="rewrite" if is_rewrite else ("research_followup" if is_followup else "initial"),
+                tool_truncation=truncation,
             )
 
             # T15/D2：消费 Evidence Gate 的结论 —— has_evidence=False 时
@@ -356,12 +453,14 @@ class ReasoningNode:
             return out
         except StageBudgetExceeded:
             run_log.log_reasoning_context(
-                state, ledger_count=len(state.get("evidence", [])), selected_count=0,
+                state, ledger_count=len(state.get("evidence", [])),
+                selected_count=len(evidence_items) if "evidence_items" in locals() else 0,
                 evidence_ids=getattr(self._engine, "last_evidence_ids", []),
                 prompt_chars=getattr(self._engine, "last_prompt_chars", None),
                 context_build_ms=getattr(self._engine, "last_context_build_ms", None),
                 llm_request_ms=getattr(self._engine, "last_llm_duration_ms", None),
                 parse_ms=getattr(self._engine, "last_parse_duration_ms", None), phase="blocked",
+                tool_truncation=truncation if "truncation" in locals() else {},
             )
             return {
                 "report": None,
@@ -379,7 +478,8 @@ class ReasoningNode:
                 finish_reason=getattr(self._engine, "last_finish_reason", None),
             )
             run_log.log_reasoning_context(
-                state, ledger_count=len(state.get("evidence", [])), selected_count=0,
+                state, ledger_count=len(state.get("evidence", [])),
+                selected_count=len(evidence_items) if "evidence_items" in locals() else 0,
                 evidence_ids=getattr(self._engine, "last_evidence_ids", []),
                 prompt_chars=getattr(self._engine, "last_prompt_chars", None),
                 context_build_ms=getattr(self._engine, "last_context_build_ms", None),
@@ -391,6 +491,7 @@ class ReasoningNode:
                 request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
                 usage=getattr(self._engine, "last_llm_usage", None),
                 target_filter=getattr(self._engine, "last_target_filter", None),
+                tool_truncation=truncation if "truncation" in locals() else {},
             )
             fallback_update = _evidence_fallback_update(
                 self._engine, state,
@@ -399,9 +500,13 @@ class ReasoningNode:
                 phase="timeout",
             )
             if fallback_update is not None:
-                return {**fallback_update, "delivery_status": "degraded", "persisted": False,
-                        "degraded_reason_codes": ["evidence_only_fallback", "reasoning_timeout"],
-                        "reason_codes": ["evidence_only_fallback", "reasoning_timeout"]}
+                if fallback_update.get("fallback_applied"):
+                    return {**fallback_update, "delivery_status": "degraded", "persisted": False,
+                            "degraded_reason_codes": ["evidence_only_fallback", "reasoning_timeout"],
+                            "reason_codes": ["evidence_only_fallback", "reasoning_timeout"]}
+                return {**fallback_update, "report": None, "stage": "reasoning",
+                        "exception_type": "TimeoutError", "reason_codes": ["reasoning_timeout"],
+                        "errors": ["reasoning stage timed out"]}
             return {
                 "report": None,
                 "stage": "reasoning", "exception_type": "TimeoutError",
@@ -431,6 +536,7 @@ class ReasoningNode:
                 request_max_tokens=getattr(self._engine, "last_request_max_tokens", None),
                 usage=getattr(self._engine, "last_llm_usage", None),
                 target_filter=getattr(self._engine, "last_target_filter", None),
+                tool_truncation=truncation if "truncation" in locals() else {},
             )
             fallback_update = _evidence_fallback_update(
                 self._engine, state,
@@ -439,9 +545,13 @@ class ReasoningNode:
                 phase="output_error",
             )
             if fallback_update is not None:
-                return {**fallback_update, "delivery_status": "degraded", "persisted": False,
-                        "degraded_reason_codes": ["evidence_only_fallback", "llm_output_error"],
-                        "reason_codes": ["evidence_only_fallback", "llm_output_error"]}
+                if fallback_update.get("fallback_applied"):
+                    return {**fallback_update, "delivery_status": "degraded", "persisted": False,
+                            "degraded_reason_codes": ["evidence_only_fallback", "llm_output_error"],
+                            "reason_codes": ["evidence_only_fallback", "llm_output_error"]}
+                return {**fallback_update, "report": None, "stage": "reasoning",
+                        "exception_type": "LLMOutputError", "reason_codes": ["llm_output_error"],
+                        "errors": [f"Reasoning engine failed: {exc}"]}
             return {
                 "report": None,
                 "errors": [f"Reasoning engine failed: {exc}"],

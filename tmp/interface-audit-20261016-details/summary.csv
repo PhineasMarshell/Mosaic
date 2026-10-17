@@ -1,0 +1,17 @@
+﻿layer,case,tool,attempts,statuses,classification,repeat_outcome,ms,business_datums,dated_business_datums,reason_codes,capability_gap,error,observed
+http,derivatives_valid_native_symbol,get_derivatives_history,2,success/success,partial_or_missing_provenance,repeated_issue,1695.1/2010.4,58,0,,,,True
+mcp,derivatives_valid_native_symbol,get_derivatives_history,2,success/error,timeout,repeated_issue,4107.0/8437.8,0,0,gateway_timeout,,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Post \""https://api.x.iiix.dev/v1/d/market-gateway/market/derivatives/history\"": net/http: TLS handshake timeout""}",True
+http,quote_indices_isolated_control,get_market_quotes,2,success/success,data_returned,recovered,721.4/1630.6,66,66,,,,True
+mcp,quote_indices_isolated_control,get_market_quotes,2,error/success,data_returned,recovered,40041.1/29519.2,66,66,probe_timeout,,,True
+skill,events_alternate_query,internal_iwencai_event_query,2,error/error,error,repeated_issue,1449.5/277.8,0,0,empty_normalized,,未返回有效目标字段（代码/简称不算指标，默认行情不算财务/事件/宏观数据）；可保留标的与时间重新查询，或访问 https://www.iwencai.com/unifiedwap/chat,True
+skill,insresearch_alternate_query,internal_iwencai_insresearch_query,2,partial/partial,partial_or_missing_provenance,repeated_issue,282.3/301.9,714,0,"expanded_rows_coverage_unknown, missing_as_of_date, missing_publication_date, unknown_date",,,True
+source,eastmoney_HK.960036,eastmoney_klines,1,error,exception,single_probe,35.1,,,,,Expecting value: line 1 column 1 (char 0),True
+source,eastmoney_SH.960052,eastmoney_klines,1,error,exception,single_probe,16.6,,,,,Expecting value: line 1 column 1 (char 0),True
+source,eastmoney_SZ.960053,eastmoney_klines,1,error,exception,single_probe,17.9,,,,,Expecting value: line 1 column 1 (char 0),True
+source,eastmoney_HK.800300,eastmoney_klines,1,error,exception,single_probe,13.9,,,,,Expecting value: line 1 column 1 (char 0),True
+source,eastmoney_HK.800505,eastmoney_klines,1,error,exception,single_probe,18.7,,,,,Expecting value: line 1 column 1 (char 0),True
+source,eastmoney_100.HSI,eastmoney_klines,1,error,exception,single_probe,14.7,,,,,Expecting value: line 1 column 1 (char 0),True
+source,eastmoney_100.HSTECH,eastmoney_klines,1,error,exception,single_probe,14.8,,,,,Expecting value: line 1 column 1 (char 0),True
+mcp,list_stock_post_comments,list_stock_post_comments,2,success/success,unregistered_response,repeated_issue,23489.8/32637.4,,,,,,True
+local_http,/health,web_endpoint,1,success,responded,single_probe,3.8,,,,,,True
+local_http,/,web_endpoint,1,success,responded,single_probe,3.3,,,,,,True

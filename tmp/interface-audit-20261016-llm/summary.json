@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-16",
+  "elapsed_seconds": 12.2,
+  "registered_operations": 55,
+  "call_rows": 2,
+  "classification_counts": {
+    "valid_json_response": 1
+  },
+  "interfaces": [
+    {
+      "layer": "llm",
+      "case": "configured_chat_json",
+      "tool": "chat.completions",
+      "attempts": 2,
+      "statuses": "success/success",
+      "classification": "valid_json_response",
+      "repeat_outcome": "repeated_issue",
+      "ms": "4922.2/7240.2",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    }
+  ]
+}

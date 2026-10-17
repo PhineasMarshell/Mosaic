@@ -1,0 +1,141 @@
+﻿layer,case,tool,attempts,statuses,classification,repeat_outcome,ms,business_datums,dated_business_datums,reason_codes,capability_gap,error,observed
+mcp,get_service_health,get_service_health,2,not_exposed/not_exposed,not_in_mcp_catalog,repeated_issue,/,,,,,,False
+mcp,get_market_health,get_market_health,2,not_exposed/not_exposed,not_in_mcp_catalog,repeated_issue,/,,,,,,False
+skill,internal_iwencai_finance_query,internal_iwencai_finance_query,1,success,data_returned,single_probe,700.1,6,6,,,,True
+internal_native,internal_hk_northbound,internal_hk_northbound,2,success/success,no_business_data,repeated_issue,330.2/352.0,0,0,,,,True
+primary_route,get_ashare_sentiment,get_ashare_sentiment,2,partial/partial,capability_contract_gap,repeated_issue,737.9/806.6,4,2,"missing_as_of_date, unknown_date",missing_required_fields:market_breadth,,True
+http,get_ashare_sentiment,get_ashare_sentiment,2,success/success,capability_contract_gap,repeated_issue,4971.9/4565.4,25561,0,,missing_required_fields:market_breadth,,True
+runtime,get_market_quotes,get_market_quotes,1,success,data_returned,single_probe,4073.4,66,66,,,,True
+mcp,get_ashare_sentiment,get_ashare_sentiment,2,error/success,capability_contract_gap,repeated_issue,7119.7/19952.0,25561,0,gateway_timeout,missing_required_fields:market_breadth,,True
+skill,internal_iwencai_event_query,internal_iwencai_event_query,2,error/error,error,repeated_issue,292.2/496.5,0,0,empty_normalized,,未返回有效目标字段（代码/简称不算指标，默认行情不算财务/事件/宏观数据）；可保留标的与时间重新查询，或访问 https://www.iwencai.com/unifiedwap/chat,True
+internal_native,internal_hk_index,internal_hk_index,2,success/success,no_business_data,repeated_issue,501.0/159.6,0,0,,,,True
+http,get_limit_up_count,get_limit_up_count,2,partial/partial,capability_contract_gap,repeated_issue,2316.0/1936.2,1,0,,missing_required_fields:limit_up_count,,True
+primary_route,get_limit_up_count,get_limit_up_count,2,partial/partial,capability_contract_gap,repeated_issue,911.8/383.3,2,0,"missing_as_of_date, unknown_date",missing_required_fields:limit_up_count,,True
+mcp,get_limit_up_count,get_limit_up_count,2,partial/partial,capability_contract_gap,repeated_issue,5675.6/16177.6,1,0,,missing_required_fields:limit_up_count,,True
+http,list_limit_up_sectors,list_limit_up_sectors,2,partial/partial,capability_contract_gap,repeated_issue,1994.2/1943.9,696,0,,missing_required_fields:limit_up_sectors,,True
+skill,internal_iwencai_basicinfo_query,internal_iwencai_basicinfo_query,2,partial/partial,partial_or_missing_provenance,repeated_issue,213.6/258.0,3,0,"missing_as_of_date, unknown_date",,,True
+internal_native,internal_us_fundamentals,internal_us_fundamentals,2,success/success,partial_or_missing_provenance,repeated_issue,1675.3/1755.1,4,0,,,,True
+mcp,list_limit_up_sectors,list_limit_up_sectors,2,partial/error,timeout,repeated_issue,6510.5/8433.0,0,0,gateway_timeout,gateway_timeout,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/ashare-master/limit-up/sectors\"": net/http: TLS handshake timeout""}",True
+primary_route,list_limit_up_sectors,list_limit_up_sectors,2,error/error,error,repeated_issue,948.2/795.0,0,0,empty_normalized,empty_normalized,未返回有效目标字段（代码/简称不算指标，默认行情不算财务/事件/宏观数据）；可保留标的与时间重新查询，或访问 https://www.iwencai.com/unifiedwap/chat,True
+runtime,get_ashare_sentiment,get_ashare_sentiment,2,error/error,timeout,repeated_issue,32014.6/32011.5,0,0,deadline_exhausted,deadline_exhausted,budget exhausted during primary source routing,True
+http,list_limit_up_stocks,list_limit_up_stocks,2,partial/partial,capability_contract_gap,repeated_issue,3442.9/1814.2,708,0,,missing_required_fields:limit_up_pool,,True
+skill,internal_iwencai_market_query,internal_iwencai_market_query,2,partial/partial,partial_or_missing_provenance,repeated_issue,691.3/940.6,4,3,"missing_as_of_date, unknown_date",,,True
+internal_native,internal_us_filings_recent,internal_us_filings_recent,2,success/success,partial_or_missing_provenance,repeated_issue,673.8/2245.9,10,0,,,,True
+primary_route,list_limit_up_stocks,list_limit_up_stocks,2,partial/partial,capability_contract_gap,repeated_issue,278.1/215.3,122,0,"missing_as_of_date, unknown_date",missing_required_fields:limit_up_pool,,True
+runtime,get_limit_up_count,get_limit_up_count,2,error/partial,capability_contract_gap,repeated_issue,32007.5/7750.4,2,0,"deadline_exhausted, fallback_missing_date, fallback_missing_required_fields, fallback_partial_datum, fallback_provenance_insufficient, missing_as_of_date, missing_required_fields:limit_up_count, unknown_date",missing_required_fields:limit_up_count,,True
+mcp,list_limit_up_stocks,list_limit_up_stocks,2,error/partial,capability_contract_gap,repeated_issue,32010.5/10378.9,708,0,probe_timeout,missing_required_fields:limit_up_pool,,True
+http,get_company_overview,get_company_overview,2,partial/partial,capability_contract_gap,repeated_issue,2199.6/1512.1,1625,1625,,missing_primary_provenance,,True
+skill,internal_iwencai_macro_query,internal_iwencai_macro_query,1,success,data_returned,single_probe,299.1,1,1,,,,True
+internal_native,news_search,news_search,2,success/error,error,repeated_issue,1396.6/1258.1,0,0,,,RequestError: RequestError('error sending request for url (https://www.bing.com/news/infinitescrollajax?q=A%E8%82%A1+%E5%B8%82%E5%9C%BA&InfiniteScroll=1&first=11&SFX=1&cc=wt&setlang=wt&qft=interval%3D%227%22) > peer misbehaved: SelectedUnofferedKxGroup'),True
+primary_route,get_company_overview,get_company_overview,2,partial/partial,capability_contract_gap,repeated_issue,417.2/439.5,708,0,"missing_as_of_date, unknown_date",missing_required_fields:quote,,True
+runtime,list_limit_up_sectors,list_limit_up_sectors,2,error/error,timeout,repeated_issue,13715.5/32017.8,0,0,"deadline_exhausted, fallback_missing_required_fields, gateway_timeout",deadline_exhausted,budget exhausted during primary source routing,True
+runtime,list_limit_up_stocks,list_limit_up_stocks,2,partial/partial,capability_contract_gap,repeated_issue,13832.6/7746.2,122,0,"fallback_missing_date, fallback_missing_required_fields, fallback_partial_datum, fallback_provenance_insufficient, missing_as_of_date, missing_required_fields:limit_up_pool, unknown_date",missing_required_fields:limit_up_pool,,True
+http,get_company_detail,get_company_detail,2,partial/partial,partial_or_missing_provenance,repeated_issue,813.7/788.6,43,0,,,,True
+skill,internal_iwencai_industry_query,internal_iwencai_industry_query,2,partial/partial,partial_or_missing_provenance,repeated_issue,764.5/1024.5,420,110,"missing_as_of_date, unknown_date",,,True
+internal_native,internal_symbol_news,internal_symbol_news,1,success,data_returned,single_probe,6771.2,8,8,,,,True
+primary_route,get_company_business,get_company_business,2,partial/partial,partial_or_missing_provenance,repeated_issue,232.8/337.5,3,0,"missing_as_of_date, unknown_date",,,True
+mcp,get_company_overview,get_company_overview,2,error/error,timeout,repeated_issue,32015.1/32050.9,,,probe_timeout,,,True
+mcp,get_company_detail,get_company_detail,2,error/partial,partial_or_missing_provenance,repeated_issue,32011.1/9856.8,43,0,probe_timeout,,,True
+http,get_company_business,get_company_business,2,partial/partial,partial_or_missing_provenance,repeated_issue,841.9/544.4,2,0,,,,True
+skill,internal_iwencai_management_query,internal_iwencai_management_query,2,partial/partial,partial_or_missing_provenance,repeated_issue,1545.1/485.6,60,0,"missing_as_of_date, unknown_date",,,True
+internal_native,internal_market_telegraph,internal_market_telegraph,2,success/success,partial_or_missing_provenance,repeated_issue,144.2/138.4,16,15,,,,True
+primary_route,get_company_concepts,get_company_concepts,2,partial/partial,capability_contract_gap,repeated_issue,1470.9/266.7,2,0,"missing_as_of_date, unknown_date",missing_required_fields:sector_theme,,True
+runtime,internal_market_telegraph,internal_market_telegraph,1,success,data_returned,single_probe,221.4,10,10,,,,True
+runtime,get_stock_abnormal_reasons,get_stock_abnormal_reasons,2,error/error,timeout,repeated_issue,29341.3/32036.6,0,0,"deadline_exhausted, empty_normalized, fallback_missing_required_fields",,budget exhausted before request,True
+http,get_company_concepts,get_company_concepts,2,success/success,capability_contract_gap,repeated_issue,1278.8/522.1,2,0,,missing_required_fields:sector_theme,,True
+skill,internal_iwencai_announcement_search,internal_iwencai_announcement_search,1,success,data_returned,single_probe,601.8,5,5,,,,True
+internal_native,internal_news_digest,internal_news_digest,2,partial/success,data_returned,recovered,4333.5/4852.6,8,8,,,,True
+mcp,get_company_business,get_company_business,2,error/partial,partial_or_missing_provenance,repeated_issue,32004.3/5123.2,2,0,probe_timeout,,,True
+primary_route,get_company_finance,get_company_finance,1,success,data_returned,single_probe,1609.3,6,6,,,,True
+runtime,internal_symbol_news,internal_symbol_news,1,success,data_returned,single_probe,1012.8,10,10,,,,True
+http,get_company_finance,get_company_finance,2,success/success,partial_or_missing_provenance,repeated_issue,1286.8/610.5,914,0,,,,True
+skill,internal_iwencai_report_search,internal_iwencai_report_search,1,success,data_returned,single_probe,445.6,5,5,,,,True
+primary_route,get_company_shareholders,get_company_shareholders,2,partial/partial,partial_or_missing_provenance,repeated_issue,1566.4/273.2,40,0,"missing_as_of_date, unknown_date",,,True
+runtime,internal_news_digest,internal_news_digest,1,success,data_returned,single_probe,1069.5,10,10,,,,True
+mcp,get_company_concepts,get_company_concepts,2,error/success,capability_contract_gap,repeated_issue,32007.2/4686.9,2,0,probe_timeout,missing_required_fields:sector_theme,,True
+http,get_company_shareholders,get_company_shareholders,2,success/success,partial_or_missing_provenance,repeated_issue,1312.7/569.5,2,0,,,,True
+skill,internal_iwencai_news_search,internal_iwencai_news_search,1,success,data_returned,single_probe,614.1,5,5,,,,True
+primary_route,get_company_survey,get_company_survey,2,error/error,error,repeated_issue,2313.4/574.4,0,0,empty_normalized,empty_normalized,未返回有效目标字段（代码/简称不算指标，默认行情不算财务/事件/宏观数据）；可保留标的与时间重新查询，或访问 https://www.iwencai.com/unifiedwap/chat,True
+runtime,news_search,news_search,1,success,data_returned,single_probe,1280.3,10,10,,,,True
+mcp,get_company_finance,get_company_finance,2,error/success,partial_or_missing_provenance,repeated_issue,32014.5/4413.8,914,0,probe_timeout,,,True
+http,get_company_survey,get_company_survey,2,success/success,partial_or_missing_provenance,repeated_issue,1794.7/543.9,2,0,,,,True
+skill,internal_iwencai_index_query,internal_iwencai_index_query,2,partial/partial,partial_or_missing_provenance,repeated_issue,2448.9/646.7,12,9,"missing_as_of_date, unknown_date",,,True
+primary_route,get_market_quotes,get_market_quotes,2,error/error,error,repeated_issue,327.3/498.7,0,0,empty_normalized,empty_normalized,未返回有效目标字段（代码/简称不算指标，默认行情不算财务/事件/宏观数据）；可保留标的与时间重新查询，或访问 https://www.iwencai.com/unifiedwap/chat,True
+mcp,get_company_shareholders,get_company_shareholders,2,error/success,partial_or_missing_provenance,repeated_issue,32012.5/10754.6,2,0,probe_timeout,,,True
+http,get_market_quotes,get_market_quotes,1,success,data_returned,single_probe,673.7,66,66,,,,True
+skill,internal_iwencai_astock_selector,internal_iwencai_astock_selector,2,partial/partial,partial_or_missing_provenance,repeated_issue,1362.1/270.7,10,0,"missing_as_of_date, screening_conditions_not_verified, unknown_date, upstream_page_size_exceeded",,,True
+primary_route,news_search,news_search,1,success,data_returned,single_probe,945.0,10,10,,,,True
+mcp,get_company_survey,get_company_survey,2,error/error,timeout,repeated_issue,32003.7/32045.6,,,probe_timeout,,,True
+http,get_stock_longhu,get_stock_longhu,2,error/error,error,repeated_issue,1387.6/10874.7,0,0,"gateway_rate_limited, gateway_upstream_error",,HTTP 429,True
+skill,internal_iwencai_sector_selector,internal_iwencai_sector_selector,2,partial/partial,partial_or_missing_provenance,repeated_issue,2668.1/1088.1,15,5,"missing_as_of_date, screening_conditions_not_verified, unknown_date, upstream_page_size_exceeded",,,True
+primary_route,internal_symbol_news,internal_symbol_news,1,success,data_returned,single_probe,530.2,10,10,,,,True
+mcp,get_market_quotes,get_market_quotes,2,error/success,data_returned,recovered,32006.0/3334.5,66,66,probe_timeout,,,True
+mcp,get_stock_longhu,get_stock_longhu,2,error/error,timeout,repeated_issue,32005.9/6443.1,0,0,"gateway_timeout, probe_timeout",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/market/longhu?symbol=SH600519\"": net/http: TLS handshake timeout""}",True
+skill,internal_iwencai_business_query,internal_iwencai_business_query,2,partial/partial,partial_or_missing_provenance,repeated_issue,1796.2/298.9,56,56,expanded_rows_coverage_unknown,,,True
+primary_route,internal_market_telegraph,internal_market_telegraph,1,success,data_returned,single_probe,251.5,10,10,,,,True
+http,get_stock_abnormal_reasons,get_stock_abnormal_reasons,2,error/error,error,repeated_issue,13239.2/18211.2,0,0,"gateway_upstream_error, optional_evidence_unavailable",,HTTP 502,True
+http,get_market_orderbook,get_market_orderbook,2,error/error,error,repeated_issue,738.9/9151.9,0,0,gateway_upstream_error,,HTTP 502,True
+skill,internal_iwencai_insresearch_query,internal_iwencai_insresearch_query,2,error/error,error,repeated_issue,3613.7/912.9,0,0,gateway_business_error,,同花顺问财接口业务状态非成功,True
+primary_route,internal_news_digest,internal_news_digest,1,success,data_returned,single_probe,807.7,10,10,,,,True
+mcp,get_stock_abnormal_reasons,get_stock_abnormal_reasons,2,error/error,error,repeated_issue,32006.2/13766.8,0,0,"gateway_upstream_incomplete, optional_evidence_unavailable, probe_timeout",,"{""code"":""gateway_error"",""message"":""The origin web server returned an invalid or incomplete response to Cloudflare. This typically indicates the origin is overloaded or misconfigured.""}",True
+http,list_market_trades,list_market_trades,2,error/error,error,repeated_issue,12083.8/672.2,0,0,gateway_upstream_error,,HTTP 502,True
+mcp,get_market_orderbook,get_market_orderbook,2,error/error,timeout,repeated_issue,32013.7/6600.3,0,0,"gateway_timeout, probe_timeout",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/market/orderbook?symbol=SH600519\"": net/http: TLS handshake timeout""}",True
+http,list_stock_discussions,list_stock_discussions,2,success/success,partial_or_missing_provenance,repeated_issue,6284.0/7378.1,104,0,,,,True
+mcp,list_market_trades,list_market_trades,2,error/error,timeout,repeated_issue,32001.8/8622.2,0,0,"gateway_timeout, probe_timeout",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/market/trades?symbol=SH600519\"": net/http: TLS handshake timeout""}",True
+http,search_stocks,search_stocks,2,success/success,partial_or_missing_provenance,repeated_issue,2181.3/1171.5,5,0,,,,True
+mcp,list_stock_discussions,list_stock_discussions,2,error/success,partial_or_missing_provenance,repeated_issue,32004.2/10335.7,104,0,probe_timeout,,,True
+http,get_market_klines,get_market_klines,2,success/success,partial_or_missing_provenance,repeated_issue,1570.8/581.2,53,48,,,,True
+mcp,search_stocks,search_stocks,2,error/error,timeout,repeated_issue,32004.9/9932.0,0,0,"gateway_timeout, probe_timeout",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/market/search?q=600519\"": net/http: TLS handshake timeout""}",True
+http,get_market_snapshot,get_market_snapshot,1,success,data_returned,single_probe,1395.5,10,10,,,,True
+mcp,get_market_klines,get_market_klines,2,error/success,partial_or_missing_provenance,repeated_issue,32004.0/4620.7,53,48,probe_timeout,,,True
+http,get_market_window,get_market_window,2,success/success,partial_or_missing_provenance,repeated_issue,963.1/593.1,28,18,,,,True
+mcp,get_market_snapshot,get_market_snapshot,2,error/success,data_returned,recovered,32012.8/4194.6,10,10,probe_timeout,,,True
+http,list_exchanges,list_exchanges,2,success/success,partial_or_missing_provenance,repeated_issue,1240.6/516.3,86,0,,,,True
+mcp,get_market_window,get_market_window,2,error/success,partial_or_missing_provenance,repeated_issue,32006.8/9057.4,28,18,probe_timeout,,,True
+http,get_derivatives_history,get_derivatives_history,2,error/error,error,repeated_issue,1118.8/507.5,0,0,gateway_error,,HTTP 422,True
+mcp,list_exchanges,list_exchanges,2,error/error,timeout,repeated_issue,32004.4/6663.3,0,0,"gateway_timeout, probe_timeout",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/market/exchanges\"": net/http: TLS handshake timeout""}",True
+http,list_hyperliquid_symbols,list_hyperliquid_symbols,2,partial/partial,partial_or_missing_provenance,repeated_issue,1398.4/661.5,151,0,,,,True
+mcp,get_derivatives_history,get_derivatives_history,2,error/error,timeout,repeated_issue,32015.9/7171.6,0,0,"gateway_timeout, probe_timeout",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Post \""https://api.x.iiix.dev/v1/d/market-gateway/market/derivatives/history\"": net/http: TLS handshake timeout""}",True
+http,get_hyperliquid_liquidation_map,get_hyperliquid_liquidation_map,2,success/success,partial_or_missing_provenance,repeated_issue,1967.2/1467.6,3725,0,,,,True
+mcp,list_hyperliquid_symbols,list_hyperliquid_symbols,2,error/partial,partial_or_missing_provenance,repeated_issue,32006.8/4917.5,151,0,probe_timeout,,,True
+http,get_hyperliquid_top_position,get_hyperliquid_top_position,2,partial/partial,partial_or_missing_provenance,repeated_issue,2759.8/1923.8,852,0,,,,True
+mcp,get_hyperliquid_user_count,get_hyperliquid_user_count,2,error/partial,partial_or_missing_provenance,repeated_issue,10001.9/6648.6,201,0,gateway_timeout,,,True
+mcp,get_hyperliquid_top_position,get_hyperliquid_top_position,2,partial/partial,partial_or_missing_provenance,repeated_issue,10766.0/11984.0,852,0,,,,True
+http,get_hyperliquid_user_count,get_hyperliquid_user_count,2,partial/partial,partial_or_missing_provenance,repeated_issue,1565.7/2452.7,201,0,,,,True
+http,list_hyperliquid_vaults,list_hyperliquid_vaults,2,success/success,partial_or_missing_provenance,repeated_issue,845.1/812.8,3339,0,,,,True
+mcp,get_crypto_liquidation_today,get_crypto_liquidation_today,2,success/success,partial_or_missing_provenance,repeated_issue,5214.1/3452.5,178,0,,,,True
+http,get_crypto_liquidation_today,get_crypto_liquidation_today,2,success/success,partial_or_missing_provenance,repeated_issue,870.7/619.9,178,0,,,,True
+mcp,list_crypto_funding_rates,list_crypto_funding_rates,2,error/success,partial_or_missing_provenance,repeated_issue,6577.3/12593.2,1195,0,gateway_timeout,,,True
+http,list_crypto_funding_rates,list_crypto_funding_rates,2,success/success,partial_or_missing_provenance,repeated_issue,1334.1/620.8,1195,0,,,,True
+mcp,get_hyperliquid_liquidation_map,get_hyperliquid_liquidation_map,2,success/success,partial_or_missing_provenance,repeated_issue,28702.2/17617.0,3725,0,,,,True
+http,get_service_health,get_service_health,2,success/success,partial_or_missing_provenance,repeated_issue,685.4/510.8,2,0,,,,True
+mcp,get_ashare_capital_flow,get_ashare_capital_flow,1,success,declared_not_collected,single_probe,4224.4,,,,,,True
+http,get_market_health,get_market_health,2,success/success,partial_or_missing_provenance,repeated_issue,603.6/510.0,24,0,,,,True
+mcp,get_latest_ashare_capital_flow,get_latest_ashare_capital_flow,2,error/success,declared_not_collected,repeated_issue,6607.8/4230.4,,,,,,True
+http,quote_stock,get_market_quotes,1,success,data_returned,single_probe,681.9,42,42,,,,True
+mcp,list_hyperliquid_vaults,list_hyperliquid_vaults,2,success/success,partial_or_missing_provenance,repeated_issue,27763.7/10104.7,3335,0,,,,True
+http,quote_hk,get_market_quotes,2,error/error,error,repeated_issue,515.5/798.1,0,0,gateway_error,,HTTP 422,True
+mcp,get_latest_ashare_unlocks,get_latest_ashare_unlocks,2,error/success,declared_not_collected,repeated_issue,6604.6/5089.0,,,,,,True
+mcp,get_latest_ashare_holders,get_latest_ashare_holders,1,success,declared_not_collected,single_probe,15125.5,,,,,,True
+http,search_hk,search_stocks,2,success/success,partial_or_missing_provenance,repeated_issue,1830.8/1550.9,32,0,,,,True
+http,klines_ashare,get_market_klines,2,success/success,capability_contract_gap,repeated_issue,897.4/1488.6,35,30,,missing_required_fields:kline,,True
+mcp,list_ashare_holders,list_ashare_holders,1,success,declared_not_collected,single_probe,4402.8,,,,,,True
+http,klines_us,get_market_klines,2,error/error,error,repeated_issue,681.5/991.8,0,0,gateway_upstream_error,,HTTP 502,True
+mcp,get_latest_ashare_reductions,get_latest_ashare_reductions,1,success,declared_not_collected,single_probe,25468.7,,,,,,True
+http,window_us,get_market_window,2,error/error,error,repeated_issue,1355.1/11501.3,0,0,gateway_upstream_error,,HTTP 502,True
+mcp,verify_upstream,verify_upstream,2,success/success,unregistered_response,repeated_issue,9236.0/4670.7,,,,,,True
+http,gold,get_market_klines,2,success/success,partial_or_missing_provenance,repeated_issue,960.3/1127.2,53,48,,,,True
+mcp,list_ashare_reductions,list_ashare_reductions,1,success,declared_not_collected,single_probe,25895.1,,,,,,True
+http,silver,get_market_snapshot,1,success,data_returned,single_probe,936.3,13,13,,,,True
+mcp,quote_hk,get_market_quotes,2,error/error,error,repeated_issue,3015.9/5929.7,0,0,gateway_error,,"{""code"":""无法识别代码: HK00700"",""message"":""Unprocessable Entity""}",True
+http,platinum,get_market_snapshot,1,success,data_returned,single_probe,712.7,13,13,,,,True
+mcp,list_ashare_unlocks,list_ashare_unlocks,2,error/error,error,repeated_issue,32043.6/8810.3,,,probe_timeout,,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/ashare/chips/unlocks?as_of=2026-10-16T00%3A00%3A00%2B08%3A00\u0026symbol=SH600519\"": net/http: TLS handshake timeout""}",True
+mcp,search_hk,search_stocks,2,error/success,partial_or_missing_provenance,repeated_issue,7602.2/28522.6,32,0,gateway_timeout,,,True
+mcp,klines_ashare,get_market_klines,2,error/error,timeout,repeated_issue,6626.8/32039.6,,,"gateway_timeout, probe_timeout",,,True
+mcp,klines_us,get_market_klines,2,error/error,timeout,repeated_issue,3597.8/6651.2,0,0,"gateway_timeout, gateway_upstream_incomplete",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Post \""https://api.x.iiix.dev/v1/d/market-gateway/market/klines\"": net/http: TLS handshake timeout""}",True
+mcp,window_us,get_market_window,2,error/error,timeout,repeated_issue,4102.0/6650.4,0,0,"gateway_timeout, gateway_upstream_incomplete",,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Post \""https://api.x.iiix.dev/v1/d/market-gateway/market/window\"": net/http: TLS handshake timeout""}",True
+mcp,gold,get_market_klines,2,success/success,partial_or_missing_provenance,repeated_issue,5019.2/3128.8,53,48,,,,True
+mcp,silver,get_market_snapshot,2,error/error,timeout,repeated_issue,6617.1/7553.6,0,0,gateway_timeout,,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Post \""https://api.x.iiix.dev/v1/d/market-gateway/market/snapshot\"": net/http: TLS handshake timeout""}",True
+mcp,platinum,get_market_snapshot,1,success,data_returned,single_probe,8163.8,13,13,,,,True
+mcp,quote_stock,get_market_quotes,2,error/error,timeout,repeated_issue,32041.7/7057.8,0,0,"gateway_timeout, probe_timeout",gateway_timeout,"{""code"":""gateway_error"",""message"":""Data Gateway 网络错误: Get \""https://api.x.iiix.dev/v1/d/market-gateway/market/quotes?symbols=sh600519\"": net/http: TLS handshake timeout""}",True
+mcp,list_stock_post_comments,list_stock_post_comments,1,not_tested,no_valid_post_url,single_probe,,,,,,,False

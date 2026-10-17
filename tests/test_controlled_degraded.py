@@ -114,6 +114,7 @@ def test_mixed_claims_are_filtered_into_degraded_report():
     assert report.as_of_date == "2026-10-09"
     assert report.source == ["quote-feed"]
     assert report.coverage == ["instrument"]
+    assert report.used_tools == ["quote"]
     assert gaps and "删除" in gaps[0]
     assert "degraded_partial_evidence" in codes
 

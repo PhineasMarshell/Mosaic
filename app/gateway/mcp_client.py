@@ -24,7 +24,12 @@ from mcp.client.stdio import _parse_line, get_default_environment, stdio_client
 from mcp.shared.message import SessionMessage
 
 from app.config import Settings
-from app.gateway.arguments import ArgumentValidationError, canonicalize_tool_arguments, quote_transport_symbols
+from app.gateway.arguments import (
+    ArgumentValidationError,
+    canonicalize_tool_arguments,
+    gateway_transport_arguments,
+    quote_transport_symbols,
+)
 from app.gateway.normalizer import normalize_tool_result
 from app.gateway.tool_registry import resolve_tool_by_name
 
@@ -120,7 +125,7 @@ class MarketGatewayClient:
 
     def _encode_transport_arguments(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Encode canonical arguments according to the discovered MCP schema."""
-        encoded = dict(arguments)
+        encoded = gateway_transport_arguments(tool_name, arguments)
         if tool_name != "get_market_quotes" or "symbols" not in encoded:
             return encoded
         encoded["symbols"] = quote_transport_symbols(encoded["symbols"])
@@ -342,6 +347,8 @@ class MarketGatewayClient:
         tool_name: str,
         arguments: dict[str, Any],
         deadline: float | None = None,
+        declared_provider: str | None = None,
+        requested_as_of_date: str | None = None,
     ):
         if not self.session:
             raise MCPToolCallError("MCP client is not connected")
@@ -359,6 +366,7 @@ class MarketGatewayClient:
                 None,
                 error=f"Invalid arguments: {exc}",
                 tool_key=logical_key,
+                declared_provider=declared_provider,
             )
 
         from app.gateway.policy import observed_call, response_diagnostics
@@ -376,12 +384,21 @@ class MarketGatewayClient:
                     tool_name, arguments, None,
                     error="MCP upstream HTTP 5xx",
                     reason_codes=["mcp_http_5xx", "gateway_upstream_error"],
+                    declared_provider=declared_provider,
                 )
             elif getattr(result, "is_error", False) or getattr(result, "isError", False):
                 normalized = normalize_tool_result(tool_name, arguments, None,
-                                                   error=text or "MCP tool error")
+                                                   error=text or "MCP tool error", declared_provider=declared_provider)
             else:
-                normalized = normalize_tool_result(tool_name, arguments, _mcp_result_to_json(result))
+                normalized = normalize_tool_result(
+                    tool_name,
+                    arguments,
+                    _mcp_result_to_json(result),
+                    declared_provider=declared_provider,
+                    # 研究目标日期作为独立上下文传入，不进入 wire 参数；无参
+                    # 当日快照契约会忽略它并给出 mcp_request_date_ignored 诊断。
+                    requested_as_of_date=requested_as_of_date,
+                )
             return normalized, diagnostics
 
         request.mcp_transport = True

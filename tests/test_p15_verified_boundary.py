@@ -174,7 +174,6 @@ async def test_empty_ledger_cannot_be_replaced_by_model_report_evidence():
     ({"coverage": "unknown"}, "unknown_coverage"),
     ({"completeness": "unknown"}, "unknown_completeness"),
     ({"partial": True}, "partial_only"),
-    ({"result_partial": True}, "partial_only"),
     ({"metric": ""}, "invalid_evidence"),
     ({"value": None}, "invalid_evidence"),
     ({"source_tool": "unknown"}, "missing_source_tool"),
@@ -186,6 +185,15 @@ async def test_good_citation_never_hides_bad_citation(changes, code):
     out = await FinalizeAuditNode(None)(state)
     assert out["delivery_status"] != "verified"
     assert code in out["reason_codes"]
+    assert not out.get("errors")
+
+
+async def test_complete_narrow_fact_in_partial_result_can_be_verified():
+    evidence = _quote(result_partial=True)
+    state = _state([{"claim": FACT, "evidence_ids": [evidence.id]}], [evidence])
+    out = await FinalizeAuditNode(None)(state)
+    assert out["delivery_status"] == "verified"
+    assert "partial_only" not in out["reason_codes"]
     assert not out.get("errors")
 
 

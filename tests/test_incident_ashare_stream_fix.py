@@ -57,7 +57,7 @@ class _McpResult:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "schema_type, expected", [("string", "SH000001,SZ399001"), ("array", ["SH000001", "SZ399001"])]
+    "schema_type, expected", [("string", "sh000001,sz399001"), ("array", ["sh000001", "sz399001"])]
 )
 async def test_incident_mcp_quote_transport_schema_preserves_canonical(schema_type, expected):
     seen = []
@@ -228,7 +228,9 @@ async def test_partial_research_retry_fetches_new_data(monkeypatch):
     async def gateway(tool, arguments, deadline=None):
         calls.append(tool)
         return normalize_tool_result(
-            tool, arguments, {"data": [{"sector": "test", "count": 3}], "partial": len(calls) == 1}
+            tool,
+            arguments,
+            {"date": "2026-10-15", "data": [{"sector": "test", "count": 3}], "partial": len(calls) == 1},
         )
 
     monkeypatch.setattr(node._runtime, "_do_execute", gateway)
@@ -280,7 +282,9 @@ async def test_refresh_bypasses_same_run_duplicate_guard(monkeypatch):
 
     async def gateway(tool, arguments, deadline=None):
         calls.append(arguments)
-        return normalize_tool_result(tool, arguments, {"data": [{"value": len(calls)}]})
+        return normalize_tool_result(
+            tool, arguments, {"date": "2026-10-15", "data": [{"sector": "test", "count": len(calls)}]}
+        )
 
     monkeypatch.setattr(runtime, "_do_execute", gateway)
     called = set()

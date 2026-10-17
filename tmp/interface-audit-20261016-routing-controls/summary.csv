@@ -1,0 +1,8 @@
+﻿layer,case,tool,attempts,statuses,classification,repeat_outcome,ms,business_datums,dated_business_datums,reason_codes,capability_gap,error,observed
+primary_route,klines_ashare_primary,get_market_klines,2,partial/partial,capability_contract_gap,repeated_issue,2372.5/477.9,14,12,"missing_as_of_date, unknown_date",missing_required_fields:kline,,True
+primary_route,overview_with_symbol_primary,get_company_overview,2,partial/partial,capability_contract_gap,repeated_issue,354.5/313.5,5,4,"missing_as_of_date, unknown_date",missing_required_fields:quote,,True
+primary_route,get_limit_up_count_dated_control,get_limit_up_count,1,partial,capability_contract_gap,single_probe,1988.4,2,0,"missing_as_of_date, unknown_date",missing_required_fields:limit_up_count,,True
+primary_route,list_limit_up_sectors_dated_control,list_limit_up_sectors,1,error,error,single_probe,2573.0,0,0,empty_normalized,empty_normalized,未返回有效目标字段（代码/简称不算指标，默认行情不算财务/事件/宏观数据）；可保留标的与时间重新查询，或访问 https://www.iwencai.com/unifiedwap/chat,True
+primary_route,get_ashare_sentiment_dated_control,get_ashare_sentiment,1,partial,capability_contract_gap,single_probe,2778.5,4,2,"missing_as_of_date, unknown_date",missing_required_fields:market_breadth,,True
+http,quote_hk_format_hk00700,get_market_quotes,1,error,error,single_probe,1077.3,0,0,gateway_error,,HTTP 422,True
+http,quote_hk_format_00700,get_market_quotes,1,error,error,single_probe,814.5,0,0,empty_gateway_response,,Gateway returned no data (empty response),True

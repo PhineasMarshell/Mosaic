@@ -66,7 +66,7 @@ def skill_route_for(tool_name: str, arguments: dict[str, Any]) -> tuple[str, str
             "market_breadth": "上涨家数 下跌家数 成交额",
             "limit_up_count": "涨停家数",
             "limit_up_pool": "涨停股票 涨停池",
-            "limit_up_sectors": "涨停板块 涨停题材",
+            "limit_up_sectors": "行业板块 概念板块 涨停数量排名",
             "finance": "营业收入 净利润 ROE",
             "entity_lookup": "股票代码 股票简称 所属行业",
             "sector_theme": "行业 板块 主题 涨跌幅",

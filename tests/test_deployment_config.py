@@ -9,8 +9,8 @@
 去掉 compose 的 `MOSAIC_MEMORY_DB`、让 `.dockerignore` 放行 `.env`、或把
 `storage.py` 的配置覆盖改回"只看项目根"，对应用例都必红。
 
-mock 范围声明：**不 mock 任何东西**——只读仓库里的 Dockerfile/.dockerignore/compose 文本，
-外加一次真实的 `MarketMemory(db_path=None)` 构造（写临时目录，不触网）。因此**不覆盖**
+mock 范围声明：只替换默认路径用例的 project_root 为独立临时目录，构造和 SQLite 保持真实；
+其余只读 Dockerfile/.dockerignore/compose 文本。因此**不覆盖**
 "docker build 真的能成功"（那需要 Docker daemon，属 CI/运维职责）。
 """
 
@@ -120,13 +120,16 @@ def test_memory_db_path_can_be_redirected_by_settings(monkeypatch, tmp_path):
         mem.close()
 
 
-def test_memory_db_path_falls_back_to_project_root(monkeypatch):
+def test_memory_db_path_falls_back_to_project_root(monkeypatch, tmp_path):
     """没配置 `MOSAIC_MEMORY_DB` 时保持历史行为：项目根下 memory/memory.db。"""
     import app.memory.storage as storage
 
     monkeypatch.delenv("MOSAIC_MEMORY_DB", raising=False)
     assert storage._configured_db_path() is None
     monkeypatch.setattr(storage, "_configured_db_path", lambda: None)
+    assert storage.project_root() == REPO_ROOT
+    isolated_root = tmp_path / "project"
+    monkeypatch.setattr(storage, "project_root", lambda: isolated_root)
     created: list[Path] = []
     real_mkdir = Path.mkdir
 
@@ -140,8 +143,8 @@ def test_memory_db_path_falls_back_to_project_root(monkeypatch):
     finally:
         monkeypatch.setattr(Path, "mkdir", real_mkdir)
     try:
-        assert mem.db_path == REPO_ROOT / "memory" / "memory.db", f"默认路径漂了：{mem.db_path}"
-        assert REPO_ROOT / "memory" in created, "没有去创建默认的 memory/ 目录"
+        assert mem.db_path == isolated_root / "memory" / "memory.db", f"默认路径漂了：{mem.db_path}"
+        assert isolated_root / "memory" in created, "没有去创建默认的 memory/ 目录"
     finally:
         mem.close()
 

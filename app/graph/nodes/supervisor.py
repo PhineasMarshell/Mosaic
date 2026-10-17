@@ -6,15 +6,21 @@
 
 import logging
 import time
+from typing import Any
 
 from openai import AsyncOpenAI
 
 from app.agent.prompts_graph import PLANNER_PROMPT
 from app.config import Settings
+from app.gateway.arguments import semantic_signature
 from app.gateway.tool_registry import registry_text
 from app.graph.budget import StageBudgetExceeded, run_stage
 from app.graph.gap_loop import (
-    append_gap_steps,
+    _normalized_variant_arguments,
+    _variant_satisfied,
+    _with_key_policy,
+    append_gap_variants,
+    coverage_records,
     coverage_requirements,
     drop_repeat_steps,
     gap_key_decision,
@@ -27,6 +33,7 @@ from app.models.research import DEFAULT_DOMAINS, ResearchPlan
 from app.research.trading_calendar import TradingDateSemantics, resolve_trading_date_semantics
 
 logger = logging.getLogger(__name__)
+
 
 # 默认全部启用；后续可通过配置关闭某些域
 _ENABLED_DOMAINS: list = DEFAULT_DOMAINS
@@ -340,6 +347,7 @@ class SupervisorNode:
             question=question,
             registry=registry,
             max_steps=self.settings.max_research_steps,
+            include_sentiment=getattr(self.settings, "sentiment_enabled", False),
         )
         apply_as_of_date_to_plan(plan, plan.as_of_date)
 
@@ -367,7 +375,7 @@ class SupervisorNode:
         if dropped_repeat:
             logger.info("Supervisor: 回环轮丢弃已拿到数据的重复步骤: %s", dropped_repeat)
 
-        plan.steps, forced_gap = append_gap_steps(
+        plan.steps, forced_variants = append_gap_variants(
             plan.steps,
             gap_keys,
             registry,
@@ -382,6 +390,7 @@ class SupervisorNode:
         # Gap steps are appended after the initial plan pass.  Apply the same
         # transport contract to those steps before routing them to Gateway.
         apply_as_of_date_to_plan(plan, plan.as_of_date)
+        forced_gap = [str(row["tool_key"]) for row in forced_variants]
         if forced_gap:
             logger.info("Supervisor: 代码级补齐 Critic 缺口工具: %s", forced_gap)
         plan.missing_required_tool_keys = apply_required_iwencai_tools(
@@ -396,11 +405,53 @@ class SupervisorNode:
                 else getattr(critique, "gap_key_decisions", [])
             )
             prior_disposition = list(raw_prior or [])
-        planned_gap = [step.tool_key for step in plan.steps if step.tool_key in gap_keys]
-        current_disposition = decision.as_state()
-        for row in current_disposition:
-            if row["decision"] == "kept" and row["key"] not in planned_gap:
-                row.update(decision="dropped", reason="budget_truncated")
+
+        # Audit every exact canonical variant against the final plan. A key-level
+        # reason cannot deduplicate different queries or dates.
+        planned_by_key: dict[str, dict[str, dict]] = {}
+        for step in plan.steps:
+            arguments = _normalized_variant_arguments(step.tool_key, dict(step.arguments or {}))
+            step.arguments = arguments
+            signature = semantic_signature(step.tool_key, arguments)
+            planned_by_key.setdefault(step.tool_key, {})[signature] = arguments
+        planned_signatures = {sig for rows in planned_by_key.values() for sig in rows}
+        forced_variants = [row for row in forced_variants if row["signature"] in planned_signatures]
+        planned_gap: list[str] = []
+        disposition_rows: list[dict[str, Any]] = []
+        recorded: set[tuple[str, str, str]] = set()
+        records = coverage_records(results)
+        for row in decision.as_state():
+            key = row["key"]
+            planned = planned_by_key.get(key, {})
+            spec = coverage_specs.get(key) or {}
+            variants = spec.get("argument_variants") or []
+            candidates: dict[str, tuple[dict, bool]] = {}
+            for variant in variants:
+                arguments = _normalized_variant_arguments(key, dict(variant.get("arguments") or {}))
+                satisfied = _variant_satisfied(key, records, _with_key_policy(variant, spec))
+                if not arguments and planned:
+                    candidates.update({sig: (args, satisfied) for sig, args in planned.items()})
+                else:
+                    candidates[semantic_signature(key, arguments)] = (arguments, satisfied)
+            if not candidates and planned:
+                candidates = {sig: (args, False) for sig, args in planned.items()}
+            if not candidates:
+                disposition_rows.append(dict(row))
+                continue
+            for signature, (arguments, satisfied) in candidates.items():
+                enriched = {**row, "signature": signature, "arguments": arguments}
+                if row["reason"] in {"executable", "budget_truncated"}:
+                    if signature in planned:
+                        enriched.update(decision="kept", reason="executable")
+                        if key not in planned_gap:
+                            planned_gap.append(key)
+                    else:
+                        enriched.update(decision="dropped", reason="already_satisfied" if satisfied else "budget_truncated")
+                identity = (key, signature, enriched["reason"])
+                if identity not in recorded:
+                    disposition_rows.append(enriched)
+                    recorded.add(identity)
+        current_disposition = disposition_rows
         disposition = prior_disposition + [row for row in current_disposition if row not in prior_disposition]
         # Critic 要求补证据但本轮没有任何可执行步骤时，直接进入 finalize，
         # 避免空 route 触发默认三 analyst 扇出再烧一轮。
@@ -408,6 +459,7 @@ class SupervisorNode:
         self._gap_state = {
             "gap_key_decisions": disposition,
             "executable_gap_steps": planned_gap,
+            "executable_gap_variants": [dict(row) for row in forced_variants],
             "finalize_after_gap": no_executable_gap,
             "blocked_reason": "no_executable_gap_steps" if no_executable_gap else None,
         }

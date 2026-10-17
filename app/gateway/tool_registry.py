@@ -955,6 +955,142 @@ def resolve_tool_by_name(tool_name: str) -> ToolMeta:
     return BY_NAME[tool_name]
 
 
+# Provider contracts for operations whose Gateway implementation is fixed.
+# This is used only if an MCP response omits its own provider declaration.
+_DECLARED_PROVIDER_BY_KEY = {
+    "quote": "tencent",
+    "sentiment": "ashare-master",
+    "market_breadth": "ashare-master",
+    "limit_up_count": "ashare-master",
+    "limit_up_pool": "ashare-master",
+    "limit_up_sectors": "ashare-master",
+}
+
+
+def declared_provider_for_operation(tool_name: str) -> str | None:
+    """Provider declared by the registered Gateway operation contract, if known."""
+    meta = BY_NAME.get(tool_name)
+    return _DECLARED_PROVIDER_BY_KEY.get(meta.key) if meta else None
+
+
+# ------------------------------------------------------------------ #
+# MCP 语义契约（执行单 mcp-semantic-annotation-execution-plan）          #
+# ------------------------------------------------------------------ #
+#
+# 仅对下面两个 MCP 工具生效。它们在 ``allowed_openapi.json`` 中都是无入参的
+# "当日快照"端点（A股当日涨停家数 / A股当日涨停题材与板块分布），请求日期
+# 永远不会被发送到上游（见 ``arguments.gateway_transport_arguments``），因此
+# 两个契约都显式 ``date_from_request=False``：研究日期、抓取时间、系统当前
+# 日期都不能用来补观察日。日期只允许来自业务行/业务字段或可信 envelope。
+
+#: MCP 网关长操作名（``<path>_<provider>_<op>_<method>``）到短 operationId 的
+#: 别名。短名是规范名；历史 mcp-proxy 版本曾暴露长名，归一化时两者都要认。
+_MCP_OPERATION_ALIASES: dict[str, str] = {
+    "public_limit_up_count_ashare_master_limit_up_count_get": "get_limit_up_count",
+    "public_limit_up_sectors_ashare_master_limit_up_sectors_get": "list_limit_up_sectors",
+    "public_limit_up_pool_ashare_master_limit_up_pool_get": "list_limit_up_stocks",
+}
+
+_MCP_SEMANTIC_CONTRACTS: dict[str, dict[str, Any]] = {
+    "get_limit_up_count": {
+        "contract_id": "mcp.get_limit_up_count.v1",
+        "capability": "limit_up_count",
+        "payload_kind": "limit_up_count",
+        #: 归一化后的标准 metric 名。
+        "business_metric": "limit_up_count",
+        #: 只有本契约声明顶层（或 ``data`` 包装内）的 count 是涨停家数；
+        #: 绝不推广成"所有顶层 count 都是业务字段"。
+        "count_is_business_value": True,
+        #: 按优先级查找的业务家数路径（命中第一个存在的键即停止）。
+        "count_value_paths": (
+            ("data", "count"),
+            ("count",),
+        ),
+        "value_kind": "nonneg_int",
+        "required_value_fields": ("limit_up_count", "涨停家数", "涨停数"),
+        #: 无入参当日快照端点，不允许请求日期补齐。
+        "date_from_request": False,
+        #: 业务字段自身可能携带的日期路径（date_annotation=observed）。
+        "raw_date_paths": (
+            ("date",),
+            ("data", "date"),
+            ("trade_date",),
+            ("trading_date",),
+            ("as_of_date",),
+            ("data", "as_of_date"),
+            ("timestamp",),
+        ),
+        #: 信封层声明的数据日期路径（date_annotation=envelope）。
+        "envelope_date_paths": (
+            ("data_date",),
+            ("observation_date",),
+            ("as_of_date",),
+            ("trade_date",),
+            ("date",),
+        ),
+        #: 描述载荷类型/分页/计数的结构字段，不是业务事实。
+        "structural_field_paths": (
+            ("type",), ("code",), ("code_count",), ("total",), ("total_count",),
+            ("page",), ("limit",), ("row_count",),
+        ),
+    },
+    "list_limit_up_sectors": {
+        "contract_id": "mcp.list_limit_up_sectors.v1",
+        "capability": "limit_up_sectors",
+        "payload_kind": "limit_up_sectors",
+        #: 业务行容器（直接在 root 或 ``data`` 包装下，如真实载荷 ``data.list``）。
+        "row_container_keys": ("rows", "items", "datas", "data", "results", "list"),
+        #: 板块行的身份字段（至少一个）。
+        "row_identity_fields": (
+            "plate", "plate_name", "sector", "sector_name", "industry",
+            "industry_name", "concept", "concept_name", "theme", "theme_name",
+            "name", "板块", "行业板块", "概念板块", "题材板块",
+            "行业", "概念", "题材", "名称", "涨停板块",
+        ),
+        #: 板块行的数值结构字段（至少一个）。
+        "row_structure_fields": (
+            "count", "limit_up_count", "limit_up_num", "涨停家数", "涨停数",
+            "rank", "ranking", "排名", "pct", "pct_change", "涨幅", "涨跌幅",
+        ),
+        #: 行自身日期字段（date_annotation=observed）。
+        "row_date_fields": (
+            "date", "trade_date", "trading_date", "as_of_date",
+            "日期", "交易日", "timestamp", "datetime",
+        ),
+        #: 契约保证这些行属于同一次快照，因此一个可信信封日期可传播到全批。
+        "batch_date": True,
+        "envelope_date_paths": (
+            ("date",),
+            ("data_date",),
+            ("observation_date",),
+            ("as_of_date",),
+            ("trade_date",),
+            ("data", "date"),
+        ),
+        "date_from_request": False,
+    },
+}
+
+
+def canonical_mcp_operation(tool_name: str) -> str:
+    """把任意 MCP 操作名（长名 / 短名 / registry key）归一到短 operationId。"""
+    if tool_name in _MCP_OPERATION_ALIASES:
+        return _MCP_OPERATION_ALIASES[tool_name]
+    if tool_name in _MCP_SEMANTIC_CONTRACTS:
+        return tool_name
+    # registry key（如 limit_up_count）→ 对应 operationId
+    meta = BY_NAME.get(tool_name) or BY_KEY.get(tool_name)
+    if meta is not None and meta.tool_name in _MCP_SEMANTIC_CONTRACTS:
+        return meta.tool_name
+    return tool_name
+
+
+def get_semantic_contract(tool_name: str) -> dict[str, Any] | None:
+    """返回某个 MCP 操作的语义契约；无契约时返回 None。"""
+    canonical = canonical_mcp_operation(tool_name)
+    return _MCP_SEMANTIC_CONTRACTS.get(canonical)
+
+
 def tools_by_domain(domain: MarketDomain) -> list[ToolMeta]:
     """获取指定域的所有工具。"""
     return [t for t in ALL_TOOLS if t.domain == domain]

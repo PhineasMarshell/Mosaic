@@ -66,6 +66,10 @@ INDEX_CODE_MAP_A_SHARE: dict[str, str] = {
     "中证1000": "000852",
     "中证100": "000903",
     "中证200": "000904",
+    # 带交易所前缀的规范写法（计划/批判者/默认基准都用这一形式）
+    "SH000300": "SH000300",
+    "SH000001": "SH000001",
+    "SZ399006": "SZ399006",
 }
 
 # ------------------------------------------------------------------ #
@@ -132,7 +136,9 @@ def resolve_stock_code(name: str) -> str | None:
     # 再查指数
     if name in INDEX_CODE_MAP_A_SHARE:
         raw = INDEX_CODE_MAP_A_SHARE[name]
-        # 指数需要带交易所前缀供雪球等接口使用
+        # 指数需要带交易所前缀供雪球等接口使用；已经带前缀的规范写法原样返回。
+        if raw.upper().startswith(("SH", "SZ", "BJ")):
+            return raw.upper()
         return f"{_infer_index_exchange(raw)}{raw}"
 
     # 再查 Crypto

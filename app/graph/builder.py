@@ -110,6 +110,10 @@ def critic_route_outcome(state, settings: Settings) -> tuple[str, str]:
         return "finalize_audit", "rewrite_budget_exhausted"
     if verdict == "research_more":
         if not state.get("report"):
+            upstream = set(state.get("reason_codes") or [])
+            failures = sorted(upstream & {"reasoning_timeout", "llm_output_error", "reasoning_failed_no_report"})
+            if failures:
+                return "finalize_audit", "no_report_to_revise:" + ",".join(failures)
             return "finalize_audit", "no_report_to_revise"
         if research_round_count >= settings.effective_max_research_rounds:
             return "finalize_audit", "research_budget_exhausted"

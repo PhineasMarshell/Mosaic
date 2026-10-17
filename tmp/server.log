@@ -1,0 +1,13 @@
+{"ts": "2026-10-17T03:56:59.437549+00:00", "level": "INFO", "logger": "app", "msg": "Logging initialized: level=INFO json=True"}
+INFO:     Started server process [12312]
+INFO:     Waiting for application startup.
+{"ts": "2026-10-17T03:56:59.456178+00:00", "level": "INFO", "logger": "app.main", "msg": "Configuration OK: gateway=http model=qwen3.7-flash"}
+{"ts": "2026-10-17T03:56:59.458099+00:00", "level": "INFO", "logger": "app.scheduler.briefs", "msg": "Brief scheduler task created"}
+{"ts": "2026-10-17T03:56:59.458165+00:00", "level": "INFO", "logger": "app.main", "msg": "Brief scheduler started"}
+{"ts": "2026-10-17T03:56:59.458218+00:00", "level": "INFO", "logger": "app.scheduler.briefs", "msg": "Brief scheduler started"}
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 8000): [winerror 10048] 通常每个套接字地址(协议/网络地址/端口)只允许使用一次。
+INFO:     Waiting for application shutdown.
+{"ts": "2026-10-17T03:56:59.458714+00:00", "level": "INFO", "logger": "app.main", "msg": "Brief scheduler stopped"}
+{"ts": "2026-10-17T03:56:59.458771+00:00", "level": "INFO", "logger": "app.scheduler.briefs", "msg": "Brief scheduler cancelled"}
+INFO:     Application shutdown complete.

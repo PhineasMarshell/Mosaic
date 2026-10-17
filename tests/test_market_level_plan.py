@@ -46,7 +46,7 @@ from app.gateway.normalizer import (
 )
 from app.gateway.tool_registry import registry_text, resolve_tool
 from app.graph.market_plan import (
-    A_SHARE_BENCHMARK_SYMBOL,
+    A_SHARE_BENCHMARK_SYMBOLS,
     MARKET_SUMMARY_MINIMUM,
     apply_market_summary_prefix,
     is_market_level_question,
@@ -103,11 +103,26 @@ def test_market_question_injects_minimum_evidence_set_before_llm_steps():
     assert dropped == []
     assert _keys(plan)[: len(_MIN_KEYS)] == _MIN_KEYS
     assert _keys(plan)[len(_MIN_KEYS) :] == ["detail"]
-    # 大盘基准由代码给出 canonical 参数（沪深300），不许 LLM 猜口径
-    assert plan.steps[0].arguments == {"symbols": [A_SHARE_BENCHMARK_SYMBOL]}
+    # 大盘基准由代码给出 canonical 参数（上证指数/沪深300/创业板指），不许 LLM 猜口径
+    assert plan.steps[0].arguments == {"symbols": list(A_SHARE_BENCHMARK_SYMBOLS)}
     assert plan.steps[0].priority == "high"
     # 涨停池明细刻意不在最低集里：只在需要点名个股/板块密度时才计划
     assert "limit_up_pool" not in prefix
+
+
+def test_market_question_can_disable_unstable_sentiment_endpoint():
+    plan = _plan()
+    prefix, dropped = apply_market_summary_prefix(
+        plan,
+        question=_MARKET_QUESTION,
+        registry=_REGISTRY,
+        max_steps=8,
+        include_sentiment=False,
+    )
+    assert dropped == []
+    assert "sentiment" not in prefix
+    assert "sentiment" not in _keys(plan)
+    assert {"quote", "limit_up_count", "limit_up_sectors", "telegraph"}.issubset(set(prefix))
 
 
 def test_planner_quote_step_is_replaced_by_the_code_owned_benchmark_symbol():
@@ -118,7 +133,7 @@ def test_planner_quote_step_is_replaced_by_the_code_owned_benchmark_symbol():
 
     quotes = [step for step in plan.steps if step.tool_key == "quote"]
     assert len(quotes) == 1
-    assert quotes[0].arguments == {"symbols": [A_SHARE_BENCHMARK_SYMBOL]}
+    assert quotes[0].arguments == {"symbols": list(A_SHARE_BENCHMARK_SYMBOLS)}
 
 
 @pytest.mark.parametrize(
@@ -362,10 +377,11 @@ async def test_plan_event_records_prefix_keys_and_unexecutable_keys(caplog):
     assert len(plan_events) == 1, f"应恰好一条 plan 事件，实际: {[e.get('event') for e in events]}"
 
     payload = plan_events[0]
-    assert payload["prefix_keys"] == _MIN_KEYS
+    expected_prefix = [key for key in _MIN_KEYS if key != "sentiment"]
+    assert payload["prefix_keys"] == expected_prefix
     assert payload["unexecutable_keys"] == ["overview"]
     # 路由里既没有必然跳过的 overview，也没有第二份 quote
     routed = [call["tool_key"] for assignment in result["route"] for call in assignment["tool_calls"]]
     assert "overview" not in routed
     assert routed.count("quote") == 1
-    assert set(_MIN_KEYS) <= set(routed)
+    assert set(expected_prefix) <= set(routed)

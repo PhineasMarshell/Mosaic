@@ -350,6 +350,27 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
             arguments = canonicalize_tool_arguments(operation_id, arguments)
         except Exception:
             pass
+        business_datum_count = _field(r, "business_datum_count")
+        if business_datum_count is None:
+            business_datum_count = sum(
+                1 for d in normalized if not bool(_field(d, "structural_metadata", False))
+            )
+        structural_metadata_count = _field(r, "structural_metadata_count")
+        if structural_metadata_count is None:
+            structural_metadata_count = len(normalized) - int(business_datum_count)
+        date_annotation = _field(r, "date_annotation")
+        # 逐 datum 的日期来源（observed/envelope/request_context/contract_snapshot/unknown）。
+        date_annotations = sorted({
+            _field(d, "date_annotation") for d in normalized if _field(d, "date_annotation")
+        })
+        authority_set = sorted({
+            _field(d, "authority") for d in normalized if _field(d, "authority")
+        })
+        semantic_annotation_counts: dict[str, int] = {}
+        for d in normalized:
+            ann = _field(d, "semantic_annotation")
+            if ann:
+                semantic_annotation_counts[ann] = semantic_annotation_counts.get(ann, 0) + 1
         rows.append(
             {
                 "tool_key": _field(r, "tool_key"),
@@ -363,6 +384,7 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
                 "arguments": clip_args(arguments),
                 "status": _field(r, "status"),
                 "partial": bool(_field(r, "partial", False)),
+                "result_partial": bool(_field(r, "partial", False)),
                 "reason_codes": _field(r, "reason_codes", []) or [],
                 "upstream_status": _field(r, "upstream_status"),
                 "attempts": _field(r, "attempts", []) or [],
@@ -374,6 +396,16 @@ def log_executions(state: Any, results: Any, *, category: str | None = None) -> 
                 "instrument": sorted({_field(d, "instrument") for d in normalized if _field(d, "instrument")}),
                 "as_of_date": _field(r, "as_of_date"),
                 "retrieved_at": _field(r, "retrieved_at"),
+                # 语义补标注审计：业务/结构计数、证据是否创建、fallback 逐门失败、
+                # 逐行日期来源、authority 集合与语义标注分布。
+                "business_datum_count": int(business_datum_count),
+                "structural_metadata_count": int(structural_metadata_count),
+                "evidence_created": bool(_field(r, "evidence_created", False)),
+                "fallback_provenance_failures": _field(r, "fallback_provenance_failures", []) or [],
+                "date_annotation": date_annotation,
+                "date_annotations": date_annotations,
+                "authority_set": authority_set,
+                "semantic_annotation_counts": semantic_annotation_counts,
                 "datum_count": len(normalized),
                 "datums": [
                     {
@@ -412,6 +444,7 @@ def log_reasoning_context(
     usage: Any = None,
     target_filter: dict | None = None,
     phase: str | None = None,
+    tool_truncation: dict | None = None,
 ) -> None:
     """Record bounded Reasoning context/timing diagnostics without payload text."""
     emit(
@@ -435,6 +468,7 @@ def log_reasoning_context(
             "total_tokens": _field(usage, "total_tokens"),
         } if usage is not None else None,
         target_filter=target_filter or {},
+        tool_truncation=tool_truncation or {},
     )
 
 

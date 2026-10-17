@@ -33,7 +33,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.gateway.arguments import canonicalize_tool_arguments
-from app.gateway.tool_registry import resolve_tool_by_name
+from app.gateway.mcp_semantics import annotate_mcp_payload
+from app.gateway.tool_registry import get_semantic_contract, resolve_tool_by_name
 from app.models.market import NormalizedDatum, Status, ToolResult
 from app.research.trading_calendar import normalize_date
 
@@ -143,8 +144,8 @@ def infer_domain_from_tool(tool: str) -> str:
 # ------------------------------------------------------------------ #
 
 _TIMESTAMP_KEYS = {"timestamp", "time", "date", "datetime", "ts"}
-_CONTAINER_KEYS = {"candles", "data", "items", "rows", "results", "trades"}
-_METADATA_KEYS = {"partial", "status", "note", "source", "source_used"}
+_CONTAINER_KEYS = {"candles", "data", "datas", "items", "rows", "results", "trades"}
+_METADATA_KEYS = {"partial", "status", "completeness", "note", "source", "source_used", "provider", "metadata", "meta", "transport"}
 
 #: 单个列表最多逐条展开多少项。超出会被截断 —— 以前是静默截断，
 #: 现在会置 partial=True 并写 note（见 _find_truncations）。
@@ -174,6 +175,11 @@ def _reason_codes_for_error(error: str | None) -> list[str]:
     # explain the real upstream condition while still producing zero evidence.
     if any(token in text for token in ("cloudflare", "origin", "incomplete response", "incomplete")):
         codes.append("gateway_upstream_incomplete")
+    # 200 信封里的业务级拒绝（例如 iwencai_industry 回 gateway_business_error）与
+    # 传输错误一样是"本次拿不到数据"，必须保留成可回退的独立 code，不能塌成
+    # 泛化的 gateway_error——否则 controlled fallback 无法识别它可回退。
+    if any(token in text for token in ("gateway_business_error", "business_error", "business error", "业务错误", "业务异常")):
+        codes.append("gateway_business_error")
     if not codes:
         codes.append("gateway_error")
     return codes
@@ -191,6 +197,184 @@ def _stable_reason_codes(tool: str, codes: list[str]) -> list[str]:
 #: 日期锚点——报告于是可能拿一段旧数据声称"今日大盘上涨"（验收要求禁止）。
 #: 因此这里显式标注，让 Reasoning / Critic 都不能无视它。
 _MARKET_LEVEL_NO_TIMESTAMP_NOTE = "上游未提供时间戳：无法确认该数据是否为当日（不得据此断言「今日」）"
+
+# ------------------------------------------------------------------ #
+# Provenance：source / authority（provider，不是 transport）            #
+# ------------------------------------------------------------------ #
+
+#: 明确的上游 provider 标识。authority 只能来自响应体里声明的 provider
+#: （source_used / source），并且必须命中这个白名单；否则保持 None。
+#: 传输层名称（"mcp" / "http_api" / "ths_skill"）与技能包装名（"同花顺问财"）
+#: 都不是 provider —— 拿它们充当 authority 会把"谁说的"变成"怎么拿到的"。
+_PROVIDER_SOURCE_PATTERN = re.compile(
+    r"(?:"
+    r"tencent|qq[_-]?quote"
+    r"|ashare[_-]?master|a[_-]?share[_-]?master"
+    r"|eastmoney|东方财富"
+    r"|xueqiu|xueqiao|雪球"
+    r"|sina|新浪"
+    r"|cninfo|巨潮"
+    r"|hkex|港交所"
+    r"|coinglass|binance|hyperliquid|okx|coinbase|bybit"
+    r"|exchange|交易所"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def provider_authority(value: Any) -> str | None:
+    """Return the provider name declared by the upstream payload, or None.
+
+    Only explicit provider sources qualify. A transport name or a skill/transport
+    label must never be promoted to authority.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text if _PROVIDER_SOURCE_PATTERN.search(text) else None
+
+
+#: 顶层信封元数据键。它们描述"这一批响应"（条数 / 总数 / 分页 / 明细标记），
+#: 本身不是某条业务事实，因此不参与 provenance 的逐条校验。注意：只在载荷
+#: **根**层生效，容器内部的同名字段（如 total_share 这类真实业务值）照常要求
+#: provenance，绝不放过。
+_STRUCTURAL_METADATA_KEYS = frozenset(
+    {
+        "count",
+        "total",
+        "total_count",
+        "row_count",
+        "code_count",
+        "item_count",
+        "record_count",
+        "page",
+        "page_size",
+        "page_num",
+        "page_no",
+        "current_page",
+        "per_page",
+        "limit",
+        "offset",
+        "has_more",
+        "has_next",
+        "next_page",
+        "more",
+        "success",
+        "code",
+        "error",
+        "message",
+        "msg",
+        "is_detail",
+    }
+)
+_INDEXED_PATH_RE = re.compile(r"^(.*)\[(\d+)\]$")
+
+
+def is_structural_metadata_datum(datum: Any) -> bool:
+    """True only for envelope-level count/total/paging metadata at payload root."""
+    # ``count`` is ambiguous: at the payload root it may be the envelope row
+    # count, but ``{"count": 59, "date": ...}`` is also a legitimate
+    # limit-up-count business response.  The extractor therefore records the
+    # structural decision explicitly; never infer it from the metric name
+    # after the fact.
+    return bool(getattr(datum, "structural_metadata", False))
+
+
+#: 市场级聚合能力：这些能力的数据点代表"某一天的市场横截面"，因此必须有日期，
+#: 并且要按各自的必需字段判断可回退性（见 controlled_fallback）。
+_MARKET_CAPABILITIES = frozenset(
+    {
+        "quote",
+        "kline",
+        "sentiment",
+        "market_breadth",
+        "limit_up",
+        "limit_up_count",
+        "limit_up_pool",
+        "limit_up_sectors",
+        "sector_theme",
+        "abnormal_reasons",
+    }
+)
+
+
+def is_market_capability(capability: str) -> bool:
+    return str(capability or "") in _MARKET_CAPABILITIES
+
+
+def _container_key(path: str) -> str:
+    """Return the container key a datum path lives in ("" for payload root)."""
+    head = path.split(".", 1)[0] if path else ""
+    match = _INDEXED_PATH_RE.match(head)
+    return match.group(1).casefold() if match else head.casefold()
+
+
+#: 本次调用中被截断的列表容器路径。`_find_truncations` 生成、`_make_datum` 读取，
+#: 使 datum.partial 只描述"这一条自己是否被截断"，而不再把整批 partial 复制给
+#: 每一条完整 datum。每次 normalize_tool_result 开始时重设，避免跨调用串味。
+_TRUNCATED_CONTAINER_PATHS: frozenset[str] = frozenset()
+
+
+def _truncation_paths(truncations: list[str]) -> frozenset[str]:
+    """Extract the容器 path from `"<path>: truncated N->M items, kept X"` notes."""
+    paths: set[str] = set()
+    for note in truncations:
+        path = str(note).split(": truncated", 1)[0].strip()
+        if path and path != "root":
+            paths.add(path)
+    return frozenset(paths)
+
+
+def _container_was_truncated(path: str) -> bool:
+    if not path:
+        return False
+    return path in _TRUNCATED_CONTAINER_PATHS
+
+
+#: 日期键的传播优先级。容器条目自带日期优先；否则用载荷根 / 所属容器声明的日期。
+_DATUM_DATE_KEYS = ("as_of_date", "trade_date", "trading_date", "日期", "交易日期", "交易日", "date", "time", "datetime", "timestamp", "t")
+
+
+def _first_date(obj: Any, keys: tuple[str, ...]) -> str | None:
+    if not isinstance(obj, dict):
+        return None
+    for key in keys:
+        value = obj.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _date_index(raw: Any) -> dict[str, str]:
+    """Map container key -> declared date string, plus "" for the payload root.
+
+    items/data/rows 里的日期要能传播到"对应"的数据点：条目自己的日期最优先，
+    其次是它所属容器声明的日期，最后才是载荷根声明的日期。
+    """
+    index: dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return index
+    root = _first_date(raw, _DATUM_DATE_KEYS)
+    if root:
+        index[""] = root
+    for key, value in raw.items():
+        if is_container_key(key) and isinstance(value, dict):
+            declared = _first_date(value, _DATUM_DATE_KEYS)
+            if declared:
+                index[str(key).casefold()] = declared
+    return index
+
+
+def _declared_date_for(path: str, index: dict[str, str]) -> str | None:
+    if not index:
+        return None
+    key = _container_key(path)
+    if key and key in index:
+        return index[key]
+    return index.get("")
+
 
 #: 升序时间序列：截断时必须保留**末尾**（最新），否则会把几周前的数据
 #: 当成当前值。实测 90 天日线只保留前 50 根时，"最新收盘"比真实值低 21%。
@@ -577,6 +761,7 @@ def _extract_metrics(
     _partial: bool = False,
     _timestamp: str | None = None,
     _source: str | None = None,
+    _date_index: dict[str, str] | None = None,
 ) -> list[NormalizedDatum]:
     """递归地从嵌套对象中提取指标。
 
@@ -585,17 +770,51 @@ def _extract_metrics(
     if result is None:
         result = []
 
+    declared_dates = _date_index or {}
+    # Response-set partial does not taint complete independent rows. Once inside
+    # a business row, its own incomplete marker must survive recursive children.
+    is_envelope = isinstance(obj, dict) and any(
+        is_container_key(key) and isinstance(value, (dict, list)) for key, value in obj.items()
+    ) and not re.search(r"\[\d+\]", parent_path)
+    declared_partial = isinstance(obj, dict) and (
+        obj.get("partial") is True
+        or str(obj.get("status", "")).casefold() in {"partial", "incomplete", "error"}
+        or str(obj.get("completeness", "")).casefold() in {"partial", "incomplete", "truncated"}
+    )
+    _partial = bool((parent_path and _partial) or (declared_partial and not is_envelope))
+    _status = "partial" if _partial else "success"
+
     def _make_datum(metric: str, value: Any, note: str | None = None, unit: str | None = None) -> NormalizedDatum:
+        # 信封 partial 与"这条 datum 自己是否完整"是两件事：只有确实被截断的
+        # 容器（_TRUNCATED_CONTAINER_PATHS）才把 partial 记到 datum 上，整批
+        # partial 不再强加给每一条完整 datum。
+        datum_partial = bool(_partial or _container_was_truncated(parent_path))
+        timestamp = _timestamp
+        if not timestamp:
+            timestamp = _declared_date_for(parent_path, declared_dates)
         return NormalizedDatum(
             domain=_domain,
             metric=metric,
             value=value,
             unit=unit,
-            timestamp=_timestamp,
+            timestamp=timestamp,
             source=_source,
+            structural_metadata=bool(
+                not parent_path
+                and metric.casefold() in _STRUCTURAL_METADATA_KEYS
+                and isinstance(obj, dict)
+                and (
+                    metric.casefold() != "count"
+                    or _tool == "list_limit_up_sectors"
+                    or any(
+                        is_container_key(key) and isinstance(item, (dict, list)) and bool(item)
+                        for key, item in obj.items()
+                    )
+                )
+            ),
             tool=_tool,
-            status=_status,
-            partial=_partial,
+            status="partial" if datum_partial else "success",
+            partial=datum_partial,
             note=note,
         )
 
@@ -819,6 +1038,8 @@ def normalize_tool_result(
     error: str | None = None,
     tool_key: str | None = None,
     reason_codes: list[str] | None = None,
+    declared_provider: str | None = None,
+    requested_as_of_date: str | None = None,
 ) -> ToolResult:
     """将 MCP/HTTP 返回的原始响应标准化。
 
@@ -827,6 +1048,9 @@ def normalize_tool_result(
         arguments: 调用参数
         raw: 原始响应数据
         error: 如果非空，表示调用失败
+        requested_as_of_date: 独立传入的研究目标日期（planned_as_of_date）。
+            它不属于 wire 参数；只有契约声明且日期实际随请求发送时才可用，
+            否则只会得到 ``mcp_request_date_ignored`` 诊断。
     """
     try:
         arguments = canonicalize_tool_arguments(tool, arguments)
@@ -922,6 +1146,23 @@ def normalize_tool_result(
             reason_codes=_stable_reason_codes(tool, ["invalid_gateway_payload"]),
         )
 
+    # MCP 语义补标注（执行单 mcp-semantic-annotation-execution-plan）：对登记了
+    # 显式契约的工具（get_limit_up_count / list_limit_up_sectors），由适配器在
+    # 深拷贝上完成字段映射、日期 lineage 与结构/业务分类。适配器是唯一权威，
+    # 通用 flatten 与 row_identity 传播对这些工具跳过。
+    semantic_normalized: list[NormalizedDatum] | None = None
+    semantic_sidecar: dict[str, Any] | None = None
+    if get_semantic_contract(tool) is not None:
+        annotated = annotate_mcp_payload(
+            tool,
+            arguments,
+            raw,
+            declared_provider=declared_provider,
+            requested_as_of_date=requested_as_of_date,
+        )
+        if annotated is not None:
+            semantic_normalized, semantic_sidecar = annotated
+
     partial = find_partial(raw)
 
     # 截断必须说出来：以前 [:50] 静默丢掉记录，status 还是 success，
@@ -938,78 +1179,115 @@ def normalize_tool_result(
     status: Status = "partial" if partial else "success"
     timestamp = find_timestamp(raw) if isinstance(raw, dict) else None
     source = None
+    provider_candidates: list[str] = []
     domain = infer_domain_from_tool(tool)
 
     if isinstance(raw, dict):
-        source = raw.get("source_used") or raw.get("source")
-
-    normalized = (
-        _extract_metrics(
-            raw,
-            _tool=tool,
-            _domain=domain,
-            _status=status,
-            _partial=partial,
-            _timestamp=timestamp,
-            _source=source,
+        provider_candidates.extend(
+            value for value in (raw.get("source_used"), raw.get("source"), raw.get("provider"))
+            if isinstance(value, str) and value.strip()
         )
-        if isinstance(raw, (dict, list))
-        else [
-            NormalizedDatum(
-                tool=tool,
-                domain=domain,
-                metric="response",
-                value=str(raw),
-                status=status,
-                partial=partial,
-                timestamp=timestamp,
-                source=source,
-            )
-        ]
-    )
+        # MCP envelopes commonly put the provider beside the business payload.
+        # Read only explicit contract fields; never infer it from notes or transport.
+        for envelope in (raw.get("metadata"), raw.get("meta"), raw.get("result")):
+            if isinstance(envelope, dict):
+                provider_candidates.extend(
+                    value for value in (envelope.get("provider"), envelope.get("source_used"), envelope.get("source"))
+                    if isinstance(value, str) and value.strip()
+                )
+    source = next((value.strip() for value in provider_candidates if provider_authority(value)), None)
+    source = source or (declared_provider.strip() if isinstance(declared_provider, str) and declared_provider.strip() else None)
+    if source is None:
+        source = next(
+            (value.strip() for value in provider_candidates if value.strip().casefold() not in {"mcp", "http", "http_api", "ths_skill"}),
+            None,
+        )
 
-    # Flat metric paths retain the original list row index. Propagate each
-    # row's returned code/name to its sibling datums so a batched quote cannot
-    # attribute one security's price to another requested security.
-    row_identity: dict[str, dict[str, str]] = {}
-    for datum in normalized:
-        if "." not in datum.metric:
-            continue
-        parent, field_name = datum.metric.rsplit(".", 1)
-        key = field_name.lower()
-        if key in {"symbol", "code", "stock_code", "security_code", "ticker"} and datum.value:
-            row_identity.setdefault(parent, {})["instrument"] = str(datum.value)
-        elif key in {"name", "stock_name", "company_name", "security_name"} and datum.value:
-            row_identity.setdefault(parent, {})["instrument_name"] = str(datum.value)
-        elif key in {"date", "trade_date", "trading_date", "as_of_date", "日期", "交易日期", "交易日", "time", "datetime", "timestamp"}:
-            stamp = str(datum.value)
-            if tool == "get_market_quotes" and key == "time" and re.fullmatch(r"\d{14}", stamp):
-                try:
-                    stamp = datetime.strptime(stamp, "%Y%m%d%H%M%S").isoformat()
-                except ValueError:
-                    stamp = ""
-            if observed_date := normalize_date(stamp):
-                row_identity.setdefault(parent, {})["as_of_date"] = observed_date
-                row_identity[parent]["timestamp"] = stamp
-    for datum in normalized:
-        if "." not in datum.metric:
-            continue
-        parent = datum.metric.rsplit(".", 1)[0]
-        identity = row_identity.get(parent, {})
-        # Quote book fields live below the returned security row. Resolve
-        # their own ancestor, never another row or a batched request target.
-        ancestor = parent
-        while not identity and "." in ancestor:
-            ancestor = ancestor.rsplit(".", 1)[0]
-            identity = row_identity.get(ancestor, {})
-        if not datum.instrument and identity.get("instrument"):
-            datum.instrument = identity["instrument"]
-        if not datum.instrument_name and identity.get("instrument_name"):
-            datum.instrument_name = identity["instrument_name"]
-        if not datum.as_of_date and identity.get("as_of_date"):
-            datum.as_of_date = identity["as_of_date"]
-        if not datum.timestamp and identity.get("timestamp"):
-            datum.timestamp = identity["timestamp"]
+    # provider provenance：source_used/source 只在命中 provider 白名单时才能成为
+    # authority。transport 名称与技能包装名都不是 provider，绝不允许冒用；无法
+    # 归因到具体 provider 时保持 None，让下游按"无权威来源"处理。
+    # datum.source 仍保留上游声明的原始标签（审计可读），但不冒充 authority。
+    effective_source = provider_authority(source)
+    declared_source = source.strip() if isinstance(source, str) and source.strip() else None
+    global _TRUNCATED_CONTAINER_PATHS
+    _TRUNCATED_CONTAINER_PATHS = _truncation_paths(truncations)
+
+    if semantic_normalized is not None:
+        # 适配器已完成字段映射、结构/业务分类、日期 lineage 与来源标注。
+        normalized = semantic_normalized
+        # 适配器按契约白名单计算 authority；与 root provider 解析保持一致。
+        effective_source = semantic_sidecar.get("authority") if semantic_sidecar else effective_source
+        declared_source = semantic_sidecar.get("source") if semantic_sidecar else declared_source
+    else:
+        normalized = (
+            _extract_metrics(
+                raw,
+                _tool=tool,
+                _domain=domain,
+                _status=status,
+                _partial=partial,
+                _timestamp=timestamp,
+                _source=effective_source,
+                _date_index=_date_index(raw),
+            )
+            if isinstance(raw, (dict, list))
+            else [
+                NormalizedDatum(
+                    tool=tool,
+                    domain=domain,
+                    metric="response",
+                    value=str(raw),
+                    status=status,
+                    partial=partial,
+                    timestamp=timestamp,
+                    source=effective_source,
+                )
+            ]
+        )
+
+    if semantic_normalized is None:
+        # Flat metric paths retain the original list row index. Propagate each
+        # row's returned code/name to its sibling datums so a batched quote cannot
+        # attribute one security's price to another requested security.
+        row_identity: dict[str, dict[str, str]] = {}
+        for datum in normalized:
+            if "." not in datum.metric:
+                continue
+            parent, field_name = datum.metric.rsplit(".", 1)
+            key = field_name.lower()
+            if key in {"symbol", "code", "stock_code", "security_code", "ticker"} and datum.value:
+                row_identity.setdefault(parent, {})["instrument"] = str(datum.value)
+            elif key in {"name", "stock_name", "company_name", "security_name"} and datum.value:
+                row_identity.setdefault(parent, {})["instrument_name"] = str(datum.value)
+            elif key in {"date", "trade_date", "trading_date", "as_of_date", "日期", "交易日期", "交易日", "time", "datetime", "timestamp"}:
+                stamp = str(datum.value)
+                if tool == "get_market_quotes" and key == "time" and re.fullmatch(r"\d{14}", stamp):
+                    try:
+                        stamp = datetime.strptime(stamp, "%Y%m%d%H%M%S").isoformat()
+                    except ValueError:
+                        stamp = ""
+                if observed_date := normalize_date(stamp):
+                    row_identity.setdefault(parent, {})["as_of_date"] = observed_date
+                    row_identity[parent]["timestamp"] = stamp
+        for datum in normalized:
+            if "." not in datum.metric:
+                continue
+            parent = datum.metric.rsplit(".", 1)[0]
+            identity = row_identity.get(parent, {})
+            # Quote book fields live below the returned security row. Resolve
+            # their own ancestor, never another row or a batched request target.
+            ancestor = parent
+            while not identity and "." in ancestor:
+                ancestor = ancestor.rsplit(".", 1)[0]
+                identity = row_identity.get(ancestor, {})
+            if not datum.instrument and identity.get("instrument"):
+                datum.instrument = identity["instrument"]
+            if not datum.instrument_name and identity.get("instrument_name"):
+                datum.instrument_name = identity["instrument_name"]
+            if not datum.as_of_date and identity.get("as_of_date"):
+                datum.as_of_date = identity["as_of_date"]
+            if not datum.timestamp and identity.get("timestamp"):
+                datum.timestamp = identity["timestamp"]
 
     # 阶段 3 ⑤：市场级工具的数据点必须能说清"这是哪一天的市场"。
     # 上游没给时间戳时逐条标注，避免报告拿无日期的旧数据声称"今日"。
@@ -1018,9 +1296,13 @@ def normalize_tool_result(
         for datum in normalized:
             datum.note = "; ".join(part for part in (datum.note, market_note) if part)
 
-    # T1 兜底不变式：任何分支只要产出 0 条 datum，就绝不能报 success/partial，
+    business_count = sum(1 for datum in normalized if not datum.structural_metadata)
+    structural_count = len(normalized) - business_count
+
+    # T1 兜底不变式：任何分支只要产出 0 条业务 datum，就绝不能报 success/partial，
     # 防止以后新增的分支再把"无数据"当成证据（例如整块 dict 只含元数据键）。
-    if not normalized:
+    if not normalized or business_count == 0:
+        error_reason_codes = _stable_reason_codes(tool, ["empty_normalized"])
         return ToolResult(
             tool=tool,
             operation_id=tool,
@@ -1032,28 +1314,85 @@ def normalize_tool_result(
             note=note or _EMPTY_PAYLOAD_NOTE,
             normalized=[],
             error="Gateway returned no extractable data (normalization produced zero items)",
-            reason_codes=_stable_reason_codes(tool, ["empty_normalized"]),
+            reason_codes=error_reason_codes,
+            # 保留适配器诊断：即使零业务 datum，也要能看到是缺日期/缺家数/空容器。
+            date_annotation=semantic_sidecar,
+            business_datum_count=0,
+            structural_metadata_count=structural_count,
+            semantic_diagnostics=list(semantic_sidecar.get("diagnostics", [])) if semantic_sidecar else [],
+            evidence_created=False,
         )
 
     retrieved_at = datetime.now(UTC).isoformat()
+    declared_dates = _date_index(raw)
     for datum in normalized:
         datum.retrieved_at = retrieved_at
+        # items/data/rows 声明的日期要传播到对应 datum（条目自身日期优先）。
+        # 语义适配器已在契约分支里显式设置日期/lineage，这里不覆盖已解析日期。
+        if not datum.timestamp and not datum.as_of_date:
+            declared = _declared_date_for(datum.metric, declared_dates)
+            if declared:
+                datum.timestamp = declared
         datum.as_of_date = datum.as_of_date or normalize_date(datum.timestamp)
-        datum.completeness = "partial" if partial else "complete"
-    observed_dates = {datum.as_of_date for datum in normalized if datum.as_of_date}
+        # 凭证只来自明确 provider；无法证明日期时 datum 自身记为 partial。
+        if declared_source:
+            datum.source = datum.source or declared_source
+        if effective_source:
+            datum.authority = datum.authority or effective_source
+        # ``ToolResult.partial`` describes the coverage of the response set;
+        # it does not make every returned row partial.  A datum is partial only
+        # when that row/container is truncated or lacks the date required by a
+        # market observation.  This lets a dated narrow fact survive a
+        # result-level partial envelope.
+        # Missing values and dates belong to this datum, while a coverage
+        # limitation on a sibling/result belongs to the envelope.
+        datum.partial = bool(datum.partial or _container_was_truncated(_container_key(datum.metric)))
+        requires_date = is_market_capability(str(tool_key or tool)) or partial
+        if (requires_date and not datum.as_of_date and not datum.structural_metadata) or datum.value in (None, "", [], {}):
+            datum.partial = True
+        datum.status = "partial" if datum.partial else "success"
+        datum.completeness = "partial" if datum.partial else "complete"
+
+    business_datums = [datum for datum in normalized if not datum.structural_metadata]
+    observed_dates = {datum.as_of_date for datum in business_datums if datum.as_of_date}
+    any_business_partial = any(datum.partial for datum in business_datums)
+    # evidence_created：至少一条业务 datum 通过完整性、日期与来源检查。
+    evidence_created = any(
+        (not datum.partial)
+        and datum.as_of_date
+        and datum.source
+        and datum.authority
+        for datum in business_datums
+    )
+
+    # 结果级 partial：信封声明 partial，或任一业务 datum 缺身份/结构/日期。
+    result_partial = bool(partial or any_business_partial)
+    result_status: Status = "partial" if result_partial else "success"
+    result_date = None
+    if semantic_sidecar is not None and semantic_sidecar.get("as_of_date"):
+        result_date = semantic_sidecar["as_of_date"]
+    elif len(observed_dates) == 1:
+        result_date = next(iter(observed_dates))
+
     return ToolResult(
         tool=tool,
         operation_id=tool,
         tool_key=tool_key,
         arguments=arguments,
         raw=raw,
-        status=status,
-        partial=partial,
+        status=result_status if semantic_sidecar is not None else status,
+        partial=result_partial if semantic_sidecar is not None else partial,
         note=note,
         normalized=normalized,
         retrieved_at=retrieved_at,
-        as_of_date=next(iter(observed_dates)) if len(observed_dates) == 1 else None,
-        completeness="partial" if partial else "complete",
+        as_of_date=result_date,
+        completeness="partial" if result_partial else "complete",
+        authority=effective_source,
+        date_annotation=semantic_sidecar,
+        business_datum_count=sum(1 for datum in normalized if not datum.structural_metadata),
+        structural_metadata_count=sum(1 for datum in normalized if datum.structural_metadata),
+        semantic_diagnostics=list(semantic_sidecar.get("diagnostics", [])) if semantic_sidecar else [],
+        evidence_created=evidence_created,
     )
 
 

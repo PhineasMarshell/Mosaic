@@ -1194,10 +1194,20 @@ class CriticNode:
             report = state.get("report")
             if not report:
                 critique = Critique(
-                    verdict="research_more",
-                    reason="推理引擎未产出报告",
-                    missing_points=["完整的市场情报报告"],
+                    verdict="error",
+                    reason="reasoning_failed_no_report",
                 )
+                run_log.log_critic(state, critique)
+                return {"critique": critique, "reason_codes": list(dict.fromkeys([
+                    *(state.get("reason_codes") or []), "reasoning_failed_no_report",
+                ]))}
+
+            fallback_codes = set(state.get("reason_codes") or []) | set(state.get("degraded_reason_codes") or [])
+            if "evidence_only_fallback" in fallback_codes:
+                # The fallback was built directly from the evidence ledger.
+                # Send it to FinalizeAuditNode's strict claim audit without a
+                # free-form Critic revision or research loop.
+                critique = Critique(verdict="pass", reason="evidence_only_fallback_strict_audit")
                 run_log.log_critic(state, critique)
                 return {"critique": critique}
 

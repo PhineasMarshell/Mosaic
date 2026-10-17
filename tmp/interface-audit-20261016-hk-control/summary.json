@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-16",
+  "elapsed_seconds": 0.6,
+  "registered_operations": 55,
+  "call_rows": 4,
+  "classification_counts": {
+    "no_business_data": 3,
+    "data_returned": 1
+  },
+  "interfaces": [
+    {
+      "layer": "source_control",
+      "case": "klines_HK.800300",
+      "tool": "eastmoney_klines",
+      "attempts": 1,
+      "statuses": "empty",
+      "classification": "no_business_data",
+      "repeat_outcome": "single_probe",
+      "ms": "122.4",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    },
+    {
+      "layer": "source_control",
+      "case": "kline_HK.800300",
+      "tool": "eastmoney_klines",
+      "attempts": 1,
+      "statuses": "empty",
+      "classification": "no_business_data",
+      "repeat_outcome": "single_probe",
+      "ms": "37.7",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    },
+    {
+      "layer": "source_control",
+      "case": "kline_100.HSI",
+      "tool": "eastmoney_klines",
+      "attempts": 1,
+      "statuses": "success",
+      "classification": "data_returned",
+      "repeat_outcome": "single_probe",
+      "ms": "330.2",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    },
+    {
+      "layer": "source_control",
+      "case": "kline_100.HSTECH",
+      "tool": "eastmoney_klines",
+      "attempts": 1,
+      "statuses": "empty",
+      "classification": "no_business_data",
+      "repeat_outcome": "single_probe",
+      "ms": "39.5",
+      "business_datums": null,
+      "dated_business_datums": null,
+      "reason_codes": [],
+      "capability_gap": null,
+      "error": null,
+      "observed": true
+    }
+  ]
+}

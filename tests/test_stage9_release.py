@@ -1,16 +1,16 @@
-"""Release rehearsal against a real service process and isolated SQLite files."""
+"""Release rehearsal in a real child process using in-process ASGI and isolated SQLite.
+
+No production component is mocked. DNS/service connections are denied in the
+child; this verifies lifespan and /health, but does not test a Uvicorn listener.
+"""
 
 import json
 import logging
 import os
-import socket
 import sqlite3
 import subprocess
 import sys
-import time
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import urlopen
 
 import pytest
 
@@ -38,9 +38,6 @@ def _backup(source: Path, target: Path) -> None:
 
 
 def test_service_process_health_loads_release_settings(tmp_path):
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
     env = {
         **os.environ,
         "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
@@ -55,45 +52,45 @@ def test_service_process_health_loads_release_settings(tmp_path):
         "MOSAIC_MEMORY_DB": str(tmp_path / "memory.db"),
         "MOSAIC_DATA_DIR": str(tmp_path),
     }
-    process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
-        cwd=tmp_path,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        deadline = time.monotonic() + 25
-        while True:
-            if process.poll() is not None:
-                pytest.fail(f"service exited during startup: {process.returncode}")
-            try:
-                with urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
-                    health = json.load(response)
-                break
-            except (URLError, TimeoutError):
-                if time.monotonic() >= deadline:
-                    pytest.fail("service health check did not become ready")
-                time.sleep(0.2)
-        assert health["status"] == "ok"
-        assert health["gateway_mode"] == "http"
-        assert health["gateway_channel"] == "not_applicable"
-        assert health["brief_scheduler"] == "running"
-        for key, value in {
-            "research_budget_seconds": 241,
-            "graph_recursion_limit": 27,
-            "sqlite_busy_timeout_ms": 1300,
-            "persistence_max_retries": 3,
-            "persistence_retry_backoff_ms": 41,
-        }.items():
-            assert health[key] == value
-    finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=10)
+    # A separate interpreter still loads real release settings and runs the
+    # application lifespan. ASGI transport avoids opening any service socket.
+    code = """
+import json, sys
+
+def deny_network(event, args):
+    if event in {"socket.connect", "socket.getaddrinfo"}:
+        frame = sys._getframe()
+        while frame:
+            if frame.f_code.co_name in {"_fallback_socketpair", "_socketpair"}:
+                return
+            frame = frame.f_back
+        raise AssertionError("release health test forbids network services")
+
+sys.addaudithook(deny_network)
+from fastapi.testclient import TestClient
+from app.main import app
+with TestClient(app) as client:
+    response = client.get("/health")
+    assert response.status_code == 200
+    print("OFFLINE_HEALTH " + json.dumps(response.json()))
+"""
+    process = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env,
+                             capture_output=True, text=True, timeout=25)
+    assert process.returncode == 0, process.stderr
+    row = next(line for line in process.stdout.splitlines() if line.startswith("OFFLINE_HEALTH "))
+    health = json.loads(row.removeprefix("OFFLINE_HEALTH "))
+    assert health["status"] == "ok"
+    assert health["gateway_mode"] == "http"
+    assert health["gateway_channel"] == "not_applicable"
+    assert health["brief_scheduler"] == "running"
+    for key, value in {
+        "research_budget_seconds": 241,
+        "graph_recursion_limit": 27,
+        "sqlite_busy_timeout_ms": 1300,
+        "persistence_max_retries": 3,
+        "persistence_retry_backoff_ms": 41,
+    }.items():
+        assert health[key] == value
 
 
 def test_legacy_backup_migration_failure_restore_and_restart(tmp_path):

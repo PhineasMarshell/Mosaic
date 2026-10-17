@@ -65,9 +65,13 @@ def is_usable_datum(datum: Any) -> bool:
     is_request_metadata = any(part in _REQUEST_METRICS for part in metric_parts)
     if metric == "status" or (metric.endswith(".status") and str(value).lower() in {"success", "partial", "error"}):
         is_request_metadata = True
+    # 结构元数据（envelope count/total/paging、MCP 类型/日期注记）只描述批次，
+    # 不是可主张的业务事实：永远不生成 Evidence，也不通过 strict provenance。
+    is_structural = bool(_field(datum, "structural_metadata", False))
     return bool(
         metric
         and not is_request_metadata
+        and not is_structural
         and _field(datum, "status", "success") != "error"
         and value is not None
         and (not isinstance(value, (str, list, tuple, dict, set)) or bool(value))
@@ -169,8 +173,12 @@ def run_evidence_gate(
             expected_date = None
         status = _field(result, "status")
         raw_normalized = list(_field(result, "normalized", []) or [])
+        # 结构元数据不是业务 datum，也不算"无效证据"——它不进证据账本。
+        business_normalized = [
+            d for d in raw_normalized if not bool(_field(d, "structural_metadata", False))
+        ]
         datums = _result_datums(result)
-        invalid_datum_count = 0 if status == "error" else len(raw_normalized) - len(datums)
+        invalid_datum_count = 0 if status == "error" else len(business_normalized) - len(datums)
         if invalid_datum_count:
             gate.invalid_evidence_count += invalid_datum_count
             gate.reason_codes.append("invalid_datum")
@@ -241,6 +249,15 @@ def run_evidence_gate(
             # complete, dated row partial. Keep both scopes visible to Critic.
             partial = bool(_field(datum, "partial") or _field(datum, "status") == "partial")
             result_partial = bool(_field(result, "partial") or status == "partial")
+            # 语义契约工具（涨停家数/板块）：无观察日或 partial 的业务 datum 无法证明
+            # 交易日，必须硬拒绝，不能像通用市场 datum 那样把 unknown_date 当作
+            # 非阻塞、也不能让 partial 计入有效证据。
+            semantic_contract = bool(getattr(result, "date_annotation", None))
+            if semantic_contract and date_scope == "market":
+                if not timestamp:
+                    reasons.append("missing_as_of_date")
+                if partial:
+                    reasons.append("partial_datum")
             hard_reasons = [reason for reason in reasons if reason not in _NON_BLOCKING_REASONS]
             source = _field(datum, "source") or _field(datum, "authority") or _field(result, "authority") or "unknown"
             if not (_field(datum, "source") or _field(datum, "authority") or _field(result, "authority")):
@@ -289,9 +306,94 @@ def evidence_domain_compatible(item: Any, claim: str, expected_domain: str) -> b
         # Reference also labels index and industry rows. It is a source kind,
         # not a foreign market; reject only an explicitly foreign instrument.
         return not (instrument.startswith("HK") or instrument.endswith(".HK"))
-    if not re.search(r"新闻|消息|公告|报道|研报|事件", claim):
+    if not re.search(r"新闻|消息|公告|报道|研报|事件", claim) and instrument:
+        # 有具体 instrument 的 media 证据必须配一条新闻类 claim；市场级 media
+        # 证据（instrument 为空，例如"两市成交额报道"）本身不指向任何证券，
+        # 下面按 claim/实体是否点名证券来判断是否跨市场错配。
         return False
-    return bool(re.fullmatch(r"(?:(?:SH|SZ|BJ)?\d{6}|\d{6}\.(?:SH|SZ|BJ))", instrument))
+    # 明确的境外标的永远拒绝（HK/US），与 claim 里是否写了代码无关。
+    if instrument.startswith(("HK", "US")) or instrument.endswith((".HK", ".US")):
+        return False
+    # 裸数字且不是 A 股的 6 位代码（例如港股惯用的 5 位 "00700"）也是境外标的。
+    if re.fullmatch(r"\d+", instrument) and not re.fullmatch(r"\d{6}", instrument):
+        return False
+    if re.fullmatch(r"[A-Z][A-Z.]{0,5}", instrument):
+        # 纯字母代码（AAPL / MSFT / BRK.B）不是 A 股标的，市场级媒体证据不能
+        # 替它背书。
+        return False
+    if not re.fullmatch(r"(?:(?:SH|SZ|BJ)?\d{6}|\d{6}\.(?:SH|SZ|BJ))", instrument):
+        # 市场级媒体/参考证据（例如"两市成交额报道"）不指向任何单一证券。
+        # 只有 claim 也没点名任何证券（既无代码，也无具名实体）时才不算跨市场错配，
+        # 否则"用市场级新闻替境外标的背书"会绕开这道闸门。
+        return not _claim_codes(claim) and not extract_entity_mentions(claim)
+    return True
+
+
+#: 单篇新闻/公告类 evidence 里可人工复审的正文线索（标题 / 摘要 / 链接）。
+_NEWS_REVIEW_FIELDS = ("title", "headline", "subject", "summary", "digest", "abstract", "url", "link", "source_url")
+#: 中文指标名同样代表可审阅正文（同花顺问财返回的是中文列名）。
+_NEWS_REVIEW_FIELD_NAMES = frozenset(
+    set(_NEWS_REVIEW_FIELDS)
+    | {
+        "content", "text", "body", "description",
+        "标题", "题目", "主题", "摘要", "概要", "简介", "内容", "正文", "链接", "网址", "来源",
+    }
+)
+_NEWS_INDEXED_PATH_RE = re.compile(r"(?:^|\.)(?:items|data|rows|results|list)(?:\[\d+\])?\.?$")
+
+
+def _is_single_news_item(item: Any, source_tool: str) -> bool:
+    """判断这条 evidence 是否是"新闻/公告检索结果里的单篇"。"""
+    metric = str(_field(item, "metric", "") or "").strip().lower()
+    if metric:
+        if "search_results" in metric or _NEWS_INDEXED_PATH_RE.search(metric):
+            return True
+    haystack = f"{metric} {source_tool} {_field(item, 'category', '') or ''} {_field(item, 'domain', '') or ''}".lower()
+    return any(token in haystack for token in ("news", "telegraph", "announcement", "disclosure", "媒体", "公告"))
+
+
+def _has_reviewable_news_content(item: Any, result: Any = None) -> bool:
+    """单篇新闻必须带可审阅内容：标题 / 摘要 / url 之一。"""
+    metric = str(_field(item, "metric", "") or "").lower()
+    segments = [segment for segment in re.split(r"[.\[\]]+", metric) if segment]
+    leaf = segments[-1] if segments else ""
+    if leaf in _NEWS_REVIEW_FIELD_NAMES:
+        return True
+    value = _field(item, "value")
+    if value is None:
+        value = _field(item, "datum_value")
+    if isinstance(value, dict):
+        return any(str(key).lower() in _NEWS_REVIEW_FIELD_NAMES for key in value)
+    if isinstance(value, str) and len(value.strip()) >= 8:
+        return True
+    return False
+
+
+_SINGLE_NEWS_UNSUPPORTED_SCOPE = re.compile(
+    r"全市场|全部|所有|全貌|完整|排名|最强|领先|第一|主线|前[一二三四五六七八九十0-9]+|"
+    r"因果|导致|带动|引发|造成|因为|由于|\b(?:all|entire|complete|ranking|causes?)\b",
+    re.IGNORECASE,
+)
+
+
+def _single_news_evidence_allowed(
+    item: Any, *, is_partial: bool, source_tool: str, claim: str, claim_type: str = ""
+) -> bool:
+    """Allow search-result completeness only for a dated, limited event claim."""
+    if is_partial:
+        return False
+    if not _claim_needs_date(claim) or _SINGLE_NEWS_UNSUPPORTED_SCOPE.search(claim):
+        return False
+    if claim_type in {"comparison", "causation"}:
+        return False
+    completeness = str(_field(item, "completeness", "") or "").strip().lower()
+    if completeness not in {"search_results", "page"}:
+        return False
+    if not normalize_date(_field(item, "as_of_date")):
+        return False
+    if not all(str(_field(item, key, "") or "").strip() for key in ("source", "authority", "retrieved_at")):
+        return False
+    return _has_reviewable_news_content(item) and _is_single_news_item(item, source_tool)
 
 
 def _claim_codes(claim: str) -> set[str]:
@@ -635,9 +737,14 @@ def match_claims_to_evidence(
                     local_reasons.append("missing_retrieved_at")
                 completeness = str(_field(item, "completeness", "") or "").strip().lower()
                 coverage = str(_field(item, "coverage", "") or "").strip().lower()
-                if is_partial or bool(_field(item, "result_partial", False)):
+                single_news = _single_news_evidence_allowed(
+                    item, is_partial=is_partial, source_tool=source_tool, claim=text, claim_type=claim_type
+                )
+                # datum 自身的 partial 永远拒绝；result_partial 只在上面的
+                # "全市场/完整/排名/最强"穷举型断言里拦截，不再拖累带日期的窄事实。
+                if is_partial:
                     local_reasons.append("partial_only")
-                if completeness not in {"complete", "full"}:
+                if completeness not in {"complete", "full"} and not single_news:
                     local_reasons.append(
                         "unknown_completeness" if completeness in {"", "unknown"} else "incomplete_completeness"
                     )
@@ -707,19 +814,34 @@ def match_claims_to_evidence(
                 metric_key = _market_metric_value(item)[0]
                 family = "direction" if re.search(r"(?:^|[.\[\]])(?:change|change_pct|pct_change|return|涨跌|涨幅|跌幅)(?:$|[._\[\]])", metric_key) else "price" if re.search(r"(?:^|[.\[\]])(?:price|last|close)(?:$|[._\[\]])", metric_key) else "other"
                 groups.setdefault((date_key, instrument_key, family), []).append(item)
-            for group_items in groups.values():
+            direction_claim = bool(re.search(r"上涨|下跌|收涨|收跌|涨幅|跌幅|涨跌幅", text))
+            percent_claim = bool(re.search(r"(?:上涨|下跌|收涨|收跌|涨幅|跌幅|涨跌幅)\s*[+-]?\d", text))
+            price_claim = bool(re.search(r"(?:价格|股价|报价|收盘价|点位|指数值)\s*(?:为|是|达|到)?\s*[+-]?\d", text))
+            direction_group_seen = False
+            for (_group_date, _group_instrument, family), group_items in groups.items():
+                # A price/previous-close datum cannot itself prove a direction
+                # predicate.  The old all-groups check therefore rejected a
+                # valid claim whenever its cited evidence also contained price
+                # fields.  Evaluate each predicate only in its metric family;
+                # require a direction family separately when the claim needs it.
+                if family == "direction":
+                    direction_group_seen = True
                 predicate_reasons = [_market_predicate_reason(text, item) for item in group_items]
-                if all(reason is not None for reason in predicate_reasons):
-                    predicate_failures.append(next((reason for reason in predicate_reasons if reason == "contradictory_direction"), predicate_reasons[0]))
                 numeric_reasons = [_numeric_claim_reason(text, item) for item in group_items]
-                if all(reason is not None for reason in numeric_reasons):
-                    predicate_failures.append(next((reason for reason in numeric_reasons if reason == "numeric_mismatch"), numeric_reasons[0]))
+                if family == "direction" or not direction_claim:
+                    if all(reason is not None for reason in predicate_reasons):
+                        predicate_failures.append(next((reason for reason in predicate_reasons if reason == "contradictory_direction"), predicate_reasons[0]))
+                if (family == "direction" and percent_claim) or (family == "price" and price_claim) or (family == "other" and not (percent_claim or price_claim)):
+                    if all(reason is not None for reason in numeric_reasons):
+                        predicate_failures.append(next((reason for reason in numeric_reasons if reason == "numeric_mismatch"), numeric_reasons[0]))
                 # Multiple cited observations of the same subject/date/family
                 # must not silently resolve in favor of whichever fits.
                 if any(reason is None for reason in predicate_reasons) and "contradictory_direction" in predicate_reasons:
                     predicate_failures.append("conflicting_evidence")
                 if any(reason is None for reason in numeric_reasons) and "numeric_mismatch" in numeric_reasons:
                     predicate_failures.append("conflicting_evidence")
+            if direction_claim and not direction_group_seen:
+                predicate_failures.append("missing_direction_metric")
         # A single instrument price observation does not establish a causal,
         # comparative, ranked, or market-wide inference.  Keep this claim
         # scoped so a direct fact (close/volume/change) remains admissible.

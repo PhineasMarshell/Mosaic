@@ -273,9 +273,54 @@ def satisfied_keys(
     return keys
 
 
-def _variant_signature(arguments: dict[str, Any]) -> str:
-    """参数取值的规范化指纹（用于把"同一条参数要求"聚成同一个变体）。"""
+def _variant_signature(arguments: dict[str, Any], tool_key: str | None = None) -> str:
+    """参数取值的规范化指纹（用于把"同一条参数要求"聚成同一个变体）。
+
+    ``tool_key`` 存在时按 Gateway 契约先 canonicalize 再算 ``semantic_signature``，
+    这样变体指纹与最终计划/路由步骤的指纹是**同一套算法**——否则
+    ``{"date": "2026-10-09"}`` 与 ``{}`` 会被当成两个变体，同一工具被规划两次。
+    """
+    if tool_key:
+        try:
+            meta = resolve_tool(tool_key)
+            canonical = canonicalize_tool_arguments(meta.tool_name, dict(arguments or {}))
+            return semantic_signature(meta.tool_name, canonical)
+        except Exception:
+            pass
     return json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)
+
+
+#: 这些工具在 Gateway 契约里没有可用的日期/查询参数（``market_plan`` 的同名
+#: ``UNPARAMETERIZED_DATE_TOOLS`` 会把这些 key 的 arguments 清成 ``{}``），计划日
+#: 只影响审计目标。因此变体参数里的 date 必须在这里被剥掉，否则同一工具会因为
+#: ``{date}`` 与 ``{}`` 两个等价变体被重复规划。
+#:
+#: **`limit_up_pool` 刻意不在其中**：``list_limit_up_stocks`` 按日期取数，不同日期
+#: 是真实的多个变体，必须各补一次调用（见 ``tests/test_audit_issue_contract.py``
+#: 的多调用契约）。
+_VARIANT_ARGUMENTS_STRIPPED_TOOLS = frozenset(
+    {"limit_up_count", "limit_up_sectors", "sentiment", "telegraph", "market_breadth"}
+)
+_VARIANT_DATE_KEYS = ("as_of_date", "date", "trade_date", "trading_date", "end", "end_date")
+
+
+def _variant_tool_name(tool_key: str) -> str:
+    try:
+        return resolve_tool(tool_key).tool_name
+    except Exception:
+        return tool_key
+
+
+def _normalized_variant_arguments(tool_key: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """把 Critic 给的变体参数规范成"最终计划里会出现的那一种"。"""
+    normalized = dict(arguments or {})
+    if tool_key in _VARIANT_ARGUMENTS_STRIPPED_TOOLS:
+        for date_key in _VARIANT_DATE_KEYS:
+            normalized.pop(date_key, None)
+    try:
+        return canonicalize_tool_arguments(_variant_tool_name(tool_key), normalized)
+    except Exception:
+        return normalized
 
 
 def coverage_requirements(critique: Any) -> dict[str, dict[str, Any]]:
@@ -327,7 +372,10 @@ def coverage_requirements(critique: Any) -> dict[str, dict[str, Any]]:
                 partial_flags[key] = flag if key not in partial_flags else (partial_flags[key] and flag)
 
             by_signature = variants.setdefault(key, {})
-            signature = _variant_signature(args)
+            # 变体参数按 Gateway 契约规范化：limit_up_*/sentiment/telegraph 的
+            # ``{date}`` 与 ``{}`` 是同一个参数变体，不能各占一次调用预算。
+            args = _normalized_variant_arguments(key, args)
+            signature = _variant_signature(args, key)
             entry = by_signature.get(signature)
             if entry is None:
                 by_signature[signature] = {
@@ -574,15 +622,37 @@ def classify_missing_tool_keys(
     allowed: set[str],
     satisfied: set[str],
     max_keys: int | None = None,
+    requirements: dict[str, dict[str, Any]] | None = None,
+    results: Any = None,
 ) -> GapKeyDecision:
     """把 Critic 给的缺口 key 分成 保留 / 已满足 / 不可见 / 预算截断 四类。
 
     ``satisfied`` 是"已拿到**充分**证据"的 key 集合（``satisfied_keys``），
     不是"跑过"的集合——跑过但 partial / 空数据的 key 仍会保留，等待重拉。
+
+    传 ``requirements`` 时预算按**精确参数变体**计费：``limit_up_pool`` 要
+    ``date=07`` 与 ``date=08`` 两天的数据就是两份预算，不能只算一个 key。
     """
     decision = GapKeyDecision()
     seen: set[str] = set()
     limit = max_keys if max_keys is not None and max_keys >= 0 else None
+
+    #: key → 还"欠着"的参数变体数（不传 requirements 时视为 1）。
+    #: {"arguments": ...} 形式的变体已在 coverage_requirements 里规范化。
+    variant_costs: dict[str, int] = {}
+    if requirements:
+        for key in raw or []:
+            if not isinstance(key, str) or not key or key in variant_costs:
+                continue
+            variants = (requirements.get(key) or {}).get("argument_variants")
+            if variants is None:
+                variant_costs[key] = 1
+                continue
+            records = coverage_records(results) if results is not None else []
+            effective = [v for v in variants if not _variant_satisfied(key, records, _with_key_policy(v, requirements.get(key) or {}))]
+            variant_costs[key] = len(effective)
+
+    budget_left = limit
 
     for key in raw or []:
         if not isinstance(key, str) or not key:
@@ -614,12 +684,23 @@ def classify_missing_tool_keys(
             decision.reasons.setdefault(key, "already_satisfied")
             decision.records.append({"key": key, "decision": "dropped", "reason": "already_satisfied"})
             continue
-        if limit is not None and len(decision.kept) >= limit:
+        # 变体级预算：一个 key 的所有未满足变体都要占用预算。
+        cost = variant_costs.get(key, 1)
+        if cost <= 0:
+            # 该 key 的每个参数变体都已被历史执行满足：不需要再规划。
+            decision.duplicated.append(key)
+            decision.dropped.append(key)
+            decision.reasons.setdefault(key, "duplicated")
+            decision.records.append({"key": key, "decision": "dropped", "reason": "duplicated"})
+            continue
+        if budget_left is not None and budget_left <= 0:
             decision.budget_truncated.append(key)
             decision.dropped.append(key)
             decision.reasons.setdefault(key, "budget_truncated")
             decision.records.append({"key": key, "decision": "dropped", "reason": "budget_truncated"})
             continue
+        if budget_left is not None:
+            budget_left -= cost
         decision.kept.append(key)
         decision.records.append({"key": key, "decision": "kept", "reason": "executable"})
 
@@ -669,10 +750,19 @@ def gap_key_decision(
         allowed=allowed_keys(registry),
         satisfied=satisfied_keys(results, coverage_requirements(critique)),
         max_keys=max_keys,
+        requirements=coverage_requirements(critique),
+        results=results,
     )
 
 
-def append_gap_steps(
+def _default_quote_gap_arguments() -> dict[str, Any]:
+    """Market-level quote gap 的代码口径参数（与 market_plan 共用同一份常量）。"""
+    from app.graph.market_plan import A_SHARE_BENCHMARK_SYMBOLS
+
+    return {"symbols": list(A_SHARE_BENCHMARK_SYMBOLS)}
+
+
+def append_gap_variants(
     steps: list[ToolCallPlan],
     gap_keys: list[str],
     registry: str,
@@ -681,27 +771,21 @@ def append_gap_steps(
     question: str = "",
     requirements: dict[str, dict[str, Any]] | None = None,
     results: Any = None,
-) -> tuple[list[ToolCallPlan], list[str]]:
-    """把缺口 key 以 high 优先级补进 steps **头部**（幂等）再截断 → (新 steps, 补入的 key)。
+) -> tuple[list[ToolCallPlan], list[dict[str, Any]]]:
+    """同 :func:`append_gap_steps`，但返回**精确变体**记录而不是 tool_key 列表。
 
-    参数冲突的执行策略（多调用语义）：同一个 key 若带有多个 ``argument_variants``
-    （例如 issue A 要 ``date=2026-10-07``、issue B 要 ``date=2026-10-08``），
-    单次调用无法同时满足，因此**为每个"尚未被满足的变体"各补一条独立步骤**，
-    带上该变体自己的 ``arguments``。这样 Supervisor 的可执行计划里会真实出现
-    "同一工具、不同参数"的多次调用，而不是靠合并参数假装覆盖。
-
-    传入 ``results`` 时，已被历史执行满足的变体不再重复补入；若某个变体始终
-    无法被满足，它会一直留在 ``gap_tool_keys`` 里，最终由 Critic 耗尽预算 →
-    ``finalize_audit`` 安全阻断（不会静默当成正常报告交付）。
-
-    不传 ``requirements`` 时保持旧行为：按 key 补一条空参数步骤。
+    返回的每项形如 ``{"tool_key": ..., "arguments": {...}, "signature": ...}``；
+    ``signature`` 与最终计划步骤用同一套 ``semantic_signature`` 算法，因此调用方
+    可以拿它跟最终 plan / route 逐条比对：``decision="kept"`` 的变体必然出现，
+    ``budget_truncated`` 的变体必然不出现。
     """
-    from app.gateway.tool_registry import resolve_tool
+    from app.gateway.tool_registry import resolve_tool  # noqa: F401  (契约自证：key 必须可解析)
 
     allowed = allowed_keys(registry)
     present = {s.tool_key for s in steps}
     records = coverage_records(results) if results is not None else []
     forced: list[ToolCallPlan] = []
+    forced_rows: list[dict[str, Any]] = []
     for key in gap_keys:
         if key not in allowed or len(forced) >= max_gap_steps:
             continue
@@ -730,8 +814,8 @@ def append_gap_steps(
                 arguments = dict(existing.arguments or {}) if existing is not None else {}
             else:
                 arguments = dict(variant.get("arguments") or {})
-                signature = _variant_signature(arguments)
-                if any(s.tool_key == key and _variant_signature(dict(s.arguments or {})) == signature for s in forced):
+                signature = _variant_signature(arguments, key)
+                if any(_variant_signature(dict(s.arguments or {}), key) == signature for s in forced):
                     continue
             if meta.tool_name.startswith(_QUERY_TOOL_PREFIXES):
                 arguments.setdefault("query", question)
@@ -739,7 +823,7 @@ def append_gap_steps(
                 # Quote gap steps must use the canonical batch contract even
                 # when Critic only names the logical key.
                 if meta.tool_name == "get_market_quotes" and not arguments:
-                    arguments = {"symbols": ["000300"]}
+                    arguments = _default_quote_gap_arguments()
                 arguments = canonicalize_tool_arguments(meta.tool_name, arguments)
             except Exception:
                 continue
@@ -765,13 +849,57 @@ def append_gap_steps(
                     refresh=bool(requirements is not None),
                 )
             )
+            forced_rows.append({"tool_key": key, "arguments": dict(arguments), "signature": signature})
             present.add(key)
     if requirements is not None and forced:
         forced_signatures = {semantic_signature(s.tool_key, dict(s.arguments or {})) for s in forced}
         steps = [s for s in steps if semantic_signature(s.tool_key, dict(s.arguments or {})) not in forced_signatures]
     merged = forced + list(steps)
     selected = merged[:max_steps]
-    return selected, [s.tool_key for s in forced if s in selected]
+    kept_signatures = {semantic_signature(s.tool_key, dict(s.arguments or {})) for s in selected}
+    return selected, [row for row in forced_rows if row["signature"] in kept_signatures]
+
+
+def append_gap_steps(
+    steps: list[ToolCallPlan],
+    gap_keys: list[str],
+    registry: str,
+    max_steps: int,
+    max_gap_steps: int,
+    question: str = "",
+    requirements: dict[str, dict[str, Any]] | None = None,
+    results: Any = None,
+) -> tuple[list[ToolCallPlan], list[str]]:
+    """把缺口 key 以 high 优先级补进 steps **头部**（幂等）再截断 → (新 steps, 补入的 key)。
+
+    参数冲突的执行策略（多调用语义）：同一个 key 若带有多个 ``argument_variants``
+    （例如 issue A 要 ``date=2026-10-07``、issue B 要 ``date=2026-10-08``），
+    单次调用无法同时满足，因此**为每个"尚未被满足的变体"各补一条独立步骤**，
+    带上该变体自己的 ``arguments``。这样 Supervisor 的可执行计划里会真实出现
+    "同一工具、不同参数"的多次调用，而不是靠合并参数假装覆盖。
+
+    传入 ``results`` 时，已被历史执行满足的变体不再重复补入；若某个变体始终
+    无法被满足，它会一直留在 ``gap_tool_keys`` 里，最终由 Critic 耗尽预算 →
+    ``finalize_audit`` 安全阻断（不会静默当成正常报告交付）。
+
+    不传 ``requirements`` 时保持旧行为：按 key 补一条空参数步骤。
+
+    兼容包装：内部走 :func:`append_gap_variants`（返回精确变体），这里只把
+    ``tool_key`` 摊平成旧契约的 key 列表。需要按精确参数记账的调用方（Supervisor
+    回环）必须直接用 ``append_gap_variants``。
+    """
+    selected, forced_rows = append_gap_variants(
+        steps,
+        gap_keys,
+        registry,
+        max_steps=max_steps,
+        max_gap_steps=max_gap_steps,
+        question=question,
+        requirements=requirements,
+        results=results,
+    )
+    return selected, [str(row["tool_key"]) for row in forced_rows]
+
 
 
 def render_gap_context(critique: Any, results: Any, max_steps: int) -> str:

@@ -148,6 +148,7 @@ _MAX_DIAGNOSTIC_CANDIDATES = 24
 #: evidence-only fallback 交付物的固定标题。它是代码拥有的字面量（不是模型输出），
 #: 因此验收侧可以据此判断"这份报告究竟来自 fallback 还是模型成文"，无需读正文。
 EVIDENCE_ONLY_FALLBACK_TITLE = "受控降级：仅交付证据事实"
+MARKET_EVIDENCE_ONLY_FALLBACK_TITLE = "受控降级：仅交付市场事实"
 
 
 @dataclass(frozen=True)
@@ -232,6 +233,194 @@ class FallbackDecision:
             "rejected_candidates_truncated": max(0, len(rejected) - _MAX_DIAGNOSTIC_CANDIDATES),
             "report_evidence_ids": self.report_evidence_ids,
         }
+
+
+def _market_tool_allowed(item: Evidence) -> bool:
+    """Allow only narrow market facts for a no-target fallback."""
+    tool = str(item.source_tool or item.tool_key or "").casefold()
+    metric = str(item.metric or "").casefold()
+    if any(token in tool for token in ("iwencai_market", "internal_iwencai_market")):
+        # Industry candidate rows are not a breadth/sentiment observation.
+        return False
+    if "limit_up_sectors" in tool or "limit-up-sectors" in tool:
+        return any(token in metric for token in ("板块", "题材", "行业", "概念", "sector", "theme", "industry", "涨停家数", "涨停数", "rank", "排名", "涨幅", "pct"))
+    if any(token in tool for token in ("quote", "sentiment", "breadth", "limit_up", "telegraph", "news")):
+        return _market_metric_allowed(item)
+    return any(token in metric for token in ("limit_up", "涨停", "up_count", "down_count", "上涨家数", "下跌家数"))
+
+
+def _market_metric_allowed(item: Evidence) -> bool:
+    metric = str(item.metric or "").casefold().rsplit(".", 1)[-1]
+    tool = str(item.source_tool or item.tool_key or "").casefold()
+    if "quote" in tool:
+        return any(token in metric for token in ("price", "close", "change", "涨跌幅", "最新价", "点位")) and isinstance(item.value, (int, float))
+    if "sentiment" in tool or "breadth" in tool:
+        return any(token in metric for token in ("up_count", "down_count", "上涨家数", "下跌家数", "成交额", "advance", "decline")) and isinstance(item.value, (int, float))
+    if "limit_up_count" in tool or ("limit_up" in tool and "sector" not in tool):
+        return any(token in metric for token in ("count", "涨停家数", "涨停数")) and isinstance(item.value, (int, float))
+    if _single_news_evidence(item):
+        return metric in {"title", "headline", "subject", "summary", "digest"} and bool(str(item.value or "").strip())
+    return False
+
+
+@dataclass(frozen=True)
+class MarketFallbackDecision:
+    enabled: bool
+    reason: str
+    expected_date: str | None
+    candidates: tuple[FallbackCandidate, ...]
+    accepted: tuple[Evidence, ...]
+
+    @property
+    def candidate_count(self) -> int:
+        return len(self.candidates)
+
+    @property
+    def accepted_count(self) -> int:
+        return len(self.accepted)
+
+    @property
+    def rejected_count(self) -> int:
+        return self.candidate_count - self.accepted_count
+
+    def diagnostics(self) -> dict[str, Any]:
+        rejected = [row for row in self.candidates if not row.accepted]
+        counts: dict[str, int] = {}
+        for row in self.candidates:
+            for code in row.reasons:
+                counts[code] = counts.get(code, 0) + 1
+        return {
+            "enabled": self.enabled,
+            "reason": self.reason,
+            "expected_date": self.expected_date,
+            "candidate_count": self.candidate_count,
+            "accepted_count": self.accepted_count,
+            "rejected_count": self.rejected_count,
+            "rejection_reasons": dict(sorted(counts.items())),
+            "candidate_rejections": {row.evidence_id: list(row.reasons) for row in rejected},
+            "candidate_evidence_ids": {
+                "accepted": [row.evidence_id for row in self.candidates if row.accepted],
+                "rejected": [row.evidence_id for row in rejected],
+            },
+        }
+
+
+def plan_market_evidence_fallback(
+    evidence: list[Evidence], *, requested_date: str | None,
+    planned_as_of_date: str | None = None, as_of_date: str | None = None,
+) -> MarketFallbackDecision:
+    """Plan a strict evidence-only delivery for a market question without a target."""
+    expected = as_of_date or planned_as_of_date
+    sector_groups: dict[str, list[Evidence]] = {}
+    for item in evidence:
+        tool = str(item.source_tool or item.tool_key or "").casefold()
+        if "limit_up_sectors" in tool or "limit-up-sectors" in tool:
+            row = str(item.metric or "").rsplit(".", 1)[0]
+            sector_groups.setdefault(row, []).append(item)
+    valid_sector_rows: set[str] = set()
+    for row, items in sector_groups.items():
+        identity = any(any(token in item.metric.casefold().rsplit(".", 1)[-1] for token in ("板块", "题材", "行业", "概念", "sector", "theme", "industry")) and isinstance(item.value, str) and item.value.strip() for item in items)
+        structure = any(any(token in item.metric.casefold().rsplit(".", 1)[-1] for token in ("涨停家数", "涨停数", "rank", "排名", "涨幅", "pct")) and isinstance(item.value, (int, float)) for item in items)
+        dated = all((item.as_of_date or (item.timestamp or "")[:10]) == expected for item in items if _market_tool_allowed(item))
+        if identity and structure and dated:
+            valid_sector_rows.add(row)
+
+    candidates: list[FallbackCandidate] = []
+    accepted: list[Evidence] = []
+    for item in evidence:
+        reasons: list[str] = []
+        observed = item.as_of_date or (item.timestamp or "")[:10]
+        completeness = _normalized_token(item.completeness)
+        if not expected:
+            reasons.append("missing_planned_as_of_date")
+        if item.status != "success":
+            reasons.append("status_not_success")
+        if item.partial:
+            reasons.append("partial")
+        if completeness not in _ACCEPTED_COMPLETENESS:
+            # A single dated news result is valid only when it carries a title,
+            # source and authority; broad search result collections are not facts.
+            leaf = str(item.metric or "").casefold().rsplit(".", 1)[-1]
+            is_news = _single_news_evidence(item) and leaf in {"title", "headline", "subject", "summary", "digest"} and bool(str(item.value or "").strip())
+            if not (is_news and completeness in {"search_results", "page"}):
+                reasons.append("incomplete") if completeness in _INCOMPLETE_COMPLETENESS else reasons.append("unknown_completeness")
+        if not observed:
+            reasons.append("missing_date")
+        elif expected and observed != expected:
+            reasons.append("date_mismatch" if observed else "missing_date")
+        tool = str(item.source_tool or item.tool_key or "").casefold()
+        row = str(item.metric or "").rsplit(".", 1)[0]
+        sector_candidate = "limit_up_sectors" in tool or "limit-up-sectors" in tool
+        if not _market_tool_allowed(item) or (sector_candidate and row not in valid_sector_rows):
+            reasons.append("unsupported_fact_type")
+        if not str(item.source or "").strip():
+            reasons.append("missing_source")
+        if not str(item.authority or "").strip():
+            reasons.append("missing_authority")
+        if not str(item.retrieved_at or "").strip():
+            reasons.append("missing_retrieved_at")
+        if item.id and not reasons:
+            accepted.append(item)
+        candidates.append(FallbackCandidate(item.id, str(item.metric or ""), not reasons, tuple(reasons)))
+    return MarketFallbackDecision(True, "" if expected else "missing_planned_as_of_date", expected, tuple(candidates), tuple(accepted))
+
+
+def _single_news_evidence(item: Evidence) -> bool:
+    tool = str(item.source_tool or item.tool_key or "").casefold()
+    metric = str(item.metric or "").casefold()
+    return any(token in tool or token in metric for token in ("telegraph", "news", "search_results", "新闻", "快讯"))
+
+
+def build_market_evidence_only_fallback(
+    evidence: list[Evidence], *, requested_date: str | None,
+    planned_as_of_date: str | None = None, as_of_date: str | None = None,
+    decision: MarketFallbackDecision | None = None,
+) -> MarketIntelligence | None:
+    plan = decision or plan_market_evidence_fallback(
+        evidence, requested_date=requested_date,
+        planned_as_of_date=planned_as_of_date, as_of_date=as_of_date,
+    )
+    rows = list(plan.accepted)[:_MAX_FALLBACK_ROWS]
+    if not rows:
+        return None
+    items = [EvidenceItem(**row.model_dump()) for row in rows]
+    claims: list[ClaimEvidence] = []
+    facts: list[str] = []
+    sector_rows: dict[str, list[Evidence]] = {}
+    ordinary_rows: list[Evidence] = []
+    for row in rows:
+        tool = str(row.source_tool or row.tool_key or "").casefold()
+        if "limit_up_sectors" in tool or "limit-up-sectors" in tool:
+            sector_rows.setdefault(str(row.metric or "").rsplit(".", 1)[0], []).append(row)
+        else:
+            ordinary_rows.append(row)
+    for row_items in sector_rows.values():
+        identity = next((item for item in row_items if any(token in item.metric.casefold().rsplit(".", 1)[-1] for token in ("板块", "题材", "行业", "概念", "sector", "theme", "industry")) and isinstance(item.value, str)), None)
+        structure = next((item for item in row_items if any(token in item.metric.casefold().rsplit(".", 1)[-1] for token in ("涨停家数", "涨停数", "rank", "排名", "涨幅", "pct")) and isinstance(item.value, (int, float))), None)
+        if identity and structure:
+            fact = f"{identity.value}涨停家数为{structure.value}（{plan.expected_date}）"
+            facts.append(fact)
+            claims.append(ClaimEvidence(claim=fact, evidence_ids=[identity.id, structure.id], claim_type="fact"))
+    for row in ordinary_rows:
+        value = row.value
+        if _single_news_evidence(row):
+            fact = f"新闻标题《{str(value).strip()}》（{plan.expected_date}）"
+            claim_type = "single_source"
+        else:
+            fact = f"{row.metric}={value}（{plan.expected_date}）"
+            claim_type = "fact"
+        facts.append(fact)
+        claims.append(ClaimEvidence(claim=fact, evidence_ids=[row.id], claim_type=claim_type))
+    return MarketIntelligence(
+        title=MARKET_EVIDENCE_ONLY_FALLBACK_TITLE,
+        requested_date=requested_date, as_of_date=plan.expected_date,
+        market_closed=False, partial=True, source=list(dict.fromkeys(str(row.source) for row in rows)),
+        coverage=list(dict.fromkeys(str(row.coverage) for row in rows)),
+        market_state="仅市场事实", state_label="仅市场事实", what_happened="；".join(facts),
+        evidence=items, claims=claims,
+        data_caveats=["reasoning 输出失败；仅交付可验证市场事实，不代表完整市场综述"],
+        confidence="low", used_tools=list(dict.fromkeys(row.source_tool for row in rows)),
+    )
 
 
 def _normalized_token(value: Any) -> str:

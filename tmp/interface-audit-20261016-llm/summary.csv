@@ -1,0 +1,2 @@
+﻿layer,case,tool,attempts,statuses,classification,repeat_outcome,ms,business_datums,dated_business_datums,reason_codes,capability_gap,error,observed
+llm,configured_chat_json,chat.completions,2,success/success,valid_json_response,repeated_issue,4922.2/7240.2,,,,,,True

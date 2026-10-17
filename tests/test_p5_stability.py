@@ -7,7 +7,7 @@ import httpx
 
 from app.cache import Cache
 from app.config import Settings
-from app.gateway.arguments import quote_transport_symbols
+from app.gateway.arguments import canonicalize_tool_arguments, quote_transport_symbols
 from app.gateway.http_client import MarketGatewayHttpClient
 from app.gateway.mcp_client import MarketGatewayClient
 from app.gateway.normalizer import normalize_tool_result
@@ -75,6 +75,9 @@ def test_empty_quote_collection_is_zero_evidence_and_index_encoding_is_scoped():
     assert result.status == "error" and result.normalized == []
     assert build_evidence([result]) == []
     assert quote_transport_symbols(["000300", "688981", "000001"]) == ["sh000300", "688981", "000001"]
+    canonical = canonicalize_tool_arguments("get_market_quotes", {"symbols": ["sh000300", "000001"]})
+    assert canonical == {"symbols": ["000001", "SH000300"]}
+    assert quote_transport_symbols(canonical["symbols"]) == ["000001", "sh000300"]
 
 
 async def test_failed_refresh_cannot_resurrect_old_partial(monkeypatch):
